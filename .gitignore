@@ -1,0 +1,39 @@
+# ---- 记忆插件数据目录（误删无法恢复，务必忽略）----
+.dsh-meow/
+
+# ---- 密钥与本地配置 ----
+.env
+config.local.py
+
+# ---- Python ----
+.venv/
+.venv-probe/
+vendor/
+_build_tmp/
+.tmp/
+wheels/
+pip-*/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ---- 运行时产物 ----
+*.log
+instance/
+server.out
+server.err
+
+# ---- 用户上传的商品图片（不入库、不进 git）----
+uploads/*
+!uploads/.gitkeep
+
+# ---- 备份导出文件 ----
+backups/
+*.backup.json
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
