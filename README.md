@@ -182,3 +182,31 @@ set TMPDIR=%CD%\_build_tmp
     --no-index --find-links wheels flask flask-sqlalchemy pymysql ^
     cryptography flask-bcrypt flask-jwt-extended
 ```
+
+## 九、本机 HTTPS 被拦截时的 git 配置
+
+本机装了 HTTPS 拦截工具（Steam++ / 瓦特工具箱，证书签发者为 `SteamTools Certificate`），
+它会替 github.com 等站点签发自己的证书。表现是：
+
+- 浏览器和 Python 走 **Windows 证书store**，所以访问正常；
+- **git 用的是自带的 Mozilla CA 包**，不信任这张证书，报
+  `SSL certificate problem: unable to get local issuer certificate`；
+- 把 git 的 SSL 后端切成 `schannel` 又想用系统凭据时，会报 `SEC_E_NO_CREDENTIALS`。
+
+本仓库采用的解法（**只影响本仓库**，不改系统证书store，也不关闭证书校验）：
+
+```bat
+:: 1. 从 Windows 证书store里取出拦截工具的根证书，追加到 git 自带 CA 包的副本上
+.venv\Scripts\python.exe tools\build_git_ca.py
+
+:: 2. 让本仓库的 git 使用这份 CA 包（文件放在 .git 下，不会被提交、不会被清理）
+git config http.sslBackend openssl
+git config http.sslCAInfo .git/git-ca-bundle.crt
+```
+
+> **更彻底的解法**：在那款工具里关掉「HTTPS 拦截 / 证书劫持」功能，之后就完全不需要这套配置。
+> 毕竟它替换了所有网站的证书，本身也意味着你的 HTTPS 流量都经过它。
+
+另外，推送时 git 需要调起系统凭据助手（Git Credential Manager），它是 msys 程序、要创建信号
+管道；在受限文件沙箱下会报 `couldn't create signal pipe`，需要放宽一次权限才能完成推送。
+
