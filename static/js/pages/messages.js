@@ -4,22 +4,10 @@
    ========================================================================== */
 import { api } from '../api.js';
 import { store } from '../store.js';
-import { emptyHtml, esc, fmtTime, loadingHtml, toast } from '../ui.js';
+import { avatarHtml, emptyHtml, esc, fmtTime, loadingHtml, toast } from '../ui.js';
 
 let conversationsCache = [];
 let unreadTimer = null;
-
-function avatarHtml(user, size = 36) {
-  const name = user?.nickname || '?';
-  if (user?.avatar) {
-    return `<span class="msg-avatar" style="width:${size}px;height:${size}px;flex:0 0 ${size}px">
-              <img src="/uploads/${encodeURIComponent(user.avatar)}" alt="">
-            </span>`;
-  }
-  return `<span class="msg-avatar" style="width:${size}px;height:${size}px;flex:0 0 ${size}px">
-            ${esc(name.slice(0, 1))}
-          </span>`;
-}
 
 async function renderMessages(root, ctx) {
   const startTo = ctx.query.to ? Number(ctx.query.to) : null;

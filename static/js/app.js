@@ -23,13 +23,14 @@ const M = {
   sold: { key: 'sold', hash: '#/sold', icon: '📤', label: '卖出订单' },
   admin: { key: 'admin', hash: '#/admin', icon: '⚙️', label: '管理后台' },
   dashboard: { key: 'dashboard', hash: '#/dashboard', icon: '📈', label: '数据看板' },
+  profile: { key: 'profile', hash: '#/profile', icon: '👤', label: '个人资料' },
 };
 
 const MENUS = {
   guest: [M.home, M.search, M.compare, M.posts],
-  buyer: [M.home, M.search, M.compare, M.orders, M.favorites, M.swaps, M.messages, M.posts],
-  seller: [M.home, M.publish, M.myProducts, M.sold, M.swaps, M.messages, M.posts],
-  admin: [M.home, M.admin, M.dashboard, M.messages],
+  buyer: [M.home, M.search, M.compare, M.orders, M.favorites, M.swaps, M.messages, M.posts, M.profile],
+  seller: [M.home, M.publish, M.myProducts, M.sold, M.swaps, M.messages, M.posts, M.profile],
+  admin: [M.home, M.admin, M.dashboard, M.messages, M.profile],
 };
 
 /* ---------------------------------------------------------------- 路由表 */
@@ -51,6 +52,7 @@ const ROUTES = [
   { path: '/posts', auth: 'any', menu: 'posts', load: () => import('./pages/posts.js') },
   { path: '/post/:id', auth: 'any', menu: 'posts', load: () => import('./pages/postDetail.js') },
   { path: '/messages', auth: 'required', menu: 'messages', load: () => import('./pages/messages.js') },
+  { path: '/profile', auth: 'required', menu: 'profile', load: () => import('./pages/profile.js') },
   { path: '/admin', auth: 'admin', menu: 'admin', load: () => import('./pages/admin.js') },
   { path: '/dashboard', auth: 'admin', menu: 'dashboard', load: () => import('./pages/dashboard.js') },
 ];
@@ -107,7 +109,9 @@ function topbarHtml(viewKey) {
       ✉️<span class="badge badge-danger" id="msg-badge" style="display:none;position:absolute;top:-4px;right:-4px">0</span>
     </button>
     <button class="avatar-btn" id="user-menu">
-      <span class="avatar-dot">${esc(initials(store.nickname))}</span>
+      <span class="avatar-dot">${store.user?.avatar
+        ? `<img src="/uploads/${encodeURIComponent(store.user.avatar)}" alt="">`
+        : esc(initials(store.nickname))}</span>
       <span>${esc(store.nickname)}</span>
       <span class="muted small">${store.isAdmin ? '管理员' : (viewKey === 'seller' ? '卖家视角' : '买家视角')}</span>
     </button>` : `
@@ -387,6 +391,8 @@ async function render() {
 /* ---------------------------------------------------------------- 启动 */
 async function boot() {
   window.addEventListener('hashchange', render);
+  // 功能⑦：资料页改完昵称/头像后，通知外壳重画顶栏
+  window.addEventListener('cm:user-updated', () => render());
 
   if (store.token) {
     try {

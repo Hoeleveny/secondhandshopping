@@ -101,6 +101,44 @@ def me():
     return ok({"user": user.to_dict(), "view": view, "is_admin": user.is_admin})
 
 
+@bp.put("/profile")
+@login_required
+def update_profile():
+    """功能⑦：修改昵称与头像。
+
+    头像走 /api/upload 上传拿到文件名后，把文件名提交到这里；
+    传 avatar="" 表示恢复成默认（首字）头像。
+    """
+    user = current_user()
+    body = json_body()
+    changed = []
+
+    if "nickname" in body:
+        nickname = (body.get("nickname") or "").strip()
+        if not nickname:
+            return fail("昵称不能为空")
+        if len(nickname) > 20:
+            return fail("昵称不能超过 20 个字符")
+        if nickname != user.nickname:
+            user.nickname = nickname
+            changed.append("昵称")
+
+    if "avatar" in body:
+        avatar = (body.get("avatar") or "").strip()
+        if len(avatar) > 255:
+            return fail("头像文件名过长")
+        if avatar != (user.avatar or ""):
+            user.avatar = avatar or None
+            changed.append("头像")
+
+    if not changed:
+        return ok(user.to_dict(), msg="资料没有变化")
+
+    db.session.commit()
+    # 昵称写进了 JWT 的 claims，改完让前端重新取一次 /me 即可生效
+    return ok(user.to_dict(), msg=f"{'、'.join(changed)}已更新")
+
+
 @bp.post("/logout")
 def logout():
     """JWT 无状态，退出由前端清除本地凭证即可。"""

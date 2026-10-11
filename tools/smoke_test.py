@@ -933,6 +933,49 @@ def main() -> int:
                              "tag": "闲聊", "images": "not-a-list"})
     check("配图参数格式非法被拒", res.get("code") != 0, str(res)[:150])
 
+    # ---------------- 功能⑦ 个人资料（昵称 / 头像）----------------
+    section("功能⑦ 个人资料")
+
+    # 用测试账号 smoke_buyer，避免改到演示账号的资料
+    status, res = call("PUT", "/api/auth/profile", body={"nickname": "改个名"})
+    check("未登录不能改资料", status == 401, str(res)[:150])
+
+    status, res = call("PUT", "/api/auth/profile", body={"nickname": ""}, token=token)
+    check("昵称不能为空", res.get("code") != 0, str(res)[:150])
+
+    status, res = call("PUT", "/api/auth/profile", body={"nickname": "x" * 21}, token=token)
+    check("昵称不能超过 20 个字符", res.get("code") != 0, str(res)[:150])
+
+    status, res = call("PUT", "/api/auth/profile", body={"nickname": "冒烟改名人"}, token=token)
+    check("修改昵称成功",
+          res.get("code") == 0 and (res.get("data") or {}).get("nickname") == "冒烟改名人",
+          str(res)[:180])
+
+    status, res = call("GET", "/api/auth/me", token=token)
+    check("/api/auth/me 能读到新昵称",
+          (res.get("data") or {}).get("user", {}).get("nickname") == "冒烟改名人",
+          str(res)[:180])
+
+    status, res = call("PUT", "/api/auth/profile",
+                       body={"avatar": "avatar-test.png"}, token=token)
+    check("设置头像成功",
+          res.get("code") == 0 and (res.get("data") or {}).get("avatar") == "avatar-test.png",
+          str(res)[:180])
+
+    status, res = call("GET", "/api/auth/me", token=token)
+    check("/api/auth/me 能读到头像",
+          (res.get("data") or {}).get("user", {}).get("avatar") == "avatar-test.png",
+          str(res)[:180])
+
+    status, res = call("PUT", "/api/auth/profile", body={"avatar": ""}, token=token)
+    check("可以恢复成默认头像（avatar 置空）",
+          res.get("code") == 0 and not (res.get("data") or {}).get("avatar"),
+          str(res)[:180])
+
+    status, res = call("PUT", "/api/auth/profile", body={"nickname": "冒烟改名人"}, token=token)
+    check("资料没有变化时给出友好提示而不是报错",
+          res.get("code") == 0, str(res)[:150])
+
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 

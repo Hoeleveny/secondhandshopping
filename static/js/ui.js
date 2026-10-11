@@ -12,6 +12,16 @@ export function esc(value) {
 
 export const imgUrl = (name) => (name ? `/uploads/${encodeURIComponent(name)}` : '');
 
+/** 头像：设置过头像就显示图片，否则显示昵称首字（功能⑦） */
+export function avatarHtml(user, size = 36, className = 'msg-avatar') {
+  const name = (user && user.nickname) || '?';
+  const style = `width:${size}px;height:${size}px;flex:0 0 ${size}px`;
+  if (user && user.avatar) {
+    return `<span class="${className}" style="${style}"><img src="${esc(imgUrl(user.avatar))}" alt=""></span>`;
+  }
+  return `<span class="${className}" style="${style}">${esc(name.slice(0, 1))}</span>`;
+}
+
 /** 商品封面：没有真实图片时用分类 emoji 占位 */
 export function coverHtml(product, size = 52) {
   if (product.cover) {

@@ -404,6 +404,17 @@ h3 { font-size: 16px; }
   max-width: 240px; max-height: 240px; border-radius: 10px;
   border: 1px solid var(--border); cursor: zoom-in; background: var(--green-soft);
 }
+
+/* ---------------------------------------------------------------- 个人资料（功能⑦） */
+.profile-row { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.profile-avatar {
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%; overflow: hidden; background: var(--green);
+  color: #fff; font-size: 34px; font-weight: 700; border: 3px solid var(--green-soft);
+}
+.profile-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.avatar-dot { overflow: hidden; }
+.avatar-dot img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
 .post-actions { display: flex; gap: 14px; margin-top: 8px; font-size: 13px; color: var(--text-sub); }
 .post-actions button {
   border: none; background: none; cursor: pointer; color: inherit; font-size: 13px; padding: 2px 4px;

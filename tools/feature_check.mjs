@@ -765,6 +765,137 @@ async function feature6(cdp) {
   if (post) await api('DELETE', `/api/posts/${post.id}`, { token: await login('buyer1', '123456', 'buyer') });
 }
 
+/* ================================================================ 功能⑦ 个人资料 */
+async function feature7(cdp) {
+  console.log('\n===== 功能⑦ 个人资料（昵称、头像）=====');
+
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64');
+  const avatarFile = path.join(WORK, 'avatar-test.png');
+  fs.writeFileSync(avatarFile, png);
+
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const original = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+  const originalNick = original.nickname;
+  const newNick = `李小明${Date.now() % 1000}`;
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go('/profile');
+
+  const loaded = await cdp.eval(`
+    (() => ({
+      hasNick: !!document.querySelector('#pf-nickname'),
+      nick: document.querySelector('#pf-nickname')?.value || '',
+      hasPicker: !!document.querySelector('#avatar-file'),
+      previewText: document.querySelector('#avatar-preview')?.innerText.trim() || '',
+      menuItems: [...document.querySelectorAll('.menu-item')].map(m => m.innerText.trim()),
+    }))()`);
+  check('侧边栏有「个人资料」入口，页面能读到当前昵称',
+    loaded.menuItems.some(t => t.includes('个人资料')) && loaded.nick === originalNick,
+    `菜单=${JSON.stringify(loaded.menuItems)}，昵称=「${loaded.nick}」`);
+  check('资料页有头像上传入口，未设置头像时显示昵称首字',
+    loaded.hasPicker && loaded.previewText === originalNick.slice(0, 1),
+    `预览=「${loaded.previewText}」`);
+
+  await cdp.shot(path.join(SHOT_DIR, 'f7-profile.png'));
+
+  // ---- 1. 昵称为空时不给保存 ----
+  await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#pf-nickname');
+      el.value = '';
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      document.querySelector('#btn-save').click();
+    })()`);
+  await sleep(700);
+  const emptyNick = await cdp.eval(`
+    (() => ({
+      invalid: document.querySelector('#pf-nickname').classList.contains('invalid'),
+      err: document.querySelector('#pf-nickname')?.parentElement.querySelector('.form-error')?.innerText || '',
+      nick: document.querySelector('#pf-nickname').value,
+    }))()`);
+  const serverNick1 = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user.nickname;
+  check('昵称留空时标红提示且没有提交',
+    emptyNick.invalid && emptyNick.err.includes('昵称') && serverNick1 === originalNick,
+    `标红=${emptyNick.invalid}，提示=「${emptyNick.err}」，服务端昵称仍为「${serverNick1}」`);
+
+  // ---- 2. 上传头像 ----
+  const { root } = await cdp.send('DOM.getDocument');
+  const { nodeId } = await cdp.send('DOM.querySelector',
+    { nodeId: root.nodeId, selector: '#avatar-file' });
+  await cdp.send('DOM.setFileInputFiles', { files: [avatarFile], nodeId });
+  await sleep(1600);
+
+  const afterUpload = await cdp.eval(`
+    (() => ({
+      hasImg: !!document.querySelector('#avatar-preview img'),
+      src: document.querySelector('#avatar-preview img')?.getAttribute('src') || '',
+    }))()`);
+  check('上传头像后预览立刻变成图片',
+    afterUpload.hasImg && afterUpload.src.startsWith('/uploads/'), JSON.stringify(afterUpload));
+
+  // ---- 3. 改昵称 + 保存 ----
+  await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#pf-nickname');
+      el.value = ${JSON.stringify(newNick)};
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      document.querySelector('#btn-save').click();
+    })()`);
+  await sleep(1600);
+
+  const saved = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+  check('保存后接口里昵称与头像都已更新',
+    saved.nickname === newNick && !!saved.avatar,
+    `昵称=${saved.nickname}，头像=${saved.avatar}`);
+
+  // ---- 4. 顶栏跟着变 ----
+  const topbar = await cdp.eval(`
+    (() => {
+      const btn = document.querySelector('#user-menu');
+      return {
+        text: btn?.innerText.replace(/\\s+/g, ' ').trim() || '',
+        hasImg: !!btn?.querySelector('.avatar-dot img'),
+        imgSrc: btn?.querySelector('.avatar-dot img')?.getAttribute('src') || '',
+      };
+    })()`);
+  check('顶栏昵称与头像同步更新',
+    topbar.text.includes(newNick) && topbar.hasImg && topbar.imgSrc.startsWith('/uploads/'),
+    JSON.stringify(topbar));
+
+  await cdp.shot(path.join(SHOT_DIR, 'f7-profile-saved.png'));
+
+  // ---- 5. 恢复默认头像 ----
+  await cdp.eval(`
+    (() => {
+      document.querySelector('#btn-clear-avatar').click();
+      document.querySelector('#btn-save').click();
+    })()`);
+  await sleep(1600);
+  const cleared = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+  const topbarAfter = await cdp.eval(`
+    (() => {
+      const btn = document.querySelector('#user-menu');
+      return { hasImg: !!btn?.querySelector('.avatar-dot img'), text: btn?.innerText.replace(/\\s+/g,' ').trim() || '' };
+    })()`);
+  check('恢复默认头像后接口与顶栏都回到首字',
+    !cleared.avatar && !topbarAfter.hasImg, `接口 avatar=${cleared.avatar}，顶栏有图=${topbarAfter.hasImg}`);
+
+  // ---- 6. 头像也出现在私信头像位（复用同一套渲染）----
+  await api('PUT', '/api/auth/profile', { token: buyerToken, body: { avatar: saved.avatar } });
+  await cdp.go('/profile');
+  await sleep(600);
+
+  // ---- 收尾：把昵称和头像都还原成测试前的样子 ----
+  await api('PUT', '/api/auth/profile',
+    { token: buyerToken, body: { nickname: originalNick, avatar: original.avatar || '' } });
+  const restored = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+  check('测试结束后资料已还原',
+    restored.nickname === originalNick && (restored.avatar || null) === (original.avatar || null),
+    `昵称=${restored.nickname}，头像=${restored.avatar}`);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -773,6 +904,7 @@ const GROUPS = {
   4: { title: '删除记录', fn: feature4 },
   5: { title: '帖子点击响应范围', fn: feature5 },
   6: { title: '帖子配图', fn: feature6 },
+  7: { title: '个人资料（昵称、头像）', fn: feature7 },
 };
 
 async function main() {

@@ -26,6 +26,7 @@ CREATE TABLE `users` (
   `role`          ENUM('buyer','seller','admin') NOT NULL DEFAULT 'buyer'
                                                           COMMENT '注册时的初始身份；admin 为管理员，不可切换',
   `credit`        DECIMAL(3,1)    NOT NULL DEFAULT 5.0    COMMENT '信用分（展示用，默认 5.0）',
+  `avatar`        VARCHAR(255)    NULL                    COMMENT '头像文件名（相对 uploads/），功能⑦',
   `created_at`    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_users_username` (`username`),

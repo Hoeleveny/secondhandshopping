@@ -27,6 +27,8 @@ class User(db.Model):
         nullable=False, default=ROLE_BUYER,
     )
     credit = db.Column(db.Numeric(3, 1), nullable=False, default=5.0)
+    # 功能⑦：头像文件名（相对 uploads/）
+    avatar = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
     # ---- 业务方法 ----
@@ -46,6 +48,8 @@ class User(db.Model):
             "username": self.username,
             "nickname": self.nickname,
             "role": self.role,
+            # 功能⑦：头像文件名（相对 uploads/），没设置就是 None
+            "avatar": self.avatar or None,
         }
         if with_credit:
             data["credit"] = float(self.credit or 0)
