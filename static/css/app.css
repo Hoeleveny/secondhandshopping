@@ -466,3 +466,8 @@ h3 { font-size: 16px; }
 .bubble.other { align-self: flex-start; background: #f1f4f2; border-bottom-left-radius: 4px; }
 .bubble .b-time { display: block; font-size: 11px; opacity: .72; margin-top: 4px; }
 .chat-input { display: flex; gap: 10px; align-items: flex-end; padding-top: 10px; border-top: 1px solid var(--border); }
+
+/* ---------------------------------------------------------------- 价格自定义区间（功能②） */
+.price-range-row { display: flex; align-items: center; gap: 8px; }
+.price-range-row .input { min-width: 0; }
+.price-range-row .muted { flex: 0 0 auto; }

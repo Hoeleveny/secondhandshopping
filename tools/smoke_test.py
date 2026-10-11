@@ -709,6 +709,33 @@ def main() -> int:
     status, res = call("GET", "/api/messages/with/999999", token=token)
     check("对方不存在时报错", res.get("code") != 0, str(res)[:150])
 
+    # ---------------- 功能② 价格区间 自定义 ----------------
+    section("功能② 价格区间自定义输入")
+
+    status, res = call("GET", "/api/products?min_price=30&sort=price_asc&page_size=50")
+    prices = [p["price"] for p in (res.get("data") or {}).get("list", [])]
+    check("只填最低价：结果全部 ≥ 30",
+          bool(prices) and all(p >= 30 for p in prices), str(prices)[:120])
+
+    status, res = call("GET", "/api/products?max_price=20&page_size=50")
+    prices = [p["price"] for p in (res.get("data") or {}).get("list", [])]
+    check("只填最高价：结果全部 ≤ 20",
+          bool(prices) and all(p <= 20 for p in prices), str(prices)[:120])
+
+    status, res = call("GET", "/api/products?min_price=25&max_price=25&page_size=50")
+    prices = [p["price"] for p in (res.get("data") or {}).get("list", [])]
+    check("最低价 = 最高价：只返回该价位的商品",
+          bool(prices) and all(p == 25.0 for p in prices), str(prices)[:120])
+
+    status, res = call("GET", "/api/products?min_price=80&max_price=130&page_size=50")
+    prices = [p["price"] for p in (res.get("data") or {}).get("list", [])]
+    check("自定义区间 80~130：结果都落在区间内",
+          bool(prices) and all(80 <= p <= 130 for p in prices), str(prices)[:120])
+
+    status, res = call("GET", "/api/products?min_price=100&max_price=50")
+    check("最低价大于最高价：返回空结果而不是报错",
+          res.get("code") == 0 and (res.get("data") or {}).get("total") == 0, str(res)[:150])
+
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 

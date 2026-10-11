@@ -148,9 +148,137 @@ function cleanupMessages(userIds) {
   } catch { /* 清理失败不影响测试结论 */ }
 }
 
+/** 读出结果区里所有商品卡的价格（数字） */
+async function shownPrices(cdp) {
+  return cdp.eval(`
+    [...document.querySelectorAll('#result-area .price')]
+      .map(e => Number(String(e.innerText).replace(/[^0-9.]/g, '')))
+      .filter(n => !Number.isNaN(n))`);
+}
+
+/* ================================================================ 功能② 价格区间自定义 */
+async function feature2(cdp) {
+  console.log('\n===== 功能② 价格区间可自行输入 =====');
+
+  await cdp.logout();
+  await cdp.go('/search');
+
+  const total = await cdp.eval(`document.querySelector('#result-count').innerText`);
+  check('默认展示全部在售商品', /共 \d+ 件/.test(total), total);
+
+  // ---- 1. 快捷区间仍然可用，并会回填到输入框 ----
+  await cdp.eval(`
+    (() => {
+      const s = document.querySelector('#f-price');
+      s.value = '20-50';
+      s.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+  await sleep(1100);
+  const preset = await cdp.eval(`
+    (() => ({
+      min: document.querySelector('#f-min-price').value,
+      max: document.querySelector('#f-max-price').value,
+      select: document.querySelector('#f-price').value,
+      count: document.querySelector('#result-count').innerText,
+    }))()`);
+  const presetPrices = await shownPrices(cdp);
+  check('选快捷区间会自动填进最低价 / 最高价输入框',
+    preset.min === '20' && preset.max === '50' && preset.select === '20-50',
+    JSON.stringify(preset));
+  check('快捷区间的结果都落在 20~50',
+    presetPrices.length > 0 && presetPrices.every(p => p >= 20 && p <= 50),
+    `价格=${JSON.stringify(presetPrices)}`);
+
+  // ---- 2. 手填自定义区间 ----
+  await cdp.eval(`
+    (() => {
+      const mn = document.querySelector('#f-min-price');
+      const mx = document.querySelector('#f-max-price');
+      const fire = (el, type) => el.dispatchEvent(new Event(type, { bubbles: true }));
+      mn.value = '80'; fire(mn, 'input');
+      mx.value = '130'; fire(mx, 'input');
+      fire(mx, 'change');
+    })()`);
+  await sleep(1100);
+  const customPrices = await shownPrices(cdp);
+  const customState = await cdp.eval(`
+    (() => ({
+      select: document.querySelector('#f-price').value,
+      count: document.querySelector('#result-count').innerText,
+      hash: location.hash,
+    }))()`);
+  check('手填 80~130 后结果全部落在区间内',
+    customPrices.length > 0 && customPrices.every(p => p >= 80 && p <= 130),
+    `价格=${JSON.stringify(customPrices)}，${customState.count}`);
+  check('手填后快捷下拉自动变成「自定义」',
+    customState.select === 'custom', `select=${customState.select}`);
+  check('筛选条件同步到地址栏（可刷新/分享）',
+    /min_price=80/.test(customState.hash) && /max_price=130/.test(customState.hash),
+    customState.hash);
+
+  await cdp.shot(path.join(SHOT_DIR, 'f2-price-custom.png'));
+
+  // ---- 3. 只填一边 ----
+  await cdp.eval(`
+    (() => {
+      const mn = document.querySelector('#f-min-price');
+      const mx = document.querySelector('#f-max-price');
+      const fire = (el, type) => el.dispatchEvent(new Event(type, { bubbles: true }));
+      mn.value = ''; fire(mn, 'input');
+      mx.value = '20'; fire(mx, 'input');
+      fire(mx, 'change');
+    })()`);
+  await sleep(1100);
+  const onlyMax = await shownPrices(cdp);
+  check('只填最高价 20：不报错且结果都 ≤ 20',
+    onlyMax.length > 0 && onlyMax.every(p => p <= 20), `价格=${JSON.stringify(onlyMax)}`);
+
+  // ---- 4. 填错（最低价 > 最高价）应标红且不查询 ----
+  const countBefore = await cdp.eval(`document.querySelector('#result-count').innerText`);
+  await cdp.eval(`
+    (() => {
+      const mn = document.querySelector('#f-min-price');
+      const mx = document.querySelector('#f-max-price');
+      const fire = (el, type) => el.dispatchEvent(new Event(type, { bubbles: true }));
+      mn.value = '200'; fire(mn, 'input');
+      mx.value = '100'; fire(mx, 'input');
+      fire(mx, 'change');
+    })()`);
+  await sleep(900);
+  const invalid = await cdp.eval(`
+    (() => ({
+      invalidCount: document.querySelectorAll('#f-min-price.invalid, #f-max-price.invalid').length,
+      errorText: [...document.querySelectorAll('.form-error')].map(e => e.innerText).join(' / '),
+      count: document.querySelector('#result-count').innerText,
+      toast: document.querySelector('.toast')?.innerText || '',
+    }))()`);
+  check('最低价 > 最高价时输入框标红并给出提示',
+    invalid.invalidCount === 2 && invalid.errorText.includes('最低价'),
+    `标红=${invalid.invalidCount}，提示=「${invalid.errorText}」`);
+  check('校验不通过时不发起查询（结果保持不变）',
+    invalid.count === countBefore, `之前「${countBefore}」→ 现在「${invalid.count}」`);
+
+  // ---- 5. 清除条件 ----
+  await cdp.eval(`document.querySelector('#btn-reset').click()`);
+  await sleep(1100);
+  const afterReset = await cdp.eval(`
+    (() => ({
+      min: document.querySelector('#f-min-price').value,
+      max: document.querySelector('#f-max-price').value,
+      select: document.querySelector('#f-price').value,
+      count: document.querySelector('#result-count').innerText,
+      invalidCount: document.querySelectorAll('.invalid').length,
+    }))()`);
+  check('「清除条件」会把自定义价格一起清掉并恢复全部商品',
+    afterReset.min === '' && afterReset.max === '' && afterReset.select === ''
+    && afterReset.invalidCount === 0 && afterReset.count === total,
+    JSON.stringify(afterReset));
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
+  2: { title: '价格区间可自行输入', fn: feature2 },
 };
 
 async function main() {
