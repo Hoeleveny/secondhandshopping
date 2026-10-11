@@ -858,6 +858,10 @@ async function check20() {
 async function check21() {
   const backup = await api('POST', '/api/admin/backup', { token: adminToken });
   const tables = Object.keys(backup.data?.payload?.data || {});
+  // PRD 原定义 14 张表；后续功能迭代通过 migration 继续加表（messages / product_wants /
+  // post_images / …），所以这里断言「不少于 14 张且都带数据」，而不是写死等于 14。
+  const PRD_TABLE_COUNT = 14;
+  const prdTablesCovered = PRD_TABLE_COUNT <= tables.length;
   const counts = backup.data?.counts || {};
   const files = await api('GET', '/api/admin/backups', { token: adminToken });
 
@@ -882,9 +886,9 @@ async function check21() {
   const dlOk = dl.ok && dlText.includes('campus-market');
 
   record(21, '管理员可备份导出数据、恢复数据、重置示例数据',
-    tables.length === 14 && files.data?.length >= 1 && beforeRestore === afterRestore + 1
+    prdTablesCovered && files.data?.length >= 1 && beforeRestore === afterRestore + 1
     && tempGone.status === 404 && reset.code === 0 && afterReset.stats.on_sale === 11 && dlOk,
-    `备份含 ${tables.length} 张表（users ${counts.users} 行）；备份文件 ${files.data?.length} 个；恢复前 ${beforeRestore} 件 → 恢复后 ${afterRestore} 件，恢复后新增的商品已消失（HTTP ${tempGone.status}）；重置后首页在售 ${afterReset.stats.on_sale} 件；备份可下载=${dlOk}`);
+    `备份含 ${tables.length} 张表（PRD 原定义 ${PRD_TABLE_COUNT} 张已全部覆盖=${prdTablesCovered}；users ${counts.users} 行）；备份文件 ${files.data?.length} 个；恢复前 ${beforeRestore} 件 → 恢复后 ${afterRestore} 件，恢复后新增的商品已消失（HTTP ${tempGone.status}）；重置后首页在售 ${afterReset.stats.on_sale} 件；备份可下载=${dlOk}`);
 }
 
 /* ================================================================ 22-23

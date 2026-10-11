@@ -77,7 +77,8 @@ def check_database() -> bool:
             (Config.DB_NAME,),
         )
         count = cur.fetchone()[0]
-        print(f"{OK}库 {Config.DB_NAME} 内共 {count} 张表（应 14）")
+        # 表数量随功能迭代增长，这里只提示构成，不做写死的数量断言
+        print(f"{OK}库 {Config.DB_NAME} 内共 {count} 张表（schema.sql 定义 14 张 + 迁移新增）")
         cur.execute(
             "SELECT table_name FROM information_schema.tables "
             "WHERE table_schema=%s ORDER BY table_name",

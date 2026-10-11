@@ -4,7 +4,7 @@
 
 - **前端**：原生 HTML + CSS + JavaScript（ES Module，无框架、无打包器；fetch 调接口，切换页面不整页刷新）
 - **后端**：Python Flask + Flask-SQLAlchemy + JWT(flask-jwt-extended) + bcrypt
-- **数据库**：MySQL 8（InnoDB，utf8mb4），共 14 张表
+- **数据库**：MySQL 8（InnoDB，utf8mb4），schema.sql 定义 14 张表 + 功能迭代新增 3 张（`messages`、`product_wants`、`post_images`），当前共 17 张表
 - **地图**：腾讯地图 JS API（GCJ-02）；未配置 key 时自动降级为 canvas 自绘校园示意图
 
 需求与设计依据见 [PRD-v2.0.md](PRD-v2.0.md)、[功能文档.md](功能文档.md)、[数据库字段归纳.md](数据库字段归纳.md)。
@@ -65,15 +65,22 @@ start.bat
 
 | 命令 | 检查内容 | 最近结果 |
 |------|----------|----------|
-| `.venv\Scripts\python.exe manage.py check` | 依赖 / 项目模块 / MySQL 连接 / 14 张表 / 三处表结构修正是否落地 | 全部通过 |
-| `.venv\Scripts\python.exe tools\smoke_test.py` | 后端接口冒烟测试（需服务已启动） | **114 项通过** |
-| `node tools\check_frontend.mjs` | 前端 ES Module 的 import 路径与具名导出是否对得上 | 20 个模块正常 |
+| `.venv\Scripts\python.exe manage.py check` | 依赖 / 项目模块 / MySQL 连接 / 表结构 / 三处表结构修正是否落地 | 全部通过 |
+| `.venv\Scripts\python.exe manage.py migrate` | 执行 `sql/migrations/` 下的增量迁移（幂等，只增不删） | 5 个迁移，17 张表 |
+| `.venv\Scripts\python.exe manage.py clean-test` | 清理自动化测试残留（另加 `--files` 可删孤儿图片） | 无残留 |
+| `.venv\Scripts\python.exe tools\smoke_test.py` | 后端接口冒烟测试（需服务已启动） | **171 项通过** |
+| `node tools\check_frontend.mjs` | 前端 ES Module 的 import 路径与具名导出是否对得上 | 22 个模块正常 |
 | `node tools\e2e_check.mjs --shots` | 无头 Chrome 把每个页面跑一遍：查 JS 报错、接口失败、空白页，并截图 | **27 个页面 0 问题** |
-| `node tools\acceptance_check.mjs --reset` | **PRD 第 10 章 23 条验收标准**逐条核对（界面真实点击 + 接口核对） | **23 / 23 通过** |
+| `node tools\feature_check.mjs all` | **7 项新增功能的浏览器测试**（真实点击、真实上传文件） | **54 / 54 通过** |
+| `node tools\acceptance_check.mjs` | **PRD 第 10 章 23 条验收标准**逐条核对（界面真实点击 + 接口核对） | **23 / 23 通过** |
 | `node tools\make_acceptance_report.mjs` | 把验收结果 JSON 转成 `docs/验收报告.md` | — |
 
-> 跑 `e2e_check.mjs` / `acceptance_check.mjs` 需要本机有 Chrome 或无头 Edge；可通过环境变量
-> `CHROME_PATH` 指定浏览器路径，`APP_BASE` 指定站点地址。
+> ⚠️ `acceptance_check.mjs` 内部会调用「重置示例数据」，**会清空库里的业务数据**。
+> 对正在使用的库请勿直接运行；若要跑，请先用 `DB_NAME` 指向一个临时库
+> （验收时就是这么做的），或自行备份。`--reset` 参数同理。
+>
+> 跑 `e2e_check.mjs` / `acceptance_check.mjs` / `feature_check.mjs` 需要本机有 Chrome 或无头 Edge；
+> 可通过环境变量 `CHROME_PATH` 指定浏览器路径，`APP_BASE` 指定站点地址。
 
 ## 五、目录结构
 
@@ -82,7 +89,7 @@ secondhandshop/
 ├─ app.py                 应用工厂与入口
 ├─ config.py              配置（数据库、JWT、上传、地图 key…）
 ├─ extensions.py          db / bcrypt / jwt 实例
-├─ models.py              14 张表的 ORM 模型
+├─ models.py              17 张表的 ORM 模型
 ├─ seed.py                示例数据
 ├─ backup.py              数据备份 / 恢复（导出导入 JSON）
 ├─ manage.py              命令行工具
@@ -110,7 +117,7 @@ secondhandshop/
 │     ├─ components.js    商品卡 / 订单卡 / 帖子条目 / 评价条目
 │     └─ pages/           14 个页面模块
 ├─ templates/index.html   单页外壳
-├─ sql/schema.sql         14 张表的建表脚本（含注释，答辩可直接讲）
+├─ sql/schema.sql         17 张表的建表脚本（含注释，答辩可直接讲）
 ├─ docs/验收报告.md        23 条验收标准的逐条证据
 ├─ uploads/               商品图片上传目录
 ├─ wheels/                离线 wheel 仓库（便于无网重装依赖）
@@ -209,4 +216,34 @@ git config http.sslCAInfo .git/git-ca-bundle.crt
 
 另外，推送时 git 需要调起系统凭据助手（Git Credential Manager），它是 msys 程序、要创建信号
 管道；在受限文件沙箱下会报 `couldn't create signal pipe`，需要放宽一次权限才能完成推送。
+
+---
+
+## 九、功能迭代记录
+
+在 v2.0 交付版本之上，后续按「一次只做一个功能、每个功能先写并跑通测试、再单独提交一次」的
+方式迭代了 7 项功能。数据库变更全部走 `sql/migrations/` 下的**幂等增量脚本**
+（`manage.py migrate` 执行，只增不删、不动已有数据），不使用会清库的 `init-db` 去「更新」。
+
+| # | 功能 | 数据库变更 | 主要接口 / 界面 | 提交 |
+|---|------|-----------|----------------|------|
+| ① | 私信消息 | 新表 `messages` | `POST /api/messages`、`/conversations`、`/with/<uid>`、`/unread`；「我的消息」页 + 顶栏未读红点 + 详情页「私信卖家」 | `9dfa5fa` |
+| ② | 价格区间可自定义输入 | — | 搜索页在快捷区间之外新增「最低价 / 最高价」手填框，含校验与地址栏同步 | `d70b021` |
+| ③ | 商品详情「我想要」 | 新表 `product_wants` | `POST /api/products/{id}/want` 点一次标记、再点取消；详情页按钮与「N 人想要」统计、商品卡显示 | `efa9c6a` |
+| ④ | 删除商品记录 / 删除订单记录 | `orders.buyer_deleted` | `DELETE /api/products/{id}/record`（有交易记录则拒绝）、`DELETE /api/orders/{id}/record`（只对买家隐藏）；「我的商品」新增「已删除」页签 | `6a80647` |
+| ⑤ | 交流广场扩大帖子点击范围 | — | 整张帖子卡片可点击进详情，点赞/删除按钮不误触发 | `86637d9` |
+| ⑥ | 帖子发布支持配图 | 新表 `post_images` | 发帖弹窗可多选上传、缩略图预览与移除；列表显示缩略图、详情页图集可放大 | `9434fec` |
+| ⑦ | 用户资料页（昵称、头像） | `users.avatar` | `PUT /api/auth/profile`；「个人资料」页可改昵称、上传/恢复头像，顶栏与消息页同步显示 | `fe0ad4b` |
+
+**回归验证（7 项全部完成后一次性跑通）**
+
+```
+manage.py check              环境与表结构自检        通过
+tools/smoke_test.py          后端接口冒烟            171 / 171
+tools/check_frontend.mjs     前端模块依赖一致性      22 个模块正常
+tools/e2e_check.mjs --shots  无头浏览器跑 27 个页面   0 问题
+tools/feature_check.mjs all  7 项新功能浏览器测试     54 / 54
+tools/acceptance_check.mjs   PRD 第 10 章 23 条验收   23 / 23（在临时库上执行）
+```
+
 
