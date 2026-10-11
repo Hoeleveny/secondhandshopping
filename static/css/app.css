@@ -51,7 +51,13 @@ h3 { font-size: 16px; }
   background: var(--card); border-bottom: 1px solid var(--border);
   display: flex; align-items: center; gap: 18px; padding: 0 22px; z-index: 100;
 }
-.brand { font-size: 18px; font-weight: 800; color: var(--green); white-space: nowrap; }
+.brand {
+  font-size: 18px; font-weight: 800; color: var(--green); white-space: nowrap;
+  border: none; background: none; padding: 4px 6px; margin-left: -6px;
+  border-radius: 8px; cursor: pointer; font-family: inherit; transition: background .15s;
+}
+.brand:hover { background: var(--green-soft); }
+.brand:active { transform: translateY(1px); }
 .brand small { font-weight: 400; font-size: 12px; color: var(--muted); margin-left: 6px; }
 
 .search-box { flex: 1; max-width: 460px; display: flex; }

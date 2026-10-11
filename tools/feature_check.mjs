@@ -896,6 +896,62 @@ async function feature7(cdp) {
     `昵称=${restored.nickname}，头像=${restored.avatar}`);
 }
 
+/* ================================================================ 功能⑧ 站名回首页 */
+async function feature8(cdp) {
+  console.log('\n===== 功能⑧ 点击左上角站名回首页、左侧不再有「首页」 =====');
+
+  const readShell = () => cdp.eval(`
+    (() => {
+      const brand = document.querySelector('#brand-home');
+      return {
+        menuItems: [...document.querySelectorAll('.menu-item')].map(m => m.innerText.trim()),
+        brandText: brand?.innerText.trim() || '',
+        brandTag: brand?.tagName || '',
+        brandCursor: brand ? getComputedStyle(brand).cursor : '',
+        hash: location.hash,
+      };
+    })()`);
+
+  // ---- 1. 游客：菜单里没有「首页」，站名可点 ----
+  await cdp.logout();
+  await cdp.go('/search');
+  const guest = await readShell();
+  check('左侧功能列不再有「首页」按钮',
+    !guest.menuItems.some(t => t === '首页'),
+    `游客菜单=${JSON.stringify(guest.menuItems)}`);
+  check('左上角站名是真正可点击的按钮',
+    guest.brandTag === 'BUTTON' && guest.brandCursor === 'pointer' && guest.brandText.includes('校园二手集市'),
+    `标签=${guest.brandTag}，光标=${guest.brandCursor}，文字=「${guest.brandText}」`);
+
+  await cdp.eval(`document.querySelector('#brand-home').click()`);
+  await sleep(1200);
+  const afterBrand = await cdp.eval(`
+    (() => ({
+      hash: location.hash,
+      hasCategoryEntry: !!document.querySelector('#page .cat-card, #page .category-card, #page [data-category]'),
+      text: document.querySelector('#page')?.innerText.slice(0, 30) || '',
+    }))()`);
+  check('点站名能跳到首页并渲染出首页内容',
+    afterBrand.hash === '#/home' && /分类|最新|校园/.test(afterBrand.text),
+    `hash=${afterBrand.hash}，首页文字「${afterBrand.text.replace(/\n/g, ' ')}」`);
+
+  await cdp.shot(path.join(SHOT_DIR, 'f8-brand-home.png'));
+
+  // ---- 2. 买家 / 卖家 / 管理员三种视角都不该出现「首页」 ----
+  for (const [account, role, view] of [['buyer1', '123456', 'buyer'], ['seller1', '123456', 'seller'], ['admin', '123456', 'admin']]) {
+    await cdp.loginAs(account, role, view);
+    await cdp.go('/search');
+    const shell = await readShell();
+    check(`${view} 视角左侧功能列也没有「首页」`,
+      !shell.menuItems.some(t => t === '首页') && shell.menuItems.length > 0 && shell.brandTag === 'BUTTON',
+      `菜单=${JSON.stringify(shell.menuItems)}`);
+    await cdp.eval(`document.querySelector('#brand-home').click()`);
+    await sleep(900);
+    const hash = await cdp.eval(`location.hash`);
+    check(`${view} 视角点站名同样能回首页`, hash === '#/home', `hash=${hash}`);
+  }
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -905,6 +961,7 @@ const GROUPS = {
   5: { title: '帖子点击响应范围', fn: feature5 },
   6: { title: '帖子配图', fn: feature6 },
   7: { title: '个人资料（昵称、头像）', fn: feature7 },
+  8: { title: '站名回首页 / 菜单去掉首页', fn: feature8 },
 };
 
 async function main() {

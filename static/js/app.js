@@ -27,10 +27,10 @@ const M = {
 };
 
 const MENUS = {
-  guest: [M.home, M.search, M.compare, M.posts],
-  buyer: [M.home, M.search, M.compare, M.orders, M.favorites, M.swaps, M.messages, M.posts, M.profile],
-  seller: [M.home, M.publish, M.myProducts, M.sold, M.swaps, M.messages, M.posts, M.profile],
-  admin: [M.home, M.admin, M.dashboard, M.messages, M.profile],
+  guest: [M.search, M.compare, M.posts],
+  buyer: [M.search, M.compare, M.orders, M.favorites, M.swaps, M.messages, M.posts, M.profile],
+  seller: [M.publish, M.myProducts, M.sold, M.swaps, M.messages, M.posts, M.profile],
+  admin: [M.admin, M.dashboard, M.messages, M.profile],
 };
 
 /* ---------------------------------------------------------------- 路由表 */
@@ -119,7 +119,7 @@ function topbarHtml(viewKey) {
 
   return `
     <header class="topbar">
-      <div class="brand">🌿 校园二手集市</div>
+      <button class="brand" id="brand-home" title="回到首页">🌿 校园二手集市</button>
       ${switchHtml}
       <form class="search-box" id="top-search">
         <input type="text" placeholder="搜索想要的二手物品，回车搜索" id="top-search-input">
@@ -256,6 +256,9 @@ function bindShellEvents() {
 
   root.querySelectorAll('.menu-item').forEach(btn =>
     btn.addEventListener('click', () => go(btn.dataset.hash)));
+
+  // 左上角站名即「回首页」入口（左侧功能列不再单独放「首页」按钮）
+  root.querySelector('#brand-home')?.addEventListener('click', () => go('#/home'));
 
   const toggle = root.querySelector('#view-toggle');
   if (toggle) toggle.addEventListener('click', () => {
