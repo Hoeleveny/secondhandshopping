@@ -61,6 +61,27 @@ def section(title: str) -> None:
     print(f"\n===== {title} =====")
 
 
+def cleanup_test_data() -> None:
+    """清掉本脚本留下的测试数据（商品 / 帖子 / 消息等）。
+
+    商品接口只做软删除，测试数据会一直堆在库里，所以这里统一物理清理，
+    避免污染演示数据；清理失败不影响测试结论。
+    """
+    try:
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from tools.cleanup_test_data import cleanup
+
+        result = cleanup(verbose=False)
+        total = sum(result.values())
+        if total:
+            print(f"\n（已清理 {total} 行测试残留数据）")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def main() -> int:
     # ---------------- 公开只读接口 ----------------
     section("公开接口（游客可访问）")
@@ -608,8 +629,8 @@ def main() -> int:
     section("备份 / 恢复 / 重置示例数据")
     status, res = call("POST", "/api/admin/backup", token=admin_token)
     payload = (res.get("data") or {}).get("payload")
-    check("备份导出 JSON 且包含 14 张表",
-          res.get("code") == 0 and payload and len(payload.get("data", {})) == 14,
+    check("备份导出 JSON 且包含 15 张表",
+          res.get("code") == 0 and payload and len(payload.get("data", {})) == 15,
           str(res)[:200])
 
     status, res = call("GET", "/api/admin/backups", token=admin_token)
@@ -626,6 +647,70 @@ def main() -> int:
 
     status, res = call("POST", "/api/admin/backup", token=token)
     check("普通用户不能备份", res.get("code") == 403, str(res)[:150])
+
+    # ---------------- 功能① 私信消息 ----------------
+    section("功能① 私信消息")
+
+    status, res = call("GET", "/api/auth/me", token=token)
+    me_id = (res.get("data") or {}).get("user", {}).get("id")
+    status, res = call("GET", "/api/auth/me", token=seller_token)
+    seller_id = (res.get("data") or {}).get("user", {}).get("id")
+
+    status, res = call("POST", "/api/messages",
+                       body={"receiver_id": seller_id, "content": "未登录发私信"})
+    check("未登录不能发私信", status == 401, str(res)[:150])
+
+    status, res = call("POST", "/api/messages", token=token,
+                       body={"receiver_id": me_id, "content": "给自己发"})
+    check("不能给自己发私信", res.get("code") != 0, str(res)[:150])
+
+    status, res = call("POST", "/api/messages", token=token,
+                       body={"receiver_id": seller_id, "content": "   "})
+    check("空内容被拒", res.get("code") != 0, str(res)[:150])
+
+    status, res = call("POST", "/api/messages", token=token,
+                       body={"receiver_id": 999999, "content": "收信人不存在"})
+    check("收信人不存在被拒", res.get("code") != 0, str(res)[:150])
+
+    status, res = call("POST", "/api/messages", token=token,
+                       body={"receiver_id": seller_id, "content": "x" * 1001})
+    check("超长内容被拒", res.get("code") != 0, str(res)[:150])
+
+    status, res = call("POST", "/api/messages", token=token,
+                       body={"receiver_id": seller_id, "content": "冒烟测试：你好，这件还在吗？",
+                             "product_id": 1})
+    msg_id = (res.get("data") or {}).get("id")
+    check("发送私信成功", res.get("code") == 0 and bool(msg_id), str(res)[:150])
+
+    status, res = call("POST", "/api/messages", token=seller_token,
+                       body={"receiver_id": me_id, "content": "冒烟测试：还在的，随时可看"})
+    check("对方可以回复", res.get("code") == 0, str(res)[:150])
+
+    status, res = call("GET", "/api/messages/unread", token=seller_token)
+    check("卖家未读数为 1", (res.get("data") or {}).get("count") == 1, str(res)[:150])
+
+    status, res = call("GET", "/api/messages/conversations", token=seller_token)
+    convs = res.get("data") or []
+    conv = next((c for c in convs if (c.get("user") or {}).get("id") == me_id), None)
+    check("会话列表包含该对话且带未读数",
+          conv is not None and conv.get("unread") == 1
+          and "还在的" in (conv.get("last_message") or {}).get("content", ""), str(res)[:220])
+
+    status, res = call("GET", f"/api/messages/with/{me_id}", token=seller_token)
+    thread = (res.get("data") or {}).get("list") or []
+    check("聊天记录包含双方消息", len(thread) >= 2, str(res)[:150])
+
+    status, res = call("GET", "/api/messages/unread", token=seller_token)
+    check("打开会话后未读清零", (res.get("data") or {}).get("count") == 0, str(res)[:150])
+
+    status, res = call("GET", f"/api/messages/with/{me_id}")
+    check("未登录不能看聊天记录", status == 401, str(res)[:150])
+
+    status, res = call("GET", "/api/messages/with/999999", token=token)
+    check("对方不存在时报错", res.get("code") != 0, str(res)[:150])
+
+    # ---------------- 清理本脚本产生的测试数据 ----------------
+    cleanup_test_data()
 
     # ---------------- 汇总 ----------------
     print(f"\n===== 结果：通过 {len(PASSED)} 项，失败 {len(FAILED)} 项 =====")

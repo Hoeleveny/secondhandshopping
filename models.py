@@ -491,6 +491,39 @@ class PostLike(db.Model):
     __table_args__ = (db.UniqueConstraint("post_id", "user_id", name="uk_post_likes_post_user"),)
 
 
+# ---------------------------------------------------------------- 15. 私信消息（功能①）
+class Message(db.Model):
+    __tablename__ = "messages"
+
+    MAX_LENGTH = 1000
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    sender_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
+    receiver_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
+    product_id = db.Column(db.BigInteger, db.ForeignKey("products.id"))
+    content = db.Column(db.String(MAX_LENGTH), nullable=False)
+    is_read = db.Column(db.Boolean, nullable=False, default=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
+
+    sender = db.relationship("User", foreign_keys=[sender_id])
+    receiver = db.relationship("User", foreign_keys=[receiver_id])
+    product = db.relationship("Product")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "sender_id": self.sender_id,
+            "sender_nickname": self.sender.nickname if self.sender else None,
+            "receiver_id": self.receiver_id,
+            "receiver_nickname": self.receiver.nickname if self.receiver else None,
+            "product_id": self.product_id,
+            "product_name": self.product.name if self.product else None,
+            "content": self.content,
+            "is_read": bool(self.is_read),
+            "created_at": _dt(self.created_at),
+        }
+
+
 # ---------------------------------------------------------------- 工具函数
 def _dt(value: datetime | None) -> str | None:
     return value.strftime("%Y-%m-%d %H:%M:%S") if value else None

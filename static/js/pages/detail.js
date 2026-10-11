@@ -122,6 +122,7 @@ async function renderActions(root, product, id) {
       </button>`);
     buttons.push(`<button class="btn" data-act="compare">📊 比一比</button>`);
     buttons.push(`<button class="btn" data-act="fav">${product.favorited ? '★ 已收藏' : '☆ 收藏'}</button>`);
+    buttons.push(`<button class="btn" data-act="msg">✉️ 私信卖家</button>`);
     buttons.push(`<button class="btn" data-act="report">🚩 举报</button>`);
   }
 
@@ -135,6 +136,7 @@ async function renderActions(root, product, id) {
     if (act === 'login') { go('#/login?next=' + encodeURIComponent(`#/product/${id}`)); return; }
     if (act === 'compare') { go(`#/compare?category_id=${product.category_id}`); return; }
     if (act === 'edit') { go(`#/product/${id}/edit`); return; }
+    if (act === 'msg') { go(`#/messages?to=${product.seller_id}&product=${id}`); return; }
 
     try {
       if (act === 'fav') {

@@ -17,6 +17,7 @@ const M = {
   favorites: { key: 'favorites', hash: '#/favorites', icon: '⭐', label: '我的收藏' },
   swaps: { key: 'swaps', hash: '#/swaps', icon: '🔄', label: '以物换物' },
   posts: { key: 'posts', hash: '#/posts', icon: '💬', label: '交流广场' },
+  messages: { key: 'messages', hash: '#/messages', icon: '✉️', label: '我的消息' },
   publish: { key: 'publish', hash: '#/publish', icon: '➕', label: '发布商品' },
   myProducts: { key: 'my-products', hash: '#/my-products', icon: '🗂️', label: '我的商品' },
   sold: { key: 'sold', hash: '#/sold', icon: '📤', label: '卖出订单' },
@@ -26,9 +27,9 @@ const M = {
 
 const MENUS = {
   guest: [M.home, M.search, M.compare, M.posts],
-  buyer: [M.home, M.search, M.compare, M.orders, M.favorites, M.swaps, M.posts],
-  seller: [M.home, M.publish, M.myProducts, M.sold, M.swaps, M.posts],
-  admin: [M.home, M.admin, M.dashboard],
+  buyer: [M.home, M.search, M.compare, M.orders, M.favorites, M.swaps, M.messages, M.posts],
+  seller: [M.home, M.publish, M.myProducts, M.sold, M.swaps, M.messages, M.posts],
+  admin: [M.home, M.admin, M.dashboard, M.messages],
 };
 
 /* ---------------------------------------------------------------- 路由表 */
@@ -49,6 +50,7 @@ const ROUTES = [
   { path: '/swaps', auth: 'required', menu: 'swaps', load: () => import('./pages/swaps.js') },
   { path: '/posts', auth: 'any', menu: 'posts', load: () => import('./pages/posts.js') },
   { path: '/post/:id', auth: 'any', menu: 'posts', load: () => import('./pages/postDetail.js') },
+  { path: '/messages', auth: 'required', menu: 'messages', load: () => import('./pages/messages.js') },
   { path: '/admin', auth: 'admin', menu: 'admin', load: () => import('./pages/admin.js') },
   { path: '/dashboard', auth: 'admin', menu: 'dashboard', load: () => import('./pages/dashboard.js') },
 ];
@@ -101,6 +103,9 @@ function topbarHtml(viewKey) {
     </div>` : '';
 
   const rightHtml = store.isLoggedIn ? `
+    <button class="btn btn-ghost" id="msg-entry" title="我的消息" style="position:relative;font-size:17px">
+      ✉️<span class="badge badge-danger" id="msg-badge" style="display:none;position:absolute;top:-4px;right:-4px">0</span>
+    </button>
     <button class="avatar-btn" id="user-menu">
       <span class="avatar-dot">${esc(initials(store.nickname))}</span>
       <span>${esc(store.nickname)}</span>
@@ -264,6 +269,17 @@ function bindShellEvents() {
   const loginBtn = root.querySelector('#go-login');
   if (loginBtn) loginBtn.addEventListener('click', () => go('#/login'));
 
+  // 顶栏消息入口 + 未读红点（登录后每 30 秒刷一次）
+  const msgEntry = root.querySelector('#msg-entry');
+  if (msgEntry) {
+    msgEntry.addEventListener('click', () => go('#/messages'));
+    refreshUnreadBadge();
+    clearInterval(window.__unreadTimer);
+    window.__unreadTimer = setInterval(refreshUnreadBadge, 30000);
+  } else {
+    clearInterval(window.__unreadTimer);
+  }
+
   const userMenu = root.querySelector('#user-menu');
   if (userMenu) userMenu.addEventListener('click', (event) => {
     event.stopPropagation();
@@ -302,6 +318,17 @@ function bindShellEvents() {
 
 function viewKeyLabel() {
   return store.view === 'seller' ? '卖家视角' : '买家视角';
+}
+
+/** 顶栏未读私信红点 */
+async function refreshUnreadBadge() {
+  const badge = document.getElementById('msg-badge');
+  if (!badge || !store.isLoggedIn) return;
+  try {
+    const data = await api.get('/api/messages/unread');
+    badge.textContent = data.count;
+    badge.style.display = data.count > 0 ? '' : 'none';
+  } catch (err) { /* 未登录或网络异常时静默 */ }
 }
 
 /* ---------------------------------------------------------------- 路由渲染 */
