@@ -75,11 +75,13 @@ export default {
           })).join('')
         : emptyHtml('还没有帖子，来发第一条吧', '💬');
 
-      listArea.querySelectorAll('[data-open]').forEach(el =>
-        el.addEventListener('click', () => { location.hash = `#/post/${el.dataset.open}`; }));
+      // 功能⑤：整张帖子卡片都可点击进入详情
+      listArea.querySelectorAll('.post-item[data-post]').forEach(item =>
+        item.addEventListener('click', () => { location.hash = `#/post/${item.dataset.post}`; }));
 
       listArea.querySelectorAll('[data-like]').forEach(btn =>
-        btn.addEventListener('click', async () => {
+        btn.addEventListener('click', async (event) => {
+          event.stopPropagation();   // 点赞不要触发整卡跳转
           if (!store.isLoggedIn) { toast('登录后才能点赞', 'warn'); location.hash = '#/login'; return; }
           try {
             const result = await api.post(`/api/posts/${btn.dataset.like}/like`);
@@ -90,9 +92,13 @@ export default {
           } catch (err) { toast(err.message, 'error'); }
         }));
 
+      // 「评论」按钮本身就是去详情页，交给整卡点击处理即可
+      listArea.querySelectorAll('[data-comment]').forEach(btn =>
+        btn.addEventListener('click', () => { location.hash = `#/post/${btn.dataset.comment}`; }));
+
       listArea.querySelectorAll('[data-delete]').forEach(btn =>
         btn.addEventListener('click', async (event) => {
-          event.stopPropagation();
+          event.stopPropagation();   // 删除不要触发整卡跳转
           const sure = await confirmDialog({
             title: '确认删除这条帖子？', danger: true, okText: '删除',
             message: '删除后其他同学将看不到这条帖子。',

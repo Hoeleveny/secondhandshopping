@@ -552,12 +552,104 @@ function cleanupByPython() {
   } catch { /* 清理失败不影响测试结论 */ }
 }
 
+/* ================================================================ 功能⑤ 帖子点击范围 */
+async function feature5(cdp) {
+  console.log('\n===== 功能⑤ 交流广场扩大帖子点击响应范围 =====');
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go('/posts');
+
+  const layout = await cdp.eval(`
+    (() => {
+      const item = document.querySelector('#list-area .post-item');
+      if (!item) return { found: false };
+      return {
+        found: true,
+        cursor: getComputedStyle(item).cursor,
+        title: item.querySelector('.post-title')?.innerText.trim() || '',
+        id: item.dataset.post,
+      };
+    })()`);
+  check('帖子卡片是可点击样式（cursor: pointer）',
+    layout.found && layout.cursor === 'pointer', JSON.stringify(layout));
+
+  // ---- 1. 点「内容摘要」区域（以前点这里没反应）----
+  await cdp.eval(`
+    (() => {
+      const item = document.querySelector('#list-area .post-item');
+      item.querySelector('.muted.small.mt-8')?.click() || item.click();
+    })()`);
+  await sleep(1000);
+  const afterContent = await cdp.eval(`({ hash: location.hash, text: document.querySelector('#page').innerText.slice(0, 40) })`);
+  check('点帖子内容区域能跳转到详情页',
+    /^#\/post\/\d+/.test(afterContent.hash), `hash=${afterContent.hash}`);
+
+  // ---- 2. 点「元信息」区域 ----
+  await cdp.go('/posts');
+  await cdp.eval(`document.querySelector('#list-area .post-item .post-meta').click()`);
+  await sleep(1000);
+  const afterMeta = await cdp.eval(`location.hash`);
+  check('点作者 / 时间等元信息区域也能跳转',
+    /^#\/post\/\d+/.test(afterMeta), `hash=${afterMeta}`);
+
+  // ---- 3. 点标题（老行为，必须保持）----
+  await cdp.go('/posts');
+  await cdp.eval(`document.querySelector('#list-area .post-item .post-title').click()`);
+  await sleep(1000);
+  const afterTitle = await cdp.eval(`location.hash`);
+  check('点标题依然能跳转（原有行为没有破坏）',
+    /^#\/post\/\d+/.test(afterTitle), `hash=${afterTitle}`);
+
+  await cdp.shot(path.join(SHOT_DIR, 'f5-post-card.png'));
+
+  // ---- 4. 点赞按钮不能触发跳转（关键：别把整卡点击做成误触）----
+  await cdp.go('/posts');
+  const likeBefore = await cdp.eval(`
+    (() => {
+      const btn = document.querySelector('#list-area .post-item [data-like]');
+      return { hash: location.hash, count: btn.querySelector('[data-like-count]').textContent.trim(), liked: btn.classList.contains('liked') };
+    })()`);
+
+  await cdp.eval(`document.querySelector('#list-area .post-item [data-like]').click()`);
+  await sleep(900);
+  const likeAfter = await cdp.eval(`
+    (() => {
+      const btn = document.querySelector('#list-area .post-item [data-like]');
+      return { hash: location.hash, count: btn.querySelector('[data-like-count]').textContent.trim(), liked: btn.classList.contains('liked') };
+    })()`);
+  check('点「点赞」不会跳转，只切换点赞状态',
+    likeAfter.hash === likeBefore.hash
+    && likeAfter.liked !== likeBefore.liked
+    && likeAfter.count !== likeBefore.count,
+    `hash「${likeBefore.hash}」→「${likeAfter.hash}」，点赞 ${likeBefore.liked}→${likeAfter.liked}，数量 ${likeBefore.count}→${likeAfter.count}`);
+
+  // 复原点赞状态，别留痕
+  await cdp.eval(`document.querySelector('#list-area .post-item [data-like]').click()`);
+  await sleep(900);
+  const likeRestored = await cdp.eval(`
+    (() => {
+      const btn = document.querySelector('#list-area .post-item [data-like]');
+      return { hash: location.hash, liked: btn.classList.contains('liked') };
+    })()`);
+  check('再点一次点赞可复原，且依然不跳转',
+    likeRestored.liked === likeBefore.liked && likeRestored.hash === likeBefore.hash,
+    JSON.stringify(likeRestored));
+
+  // ---- 5. 「评论」按钮仍然进详情 ----
+  await cdp.eval(`document.querySelector('#list-area .post-item [data-comment]').click()`);
+  await sleep(1000);
+  const afterComment = await cdp.eval(`location.hash`);
+  check('点「评论」按钮进入详情页',
+    /^#\/post\/\d+/.test(afterComment), `hash=${afterComment}`);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
   2: { title: '价格区间可自行输入', fn: feature2 },
   3: { title: '我想要', fn: feature3 },
   4: { title: '删除记录', fn: feature4 },
+  5: { title: '帖子点击响应范围', fn: feature5 },
 };
 
 async function main() {

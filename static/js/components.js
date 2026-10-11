@@ -86,12 +86,13 @@ export function orderCardHtml(order, side = 'buyer') {
 
 /* ---------------------------------------------------------------- 帖子条目 */
 export function postItemHtml(post, options = {}) {
-  const tags = ['安利', '避雷', '闲聊', '求助'];
   const tagClass = { 安利: '', 避雷: 'badge-danger', 闲聊: 'badge-gray', 求助: 'badge-info' };
+  // 功能⑤：整张帖子卡片都可点击进详情（不再只能点标题）；
+  // 点赞 / 删除这类按钮由 pages/posts.js 里 stopPropagation 拦下来，不触发跳转。
   return `
-  <div class="post-item" data-post="${post.id}">
+  <div class="post-item" data-post="${post.id}" title="点击查看帖子详情">
     <div class="row-between">
-      <div class="post-title" data-open="${post.id}">${esc(post.title)}</div>
+      <div class="post-title">${esc(post.title)}</div>
       <span class="badge ${tagClass[post.tag] || 'badge-gray'}">${esc(post.tag)}</span>
     </div>
     ${options.preview === false ? '' : `<div class="muted small mt-8" style="overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${esc(post.content)}</div>`}
@@ -104,7 +105,7 @@ export function postItemHtml(post, options = {}) {
       <button data-like="${post.id}" class="${post.liked ? 'liked' : ''}">
         ${post.liked ? '❤️' : '🤍'} <span data-like-count="${post.id}">${post.like_count}</span>
       </button>
-      <button data-open="${post.id}">💬 评论</button>
+      <button data-comment="${post.id}">💬 评论</button>
       ${options.canDelete ? `<button data-delete="${post.id}">🗑️ 删除</button>` : ''}
     </div>
   </div>`;

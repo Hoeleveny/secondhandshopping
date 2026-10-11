@@ -378,10 +378,15 @@ h3 { font-size: 16px; }
 .dot-meet { background: #e2503f; }
 
 /* ---------------------------------------------------------------- 广场 */
-.post-item { padding: 15px 0; border-bottom: 1px solid var(--border); }
+/* 功能⑤：整张帖子卡片都可点击进详情，hover 有明显反馈 */
+.post-item {
+  padding: 15px 12px; margin: 0 -12px; border-bottom: 1px solid var(--border);
+  cursor: pointer; border-radius: 10px; transition: background .15s;
+}
+.post-item:hover { background: var(--green-soft); }
+.post-item:hover .post-title { color: var(--green); }
 .post-item:last-child { border-bottom: none; }
-.post-title { font-size: 16px; font-weight: 700; cursor: pointer; }
-.post-title:hover { color: var(--green); }
+.post-title { font-size: 16px; font-weight: 700; }
 .post-meta { font-size: 12px; color: var(--muted); display: flex; gap: 12px; margin-top: 4px; flex-wrap: wrap; }
 .post-actions { display: flex; gap: 14px; margin-top: 8px; font-size: 13px; color: var(--text-sub); }
 .post-actions button {
