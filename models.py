@@ -263,6 +263,8 @@ class Order(db.Model):
     seller_lat = db.Column(db.Numeric(10, 7))
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
     finished_at = db.Column(db.DateTime)
+    # 功能④：买家是否已删除这条订单记录（仅买家侧隐藏，卖家与统计不受影响）
+    buyer_deleted = db.Column(db.Boolean, nullable=False, default=False)
 
     product = db.relationship("Product")
     buyer = db.relationship("User", foreign_keys=[buyer_id])

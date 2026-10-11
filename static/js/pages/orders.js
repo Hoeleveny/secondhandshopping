@@ -107,6 +107,21 @@ export default {
           toast('订单已取消，商品已恢复在售');
           load();
         } catch (err) { toast(err.message, 'error'); }
+        return;
+      }
+
+      // 功能④：买家删除自己的订单记录
+      if (act === 'del-order') {
+        const sure = await confirmDialog({
+          title: '删除这条订单记录？', danger: true, okText: '删除记录',
+          message: '删掉后你自己的订单列表里不再显示它；卖家那边的成交记录与评价都保留。',
+        });
+        if (!sure) return;
+        try {
+          await api.del(`/api/orders/${id}/record`);
+          toast('订单记录已删除');
+          load();
+        } catch (err) { toast(err.message, 'error'); }
       }
     }
 

@@ -21,10 +21,12 @@ TABLES = [
 NOISE_PATTERNS = [
     ("products", "name", "冒烟%"),
     ("products", "name", "验收%"),
+    ("products", "name", "自动化测试%"),
     ("messages", "content", "冒烟测试%"),
     ("messages", "content", "自动化测试%"),
     ("posts", "title", "冒烟%"),
     ("posts", "title", "验收%"),
+    ("posts", "title", "自动化测试%"),
 ]
 
 

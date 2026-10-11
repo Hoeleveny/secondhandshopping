@@ -122,17 +122,19 @@ def my_orders():
     if status not in ("all",) + STATUSES:
         return fail("状态取值不合法")
 
-    q = Order.query.filter(Order.buyer_id == user.id)
+    # 买家自己删掉的订单记录不再显示（只影响买家侧，卖家与管理员照常可见）
+    visible = (Order.buyer_id == user.id, Order.buyer_deleted.is_(False))
+    q = Order.query.filter(*visible)
     if status != "all":
         q = q.filter(Order.status == status)
     total = q.count()
     items = q.order_by(Order.created_at.desc()).offset((page - 1) * size).limit(size).all()
 
     counts = {
-        "all": Order.query.filter_by(buyer_id=user.id).count(),
-        ORDER_PENDING: Order.query.filter_by(buyer_id=user.id, status=ORDER_PENDING).count(),
-        ORDER_DONE: Order.query.filter_by(buyer_id=user.id, status=ORDER_DONE).count(),
-        ORDER_CANCELED: Order.query.filter_by(buyer_id=user.id, status=ORDER_CANCELED).count(),
+        "all": Order.query.filter(*visible).count(),
+        ORDER_PENDING: Order.query.filter(*visible, Order.status == ORDER_PENDING).count(),
+        ORDER_DONE: Order.query.filter(*visible, Order.status == ORDER_DONE).count(),
+        ORDER_CANCELED: Order.query.filter(*visible, Order.status == ORDER_CANCELED).count(),
     }
     return ok({"list": [o.to_dict(user.id) for o in items], "total": total,
                "page": page, "page_size": size, "counts": counts})
@@ -219,6 +221,31 @@ def cancel_order(oid: int):
     ).update({Product.status: PRODUCT_ON_SALE}, synchronize_session=False)
     db.session.commit()
     return ok(order.to_dict(user.id), msg="订单已取消，商品已恢复在售")
+
+
+@bp.delete("/orders/<int:oid>/record")
+@login_required
+def delete_order_record(oid: int):
+    """买家删除自己的订单记录（功能④）。
+
+    只是「买家侧隐藏」：订单数据、卖家卖出订单、交易统计都完整保留。
+    待完成的订单属于进行中的交易，必须先确认完成或取消才能删除记录。
+    """
+    order, error = _visible_order(oid)
+    if error:
+        return fail(error, 403 if "无权" in error else 404)
+
+    user = current_user()
+    if order.buyer_id != user.id and user.role != ROLE_ADMIN:
+        return fail("只有买家可以删除自己的订单记录", 403)
+    if order.status == ORDER_PENDING:
+        return fail("「待完成」的订单不能删除记录，请先确认完成或取消订单", 409)
+    if order.buyer_deleted:
+        return fail("这条订单记录已经删除过了", 409)
+
+    order.buyer_deleted = True
+    db.session.commit()
+    return ok(msg="订单记录已删除（卖家侧记录不受影响）")
 
 
 # ------------------------------------------------------------------ 交易定位

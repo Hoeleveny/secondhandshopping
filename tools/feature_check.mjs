@@ -373,11 +373,191 @@ async function feature3(cdp) {
   check('商品卡上展示「浏览 · 想要」人数', /❤️/.test(cardFoot), cardFoot);
 }
 
+/** 用接口快速造一件测试商品；返回商品 id */
+async function makeProduct(name, price = 9.9, token = null) {
+  const tk = token || await login('seller1', '123456', 'seller');
+  const res = await api('POST', '/api/products', {
+    token: tk,
+    body: {
+      name, price, category_id: 1, subcategory_id: 1, condition: '九成新',
+      description: '自动化测试用商品', default_place_id: 1, images: [],
+    },
+  });
+  return res.data?.id;
+}
+
+/* ================================================================ 功能④ 删除记录 */
+async function feature4(cdp) {
+  console.log('\n===== 功能④ 卖家删商品记录 / 买家删订单记录 =====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+
+  /* ---------------- 卖家：彻底删除已删商品记录 ---------------- */
+  const nameA = `自动化测试：待删商品记录-${Date.now() % 100000}`;
+  const pidA = await makeProduct(nameA, 12.0, sellerToken);
+  await api('DELETE', `/api/products/${pidA}`, { token: sellerToken });   // 先软删除
+
+  await cdp.loginAs('seller1', '123456', 'seller');
+  await cdp.go('/my-products?status=deleted');
+
+  const tabInfo = await cdp.eval(`
+    (() => ({
+      tabs: [...document.querySelectorAll('#tabs .tab')].map(t => t.innerText.replace(/\\s+/g,' ').trim()),
+      rows: [...document.querySelectorAll('tbody tr')].map(r => r.innerText.replace(/\\s+/g,' ').trim()),
+      hasRecordBtn: !!document.querySelector('tbody tr [data-record]'),
+    }))()`);
+  check('「我的商品」有「已删除」页签，且已删商品带「删除记录」按钮',
+    tabInfo.tabs.some(t => t.includes('已删除')) && tabInfo.hasRecordBtn
+    && tabInfo.rows.some(r => r.includes('待删商品记录')),
+    `页签=${JSON.stringify(tabInfo.tabs)}，行数=${tabInfo.rows.length}`);
+
+  await cdp.shot(path.join(SHOT_DIR, 'f4-deleted-tab.png'));
+
+  await cdp.eval(`
+    (() => {
+      const row = [...document.querySelectorAll('tbody tr')]
+        .find(r => r.innerText.includes('待删商品记录'));
+      row.querySelector('[data-record]').click();
+    })()`);
+  await sleep(500);
+  const modal = await cdp.eval(`
+    (() => {
+      const m = document.querySelector('.modal-mask');
+      return { shown: !!m, title: m?.querySelector('.modal-head')?.innerText || '' };
+    })()`);
+  check('彻底删除前会弹确认框', modal.shown && /彻底删除/.test(modal.title), JSON.stringify(modal));
+
+  await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
+  await sleep(1200);
+
+  const gone = await api('GET', `/api/products/${pidA}`);
+  const stillListed = await cdp.eval(`
+    [...document.querySelectorAll('tbody tr')].some(r => r.innerText.includes('待删商品记录'))`);
+  check('确认后商品记录被彻底删除、列表里也消失',
+    gone.code !== 0 && stillListed === false,
+    `接口 code=${gone.code}（404 表示已不存在），列表仍显示=${stillListed}`);
+
+  /* ---------------- 有交易记录的不能彻底删 ---------------- */
+  const nameB = `自动化测试：有订单商品-${Date.now() % 100000}`;
+  const pidB = await makeProduct(nameB, 21.0, sellerToken);
+  await api('POST', '/api/orders', { token: buyerToken, body: { product_id: pidB, meet_place_id: 1 } });
+  await api('DELETE', `/api/products/${pidB}`, { token: sellerToken });
+
+  await cdp.go('/my-products?status=deleted');
+  await cdp.eval(`
+    (() => {
+      const row = [...document.querySelectorAll('tbody tr')]
+        .find(r => r.innerText.includes('有订单商品'));
+      row.querySelector('[data-record]').click();
+    })()`);
+  await sleep(500);
+  await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
+  await sleep(1200);
+  const blocked = await cdp.eval(`document.querySelector('.toast')?.innerText || ''`);
+  // 注意：软删除的商品在公开详情接口本来就返回 404，所以要到「我的商品」里确认它还在
+  const deletedList = await api('GET', '/api/products/mine?status=deleted&page_size=100',
+    { token: sellerToken });
+  const stillThere = (deletedList.data?.list || []).some(p => p.id === pidB);
+  check('有交易记录的商品会被拒绝彻底删除并给出提示',
+    /交易记录/.test(blocked) && stillThere,
+    `提示=「${blocked.replace(/\s+/g, ' ')}」，仍在我的商品里=${stillThere}`);
+
+  /* ---------------- 买家：删除订单记录 ---------------- */
+  const nameC = `自动化测试：待删订单-${Date.now() % 100000}`;
+  const pidC = await makeProduct(nameC, 33.0, sellerToken);
+  const orderRes = await api('POST', '/api/orders',
+    { token: buyerToken, body: { product_id: pidC, meet_place_id: 1 } });
+  const orderId = orderRes.data.id;
+  await api('PATCH', `/api/orders/${orderId}/complete`, { token: buyerToken });
+
+  // 再造一条「待完成」订单，用于验证它没有删除按钮
+  const nameD = `自动化测试：进行中订单-${Date.now() % 100000}`;
+  const pidD = await makeProduct(nameD, 44.0, sellerToken);
+  await api('POST', '/api/orders', { token: buyerToken, body: { product_id: pidD, meet_place_id: 1 } });
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go('/orders?status=pending');
+  const pendingCard = await cdp.eval(`
+    (() => {
+      const card = [...document.querySelectorAll('#list-area .card')]
+        .find(c => c.innerText.includes('进行中订单'));
+      return { found: !!card, hasDel: card ? !!card.querySelector('[data-act="del-order"]') : null };
+    })()`);
+  check('「待完成」订单没有「删除记录」按钮',
+    pendingCard.found && pendingCard.hasDel === false, JSON.stringify(pendingCard));
+
+  await cdp.go('/orders?status=done');
+  const doneCard = await cdp.eval(`
+    (() => {
+      const card = [...document.querySelectorAll('#list-area .card')]
+        .find(c => c.innerText.includes('待删订单'));
+      return {
+        found: !!card,
+        hasDel: card ? !!card.querySelector('[data-act="del-order"]') : null,
+        text: card ? card.innerText.replace(/\\s+/g, ' ').trim().slice(0, 80) : '',
+      };
+    })()`);
+  check('「已完成」订单有「删除记录」按钮',
+    doneCard.found && doneCard.hasDel === true, `卡片「${doneCard.text}」`);
+
+  await cdp.shot(path.join(SHOT_DIR, 'f4-order-delete.png'));
+
+  await cdp.eval(`
+    (() => {
+      const card = [...document.querySelectorAll('#list-area .card')]
+        .find(c => c.innerText.includes('待删订单'));
+      card.querySelector('[data-act="del-order"]').click();
+    })()`);
+  await sleep(500);
+  await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
+  await sleep(1200);
+
+  const afterDel = await cdp.eval(`
+    (() => ({
+      stillShown: [...document.querySelectorAll('#list-area .card')]
+        .some(c => c.innerText.includes('待删订单')),
+      toast: document.querySelector('.toast')?.innerText || '',
+    }))()`);
+  check('买家删除后自己的订单列表不再显示该订单',
+    afterDel.stillShown === false && /已删除/.test(afterDel.toast),
+    `仍显示=${afterDel.stillShown}，提示=「${afterDel.toast}」`);
+
+  const mine = await api('GET', '/api/orders/mine?page_size=50', { token: buyerToken });
+  const sellerSold = await api('GET', '/api/orders/sold?page_size=50', { token: sellerToken });
+  check('只对买家隐藏：卖家「卖出订单」仍然保留',
+    !(mine.data.list || []).some(o => o.id === orderId)
+    && (sellerSold.data.list || []).some(o => o.id === orderId),
+    `买家列表含=${(mine.data.list || []).some(o => o.id === orderId)}，卖家列表含=${(sellerSold.data.list || []).some(o => o.id === orderId)}`);
+
+  /* ---------------- 收尾：测试数据统一在主流程结束时清理 ---------------- */
+}
+
+/** 调用 Python 清理工具，删掉「自动化测试 / 冒烟 / 验收」前缀的测试数据 */
+function cleanupByPython() {
+  try {
+    const python = process.env.PYTHON_BIN
+      || 'D:\\secondhandshop\\.venv\\Scripts\\python.exe';
+    const script = path.resolve('tools/cleanup_test_data.py');   // 用绝对路径，避免 cwd 差异
+    const r = spawnSync(python, [script], {
+      stdio: 'ignore',
+      cwd: path.resolve('.'),
+      // stdio 为 ignore 时 Python 的输出编码会退化成 cp1252，打印中文会抛
+      // UnicodeEncodeError 直接退出 1，所以必须显式指定 utf-8
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+    });
+    if (r.error || r.status !== 0) {
+      console.log('  （提示：自动清理未成功，可手动运行 manage.py clean-test）');
+    }
+  } catch { /* 清理失败不影响测试结论 */ }
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
   2: { title: '价格区间可自行输入', fn: feature2 },
   3: { title: '我想要', fn: feature3 },
+  4: { title: '删除记录', fn: feature4 },
 };
 
 async function main() {
@@ -412,6 +592,9 @@ async function main() {
   fs.mkdirSync(WORK, { recursive: true });
   fs.writeFileSync(path.join(WORK, 'feature-report.json'),
     JSON.stringify({ ran_at: new Date().toISOString(), feature: which, results }, null, 2));
+
+  console.log('\n清理本次测试产生的数据…');
+  cleanupByPython();
 
   process.exit(summary());
 }

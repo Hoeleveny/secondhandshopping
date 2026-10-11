@@ -12,7 +12,8 @@ from api.common import (
 from config import Config
 from extensions import db
 from models import (
-    Category, Favorite, Product, ProductImage, ProductWant, Review, Subcategory,
+    Category, Favorite, Order, Product, ProductImage, ProductWant, Report, Review,
+    Subcategory, SwapOffer,
     PRODUCT_DELETED, PRODUCT_OFF_SHELF, PRODUCT_ON_SALE, PRODUCT_SOLD, ROLE_ADMIN,
 )
 
@@ -141,7 +142,10 @@ def my_products():
         return fail("状态取值不合法")
 
     q = Product.query.filter(Product.seller_id == user.id)
-    if status != "all":
+    if status == "all":
+        # 「全部」不包含已删除的商品；要处理已删除记录请切到「已删除」页签
+        q = q.filter(Product.status != PRODUCT_DELETED)
+    else:
         q = q.filter(Product.status == status)
 
     total = q.count()
@@ -153,6 +157,7 @@ def my_products():
         PRODUCT_ON_SALE: Product.query.filter_by(seller_id=user.id, status=PRODUCT_ON_SALE).count(),
         PRODUCT_SOLD: Product.query.filter_by(seller_id=user.id, status=PRODUCT_SOLD).count(),
         PRODUCT_OFF_SHELF: Product.query.filter_by(seller_id=user.id, status=PRODUCT_OFF_SHELF).count(),
+        PRODUCT_DELETED: Product.query.filter_by(seller_id=user.id, status=PRODUCT_DELETED).count(),
     }
     return ok({"list": [p.to_dict() for p in items], "total": total,
                "page": page, "page_size": size, "counts": counts})
@@ -384,6 +389,43 @@ def delete_product(pid: int):
     ProductWant.query.filter_by(product_id=product.id).delete()
     db.session.commit()
     return ok(msg="商品已删除")
+
+
+@bp.delete("/products/<int:pid>/record")
+@login_required
+def delete_product_record(pid: int):
+    """彻底删除一条「已删除」的商品记录（功能④，卖家本人 / 管理员）。
+
+    规则：
+    - 只有在售/已售/已下架商品先软删除之后，才允许彻底删记录；
+    - **有交易记录（订单）的商品不允许彻底删除**——历史订单必须保留商品信息，
+      否则买家/卖家的成交记录就无从回溯。
+    """
+    user = current_user()
+    product = Product.query.get(pid)
+    if product is None:
+        return fail("商品记录不存在", 404)
+    if user.role != ROLE_ADMIN and product.seller_id != user.id:
+        return fail("只能删除自己发布的商品记录", 403)
+    if product.status != PRODUCT_DELETED:
+        return fail("只能删除「已删除」状态的商品记录；在售 / 已售商品请先删除")
+
+    order_count = Order.query.filter_by(product_id=product.id).count()
+    if order_count:
+        return fail(
+            f"这件商品有 {order_count} 笔交易记录，历史订单需要保留商品信息，不能彻底删除"
+        )
+
+    # 没有交易记录，说明没有任何需要留档的数据，可以把所有引用它的行一并清掉
+    ProductImage.query.filter_by(product_id=product.id).delete()
+    Favorite.query.filter_by(product_id=product.id).delete()
+    ProductWant.query.filter_by(product_id=product.id).delete()
+    SwapOffer.query.filter_by(product_id=product.id).delete()
+    Report.query.filter_by(product_id=product.id).delete()
+    Review.query.filter_by(product_id=product.id).delete()
+    db.session.delete(product)
+    db.session.commit()
+    return ok(msg="商品记录已彻底删除")
 
 
 # ------------------------------------------------------------------ 图片上传

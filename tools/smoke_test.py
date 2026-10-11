@@ -796,6 +796,70 @@ def main() -> int:
     status, res = call("POST", "/api/products/999999/want", token=buyer1)
     check("对不存在的商品点「我想要」报错", res.get("code") != 0, str(res)[:150])
 
+    # ---------------- 功能④ 删除记录 ----------------
+    section("功能④ 卖家删商品记录 / 买家删订单记录")
+
+    # --- A. 无交易记录的商品：可彻底删除 ---
+    pa = _new_product("冒烟-商品记录删除", 11.0)
+    status, res = call("DELETE", f"/api/products/{pa}/record", token=seller_token)
+    check("在售商品不允许直接彻底删记录", res.get("code") != 0, str(res)[:180])
+
+    call("DELETE", f"/api/products/{pa}", token=seller_token)          # 先软删除
+    status, res = call("GET", "/api/products/mine?status=deleted&page_size=50", token=seller_token)
+    ids = [p["id"] for p in (res.get("data") or {}).get("list", [])]
+    check("软删除的商品出现在「已删除」页签", pa in ids, str(ids)[:120])
+
+    status, res = call("GET", "/api/products/mine?status=all&page_size=50", token=seller_token)
+    ids = [p["id"] for p in (res.get("data") or {}).get("list", [])]
+    check("「全部」页签不再包含已删除商品", pa not in ids, str(ids)[:120])
+
+    status, res = call("DELETE", f"/api/products/{pa}/record", token=buyer1)
+    check("别人的商品记录不能删", res.get("code") != 0, str(res)[:150])
+
+    status, res = call("DELETE", f"/api/products/{pa}/record")
+    check("未登录不能删商品记录", status == 401, str(res)[:150])
+
+    status, res = call("DELETE", f"/api/products/{pa}/record", token=seller_token)
+    check("无交易记录的商品可彻底删除", res.get("code") == 0, str(res)[:150])
+
+    status, res = call("GET", f"/api/products/{pa}")
+    check("彻底删除后商品已不存在", res.get("code") != 0, str(res)[:150])
+
+    # --- B. 有交易记录的商品：拒绝彻底删除 ---
+    pb = _new_product("冒烟-有订单不能删", 22.0)
+    call("POST", "/api/orders", token=token, body={"product_id": pb, "meet_place_id": 1})
+    call("DELETE", f"/api/products/{pb}", token=seller_token)          # 软删除
+    status, res = call("DELETE", f"/api/products/{pb}/record", token=seller_token)
+    check("有交易记录的商品拒绝彻底删除（要保留历史订单）",
+          res.get("code") != 0 and "交易记录" in (res.get("msg") or ""), str(res)[:180])
+
+    # --- C. 买家删除订单记录 ---
+    pc = _new_product("冒烟-订单记录删除", 33.0)
+    _st, _res = call("POST", "/api/orders", token=token,
+                     body={"product_id": pc, "meet_place_id": 1})
+    order = (_res.get("data") or {})
+
+    status, res = call("DELETE", f"/api/orders/{order['id']}/record", token=token)
+    check("「待完成」订单不能删除记录", res.get("code") != 0, str(res)[:180])
+
+    call("PATCH", f"/api/orders/{order['id']}/complete", token=token)
+    status, res = call("DELETE", f"/api/orders/{order['id']}/record", token=seller_token)
+    check("卖家不能删买家的订单记录", res.get("code") != 0, str(res)[:150])
+
+    status, res = call("DELETE", f"/api/orders/{order['id']}/record", token=token)
+    check("买家删除自己的订单记录成功", res.get("code") == 0, str(res)[:150])
+
+    status, res = call("GET", "/api/orders/mine?page_size=50", token=token)
+    ids = [o["id"] for o in (res.get("data") or {}).get("list", [])]
+    check("删除后买家「我的订单」不再显示该订单", order["id"] not in ids, str(ids)[:120])
+
+    status, res = call("GET", "/api/orders/sold?page_size=50", token=seller_token)
+    ids = [o["id"] for o in (res.get("data") or {}).get("list", [])]
+    check("卖家「卖出订单」仍然保留这条记录", order["id"] in ids, str(ids)[:120])
+
+    status, res = call("DELETE", f"/api/orders/{order['id']}/record", token=token)
+    check("同一条订单不能重复删除记录", res.get("code") != 0, str(res)[:150])
+
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 

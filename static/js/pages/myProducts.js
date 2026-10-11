@@ -12,6 +12,7 @@ const TABS = [
   { key: 'on_sale', label: '在售' },
   { key: 'sold', label: '已售' },
   { key: 'off_shelf', label: '已下架' },
+  { key: 'deleted', label: '已删除' },
 ];
 
 export default {
@@ -92,6 +93,7 @@ export default {
                       ${p.status === 'on_sale' ? `<button class="btn btn-sm" data-off="${p.id}">下架</button>` : ''}
                       ${p.status === 'off_shelf' ? `<button class="btn btn-sm" data-on="${p.id}">重新上架</button>` : ''}
                       ${p.status !== 'deleted' ? `<button class="btn btn-danger btn-sm" data-del="${p.id}">删除</button>` : ''}
+                      ${p.status === 'deleted' ? `<button class="btn btn-danger btn-sm" data-record="${p.id}">删除记录</button>` : ''}
                     </div>
                   </td>
                 </tr>`).join('')}
@@ -109,6 +111,8 @@ export default {
         el.addEventListener('click', () => changeStatus(el.dataset.on, 'on_sale')));
       listArea.querySelectorAll('[data-del]').forEach(el =>
         el.addEventListener('click', () => removeProduct(el.dataset.del)));
+      listArea.querySelectorAll('[data-record]').forEach(el =>
+        el.addEventListener('click', () => removeRecord(el.dataset.record)));
 
       renderPagination(pager, {
         page: data.page,
@@ -144,6 +148,23 @@ export default {
       try {
         await api.del(`/api/products/${id}`);
         toast('商品已删除');
+        load();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    /** 功能④：把「已删除」的商品记录彻底清掉 */
+    async function removeRecord(id) {
+      const sure = await confirmDialog({
+        title: '彻底删除这条商品记录？', danger: true, okText: '彻底删除',
+        message: '这条记录会从数据库里永久移除，无法恢复。'
+          + '如果这件商品有成交订单，系统会拒绝删除（历史订单需要保留商品信息）。',
+      });
+      if (!sure) return;
+      try {
+        await api.del(`/api/products/${id}/record`);
+        toast('商品记录已彻底删除');
         load();
       } catch (err) {
         toast(err.message, 'error');

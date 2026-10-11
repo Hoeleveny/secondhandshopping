@@ -21,34 +21,39 @@ from config import Config  # noqa: E402
 
 # 按外键依赖顺序删除，避免约束报错
 STEPS: list[tuple[str, str]] = [
-    ("临时表：收集冒烟商品",
+    ("临时表：收集测试商品",
      "CREATE TEMPORARY TABLE tmp_smoke_pid (id BIGINT UNSIGNED PRIMARY KEY) "
-     "SELECT id FROM products WHERE name LIKE '冒烟%'"),
-    ("举报（指向冒烟商品）",
+     "SELECT id FROM products WHERE name LIKE '冒烟%' "
+     "OR name LIKE '验收%' OR name LIKE '自动化测试%'"),
+    ("举报（指向测试商品）",
      "DELETE FROM reports WHERE product_id IN (SELECT id FROM tmp_smoke_pid)"),
-    ("以物换物（指向冒烟商品）",
+    ("以物换物（指向测试商品）",
      "DELETE FROM swap_offers WHERE product_id IN (SELECT id FROM tmp_smoke_pid)"),
-    ("收藏（指向冒烟商品）",
+    ("收藏（指向测试商品）",
      "DELETE FROM favorites WHERE product_id IN (SELECT id FROM tmp_smoke_pid)"),
-    ("评价（按冒烟商品）",
+    ("我想要（指向测试商品）",
+     "DELETE FROM product_wants WHERE product_id IN (SELECT id FROM tmp_smoke_pid)"),
+    ("评价（按测试商品）",
      "DELETE FROM reviews WHERE product_id IN (SELECT id FROM tmp_smoke_pid)"),
-    ("评价（按冒烟商品的订单）",
+    ("评价（按测试商品的订单）",
      "DELETE FROM reviews WHERE order_id IN "
      "(SELECT id FROM orders WHERE product_id IN (SELECT id FROM tmp_smoke_pid))"),
-    ("订单（指向冒烟商品）",
+    ("订单（指向测试商品）",
      "DELETE FROM orders WHERE product_id IN (SELECT id FROM tmp_smoke_pid)"),
     ("商品图片",
      "DELETE FROM product_images WHERE product_id IN (SELECT id FROM tmp_smoke_pid)"),
-    ("冒烟商品本身",
+    ("测试商品本身",
      "DELETE FROM products WHERE id IN (SELECT id FROM tmp_smoke_pid)"),
-    ("冒烟帖子（评论/点赞随外键级联删除）",
-     "DELETE FROM posts WHERE title LIKE '冒烟%'"),
-    ("冒烟私信",
-     "DELETE FROM messages WHERE content LIKE '冒烟测试%'"),
+    ("测试帖子（评论/点赞随外键级联删除）",
+     "DELETE FROM posts WHERE title LIKE '冒烟%' "
+     "OR title LIKE '验收%' OR title LIKE '自动化测试%'"),
+    ("测试消息",
+     "DELETE FROM messages WHERE content LIKE '冒烟测试%' "
+     "OR content LIKE '自动化测试%'"),
     ("测试账号的「我想要」",
      "DELETE FROM product_wants WHERE user_id IN "
      "(SELECT id FROM users WHERE username IN ('smoke_buyer','acc_buyer'))"),
-    ("冒烟测试账号",
+    ("测试账号",
      "DELETE FROM users WHERE username IN ('smoke_buyer','acc_buyer')"),
     ("清理临时表",
      "DROP TEMPORARY TABLE IF EXISTS tmp_smoke_pid"),
