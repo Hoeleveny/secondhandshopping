@@ -316,4 +316,20 @@ CREATE TABLE `messages` (
   CONSTRAINT `fk_messages_product`  FOREIGN KEY (`product_id`)  REFERENCES `products` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='私信消息';
 
+-- -------------------------------------------------------------
+-- 表 16：product_wants（我想要）—— 功能③，新增于迁移 002
+-- -------------------------------------------------------------
+DROP TABLE IF EXISTS `product_wants`;
+CREATE TABLE `product_wants` (
+  `id`         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`    BIGINT UNSIGNED NOT NULL                COMMENT '点「我想要」的用户',
+  `product_id` BIGINT UNSIGNED NOT NULL                COMMENT '被想要的商品',
+  `created_at` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_product_wants_user_product` (`user_id`, `product_id`),
+  KEY `idx_product_wants_product` (`product_id`),
+  CONSTRAINT `fk_product_wants_user`    FOREIGN KEY (`user_id`)    REFERENCES `users` (`id`)    ON DELETE CASCADE,
+  CONSTRAINT `fk_product_wants_product` FOREIGN KEY (`product_id`) REFERENCES `products` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='我想要（商品收藏意愿）';
+
 SET FOREIGN_KEY_CHECKS = 1;

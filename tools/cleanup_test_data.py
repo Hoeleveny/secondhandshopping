@@ -45,6 +45,9 @@ STEPS: list[tuple[str, str]] = [
      "DELETE FROM posts WHERE title LIKE '冒烟%'"),
     ("冒烟私信",
      "DELETE FROM messages WHERE content LIKE '冒烟测试%'"),
+    ("测试账号的「我想要」",
+     "DELETE FROM product_wants WHERE user_id IN "
+     "(SELECT id FROM users WHERE username IN ('smoke_buyer','acc_buyer'))"),
     ("冒烟测试账号",
      "DELETE FROM users WHERE username IN ('smoke_buyer','acc_buyer')"),
     ("清理临时表",

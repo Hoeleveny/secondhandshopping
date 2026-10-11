@@ -12,7 +12,7 @@ from api.common import (
 from config import Config
 from extensions import db
 from models import (
-    Category, Favorite, Product, ProductImage, Review, Subcategory,
+    Category, Favorite, Product, ProductImage, ProductWant, Review, Subcategory,
     PRODUCT_DELETED, PRODUCT_OFF_SHELF, PRODUCT_ON_SALE, PRODUCT_SOLD, ROLE_ADMIN,
 )
 
@@ -108,9 +108,11 @@ def list_products():
     total = q.count()
     items = q.order_by(order).offset((page - 1) * size).limit(size).all()
 
+    viewer = current_user()
+    viewer_id = viewer.id if viewer else None
     return ok(
         {
-            "list": [p.to_dict() for p in items],
+            "list": [p.to_dict(viewer_id=viewer_id) for p in items],
             "total": total,
             "page": page,
             "page_size": size,
@@ -168,7 +170,8 @@ def product_detail(pid: int):
     db.session.commit()
 
     user = current_user()
-    data = product.to_dict(detail=True)
+    viewer_id = user.id if user else None
+    data = product.to_dict(detail=True, viewer_id=viewer_id)
     data["is_owner"] = bool(user and user.id == product.seller_id)
     data["is_admin"] = bool(user and user.role == ROLE_ADMIN)
     data["favorited"] = bool(
@@ -198,6 +201,42 @@ def product_reviews(pid: int):
     reviews = (Review.query.filter_by(product_id=pid)
                .order_by(Review.created_at.desc()).all())
     return ok([r.to_dict(user.id if user else None) for r in reviews])
+
+
+# ------------------------------------------------------------------ 我想要（功能③）
+@bp.post("/products/<int:pid>/want")
+@login_required
+def toggle_want(pid: int):
+    """点一次标记「我想要」，再点一次取消；返回最新的想要人数。"""
+    user = current_user()
+    product = Product.query.get(pid)
+    if product is None or product.status == PRODUCT_DELETED:
+        return fail("商品不存在或已下架", 404)
+    if product.seller_id == user.id:
+        return fail("不能对自己发布的商品点「我想要」")
+
+    existing = ProductWant.query.filter_by(user_id=user.id, product_id=product.id).first()
+    if existing:
+        db.session.delete(existing)
+        wanted = False
+    else:
+        db.session.add(ProductWant(user_id=user.id, product_id=product.id))
+        wanted = True
+    db.session.commit()
+
+    count = ProductWant.query.filter_by(product_id=product.id).count()
+    return ok({"wanted": wanted, "want_count": count},
+              msg="已标记「我想要」" if wanted else "已取消「我想要」")
+
+
+@bp.get("/products/<int:pid>/wants")
+def product_wants(pid: int):
+    """谁想要这件商品（游客可看人数，登录后能看名单）。"""
+    if Product.query.get(pid) is None:
+        return fail("商品不存在", 404)
+    wants = (ProductWant.query.filter_by(product_id=pid)
+             .order_by(ProductWant.created_at.desc()).all())
+    return ok({"count": len(wants), "list": [w.to_dict() for w in wants]})
 
 
 # ------------------------------------------------------------------ 发布 / 编辑
@@ -340,8 +379,9 @@ def delete_product(pid: int):
         return fail("只能删除自己发布的商品", 403)
 
     product.status = PRODUCT_DELETED
-    # 商品已删除，相关收藏一并清掉
+    # 商品已删除，相关收藏与「我想要」一并清掉
     Favorite.query.filter_by(product_id=product.id).delete()
+    ProductWant.query.filter_by(product_id=product.id).delete()
     db.session.commit()
     return ok(msg="商品已删除")
 

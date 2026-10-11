@@ -151,6 +151,10 @@ class Product(db.Model):
         "ProductImage", backref="product", lazy="select",
         cascade="all, delete-orphan", order_by="ProductImage.sort, ProductImage.id",
     )
+    # 功能③：想要这件商品的人
+    wants = db.relationship(
+        "ProductWant", backref="product", lazy="select", cascade="all, delete-orphan",
+    )
 
     STATUS_TEXT = {
         "on_sale": "在售",
@@ -159,7 +163,7 @@ class Product(db.Model):
         "deleted": "已删除",
     }
 
-    def to_dict(self, detail: bool = False) -> dict:
+    def to_dict(self, detail: bool = False, viewer_id: int | None = None) -> dict:
         data = {
             "id": self.id,
             "name": self.name,
@@ -177,6 +181,8 @@ class Product(db.Model):
             "seller_id": self.seller_id,
             "seller_nickname": self.seller.nickname if self.seller else None,
             "views": self.views,
+            "want_count": len(self.wants),
+            "wanted": bool(viewer_id and any(w.user_id == viewer_id for w in self.wants)),
             "created_at": _dt(self.created_at),
         }
         if detail:
@@ -202,6 +208,33 @@ class ProductImage(db.Model):
 
     def to_dict(self) -> dict:
         return {"id": self.id, "url": self.url, "sort": self.sort}
+
+
+# ---------------------------------------------------------------- 5b. 我想要（功能③）
+class ProductWant(db.Model):
+    """谁对哪件商品点过「我想要」；一个用户对同一件商品只会有一条记录。"""
+
+    __tablename__ = "product_wants"
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
+    product_id = db.Column(db.BigInteger, db.ForeignKey("products.id"), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
+
+    user = db.relationship("User")
+
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "product_id", name="uk_product_wants_user_product"),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "user_nickname": self.user.nickname if self.user else None,
+            "product_id": self.product_id,
+            "created_at": _dt(self.created_at),
+        }
 
 
 # ---------------------------------------------------------------- 6. 订单

@@ -14,8 +14,8 @@ from config import Config  # noqa: E402
 
 TABLES = [
     "users", "categories", "subcategories", "campus_places", "products",
-    "product_images", "orders", "favorites", "reviews", "reports",
-    "swap_offers", "posts", "post_comments", "post_likes", "messages",
+    "product_images", "product_wants", "orders", "favorites", "reviews",
+    "reports", "swap_offers", "posts", "post_comments", "post_likes", "messages",
 ]
 
 NOISE_PATTERNS = [

@@ -629,8 +629,8 @@ def main() -> int:
     section("备份 / 恢复 / 重置示例数据")
     status, res = call("POST", "/api/admin/backup", token=admin_token)
     payload = (res.get("data") or {}).get("payload")
-    check("备份导出 JSON 且包含 15 张表",
-          res.get("code") == 0 and payload and len(payload.get("data", {})) == 15,
+    check("备份导出 JSON 且包含 16 张表",
+          res.get("code") == 0 and payload and len(payload.get("data", {})) == 16,
           str(res)[:200])
 
     status, res = call("GET", "/api/admin/backups", token=admin_token)
@@ -735,6 +735,66 @@ def main() -> int:
     status, res = call("GET", "/api/products?min_price=100&max_price=50")
     check("最低价大于最高价：返回空结果而不是报错",
           res.get("code") == 0 and (res.get("data") or {}).get("total") == 0, str(res)[:150])
+
+    # ---------------- 功能③ 我想要 ----------------
+    section("功能③ 我想要")
+
+    status, res = call("POST", "/api/auth/login",
+                       body={"username": "buyer2", "password": "123456", "role": "buyer"})
+    buyer2 = (res.get("data") or {}).get("token")
+    check("买家 buyer2 登录（用于验证多人都想要）", bool(buyer2), str(res)[:150])
+
+    # 归一化：先取消掉上一次测试可能留下的「我想要」，保证断言可重复
+    for account_token in (buyer1, buyer2):
+        _st, _r = call("GET", f"/api/products/{fav_pid}", token=account_token)
+        if (_r.get("data") or {}).get("wanted"):
+            call("POST", f"/api/products/{fav_pid}/want", token=account_token)
+
+    status, res = call("GET", f"/api/products/{fav_pid}")
+    want_before = (res.get("data") or {}).get("want_count")
+
+    status, res = call("POST", f"/api/products/{fav_pid}/want")
+    check("未登录不能点「我想要」", status == 401, str(res)[:150])
+
+    status, res = call("POST", f"/api/products/{fav_pid}/want", token=seller_token)
+    check("不能对自己发布的商品点「我想要」", res.get("code") != 0, str(res)[:150])
+
+    status, res = call("POST", f"/api/products/{fav_pid}/want", token=buyer1)
+    check("点「我想要」成功且人数 +1",
+          res.get("code") == 0 and (res.get("data") or {}).get("wanted") is True
+          and (res.get("data") or {}).get("want_count") == (want_before or 0) + 1,
+          f"之前 {want_before} → 现在 {(res.get('data') or {}).get('want_count')}")
+
+    status, res = call("GET", f"/api/products/{fav_pid}", token=buyer1)
+    check("详情页能读到「已想要」状态与人数",
+          (res.get("data") or {}).get("wanted") is True
+          and (res.get("data") or {}).get("want_count") == (want_before or 0) + 1,
+          str(res)[:200])
+
+    status, res = call("POST", f"/api/products/{fav_pid}/want", token=buyer2)
+    check("第二个人也想要，人数累加",
+          (res.get("data") or {}).get("want_count") == (want_before or 0) + 2,
+          str(res)[:150])
+
+    status, res = call("GET", f"/api/products/{fav_pid}/wants")
+    check("想要名单接口返回人数与列表",
+          res.get("code") == 0 and (res.get("data") or {}).get("count") == (want_before or 0) + 2,
+          str(res)[:150])
+
+    status, res = call("POST", f"/api/products/{fav_pid}/want", token=buyer1)
+    check("再点一次取消「我想要」，人数 -1",
+          (res.get("data") or {}).get("wanted") is False
+          and (res.get("data") or {}).get("want_count") == (want_before or 0) + 1,
+          str(res)[:150])
+
+    # 清理：把 buyer2 的那次也取消掉，避免污染演示数据
+    status, res = call("POST", f"/api/products/{fav_pid}/want", token=buyer2)
+    check("重复点击不会产生重复记录（取消后回到初始人数）",
+          (res.get("data") or {}).get("want_count") == (want_before or 0),
+          f"期望 {want_before}，实际 {(res.get('data') or {}).get('want_count')}")
+
+    status, res = call("POST", "/api/products/999999/want", token=buyer1)
+    check("对不存在的商品点「我想要」报错", res.get("code") != 0, str(res)[:150])
 
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()

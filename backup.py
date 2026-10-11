@@ -14,7 +14,7 @@ from sqlalchemy import DateTime, Numeric
 from extensions import db
 from models import (
     CampusPlace, Category, Favorite, Message, Order, Post, PostComment, PostLike,
-    Product, ProductImage, Report, Review, Subcategory, SwapOffer, User,
+    Product, ProductImage, ProductWant, Report, Review, Subcategory, SwapOffer, User,
 )
 
 # 插入顺序＝外键依赖顺序（父表在前）；删除时反序
@@ -34,6 +34,7 @@ INSERT_ORDER = [
     ("reports", Report),
     ("swap_offers", SwapOffer),
     ("messages", Message),
+    ("product_wants", ProductWant),
 ]
 
 BACKUP_VERSION = 1

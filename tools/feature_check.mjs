@@ -275,10 +275,109 @@ async function feature2(cdp) {
     JSON.stringify(afterReset));
 }
 
+/* ================================================================ 功能③ 我想要 */
+async function feature3(cdp) {
+  console.log('\n===== 功能③ 我想要 =====');
+
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const pid = 1;   // 种子里的一件在售商品，卖家是 seller1
+
+  // 先归一化：如果买家之前已经想要过，先取消，保证断言可重复
+  const initial = (await api('GET', `/api/products/${pid}`, { token: buyerToken })).data;
+  if (initial.wanted) await api('POST', `/api/products/${pid}/want`, { token: buyerToken });
+  const base = (await api('GET', `/api/products/${pid}`, { token: buyerToken })).data.want_count;
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go(`/product/${pid}`);
+
+  const dom0 = await cdp.eval(`
+    (() => {
+      const btn = document.querySelector('[data-act="want"]');
+      return {
+        hasBtn: !!btn,
+        text: btn ? btn.innerText.replace(/\\s+/g, ' ').trim() : '',
+        line: (document.querySelector('#want-count-line')?.innerText || '').trim(),
+        count: document.querySelector('#want-count')?.textContent || '',
+      };
+    })()`);
+  check('详情页有「我想要」按钮且显示想要人数',
+    dom0.hasBtn && dom0.text.includes('我想要') && /人想要/.test(dom0.line),
+    `按钮「${dom0.text}」，人数行「${dom0.line}」`);
+
+  // ---- 点一次 ----
+  await cdp.eval(`document.querySelector('[data-act="want"]').click()`);
+  await sleep(900);
+  const dom1 = await cdp.eval(`
+    (() => {
+      const btn = document.querySelector('[data-act="want"]');
+      return {
+        text: btn.innerText.replace(/\\s+/g, ' ').trim(),
+        primary: btn.classList.contains('btn-primary'),
+        count: document.querySelector('#want-count').textContent,
+        toast: document.querySelector('.toast')?.innerText || '',
+      };
+    })()`);
+  const api1 = (await api('GET', `/api/products/${pid}`, { token: buyerToken })).data;
+  check('点一次后按钮变为「已想要」且人数 +1',
+    dom1.text.includes('已想要') && dom1.primary
+    && Number(dom1.count) === base + 1 && api1.want_count === base + 1,
+    `按钮「${dom1.text}」，人数 ${base} → ${api1.want_count}，接口 wanted=${api1.wanted}`);
+
+  await cdp.shot(path.join(SHOT_DIR, 'f3-want-on.png'));
+
+  // ---- 再点一次取消 ----
+  await cdp.eval(`document.querySelector('[data-act="want"]').click()`);
+  await sleep(900);
+  const dom2 = await cdp.eval(`
+    (() => {
+      const btn = document.querySelector('[data-act="want"]');
+      return {
+        text: btn.innerText.replace(/\\s+/g, ' ').trim(),
+        primary: btn.classList.contains('btn-primary'),
+        count: document.querySelector('#want-count').textContent,
+      };
+    })()`);
+  const api2 = (await api('GET', `/api/products/${pid}`, { token: buyerToken })).data;
+  check('再点一次取消，按钮与人数都恢复',
+    dom2.text.includes('我想要') && !dom2.text.includes('已想要') && !dom2.primary
+    && Number(dom2.count) === base && api2.wanted === false && api2.want_count === base,
+    `按钮「${dom2.text}」，人数回到 ${api2.want_count}，接口 wanted=${api2.wanted}`);
+
+  // ---- 卖家看自己的商品：能看到人数，但没有按钮 ----
+  await cdp.loginAs('seller1', '123456', 'seller');
+  await cdp.go(`/product/${pid}`);
+  const ownerView = await cdp.eval(`
+    (() => ({
+      hasWantBtn: !!document.querySelector('[data-act="want"]'),
+      line: (document.querySelector('#want-count-line')?.innerText || '').trim(),
+    }))()`);
+  check('卖家看自己的商品：有想要人数、但没有「我想要」按钮',
+    !ownerView.hasWantBtn && /人想要/.test(ownerView.line), JSON.stringify(ownerView));
+
+  // ---- 游客：按钮引导登录 ----
+  await cdp.logout();
+  await cdp.go(`/product/${pid}`);
+  const guestView = await cdp.eval(`
+    (() => ({
+      hasWantBtn: !!document.querySelector('[data-act="want"]'),
+      loginBtn: [...document.querySelectorAll('#action-bar button')]
+        .some(b => b.dataset.act === 'login' && b.innerText.includes('我想要')),
+    }))()`);
+  check('游客看到「我想要」按钮，点击会引导登录',
+    !guestView.hasWantBtn && guestView.loginBtn === true, JSON.stringify(guestView));
+
+  // ---- 商品卡上也展示想要人数 ----
+  await cdp.go('/search');
+  const cardFoot = await cdp.eval(`
+    document.querySelector('#result-area .pc-foot')?.innerText.replace(/\\s+/g, ' ').trim() || ''`);
+  check('商品卡上展示「浏览 · 想要」人数', /❤️/.test(cardFoot), cardFoot);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
   2: { title: '价格区间可自行输入', fn: feature2 },
+  3: { title: '我想要', fn: feature3 },
 };
 
 async function main() {

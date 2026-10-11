@@ -58,6 +58,7 @@ export default {
               <dt>发布时间</dt><dd>${esc(fmtTime(product.created_at))}</dd>
               <dt>浏览量</dt><dd>👁 ${product.views}</dd>
               <dt>平均评分</dt><dd>${product.avg_rating ? `<span class="stars">★ ${product.avg_rating}</span>（${product.review_count} 条）` : '<span class="muted">暂无评价</span>'}</dd>
+              <dt>想要人数</dt><dd id="want-count-line">❤️ <b id="want-count">${product.want_count ?? 0}</b> 人想要</dd>
             </dl>
 
             <div class="divider"></div>
@@ -104,6 +105,7 @@ async function renderActions(root, product, id) {
 
   if (!loggedIn) {
     buttons.push(`<button class="btn btn-primary btn-lg" data-act="login">登录后购买</button>`);
+    buttons.push(`<button class="btn" data-act="login">🤍 我想要</button>`);
     buttons.push(`<button class="btn" data-act="login">⭐ 收藏</button>`);
     buttons.push(`<button class="btn" data-act="login">🚩 举报</button>`);
   } else if (product.is_admin && !product.is_owner) {
@@ -120,6 +122,7 @@ async function renderActions(root, product, id) {
     buttons.push(`<button class="btn btn-primary btn-lg" data-act="buy" ${product.can_buy ? '' : 'disabled'}>
         ${product.can_buy ? '立即购买' : (product.status === 'sold' ? '已被买走' : '暂不可购买')}
       </button>`);
+    buttons.push(`<button class="btn ${product.wanted ? 'btn-primary' : ''}" data-act="want">${product.wanted ? '❤️ 已想要' : '🤍 我想要'} <span id="want-btn-count">${product.want_count ?? 0}</span></button>`);
     buttons.push(`<button class="btn" data-act="compare">📊 比一比</button>`);
     buttons.push(`<button class="btn" data-act="fav">${product.favorited ? '★ 已收藏' : '☆ 收藏'}</button>`);
     buttons.push(`<button class="btn" data-act="msg">✉️ 私信卖家</button>`);
@@ -137,6 +140,24 @@ async function renderActions(root, product, id) {
     if (act === 'compare') { go(`#/compare?category_id=${product.category_id}`); return; }
     if (act === 'edit') { go(`#/product/${id}/edit`); return; }
     if (act === 'msg') { go(`#/messages?to=${product.seller_id}&product=${id}`); return; }
+
+    // 功能③：点一次标记「我想要」，再点取消
+    if (act === 'want') {
+      try {
+        const data = await api.post(`/api/products/${id}/want`);
+        product.wanted = data.wanted;
+        product.want_count = data.want_count;
+        const wantBtn = bar.querySelector('[data-act="want"]');
+        wantBtn.classList.toggle('btn-primary', data.wanted);
+        wantBtn.innerHTML = `${data.wanted ? '❤️ 已想要' : '🤍 我想要'} <span id="want-btn-count">${data.want_count}</span>`;
+        const line = root.querySelector('#want-count');
+        if (line) line.textContent = data.want_count;
+        toast(data.wanted ? '已标记「我想要」' : '已取消「我想要」');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+      return;
+    }
 
     try {
       if (act === 'fav') {

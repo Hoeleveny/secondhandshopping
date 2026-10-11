@@ -20,7 +20,7 @@ export function productCardHtml(product) {
       </div>
       <div class="pc-foot">
         <span>${esc(product.category_icon || '')} ${esc(product.category_name || '')}</span>
-        <span title="浏览量">👁 ${product.views ?? 0}</span>
+        <span title="浏览 / 想要人数">👁 ${product.views ?? 0} · ❤️ ${product.want_count ?? 0}</span>
       </div>
     </div>
   </article>`;
