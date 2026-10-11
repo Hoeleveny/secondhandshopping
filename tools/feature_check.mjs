@@ -91,7 +91,25 @@ async function feature1(cdp) {
     badge.exists && badge.visible && Number(badge.text) >= 1,
     `红点=${JSON.stringify(badge)}`);
 
-  await cdp.eval(`document.querySelector('#msg-entry').click()`);
+  // 消息入口已移入右上角用户小框（界面调整②）
+  await cdp.eval(`document.querySelector('#user-menu').click()`);
+  await sleep(500);
+  const ddInfo = await cdp.eval(`
+    (() => {
+      const dd = document.querySelector('.dropdown');
+      return {
+        shown: !!dd,
+        items: [...(dd?.querySelectorAll('.dd-item') || [])].map(i => i.innerText.replace(/\\s+/g, ' ').trim()),
+        count: dd?.querySelector('#dd-msg-count')?.textContent || '',
+      };
+    })()`);
+  check('用户小框里有「我的消息」并带上未读数',
+    ddInfo.shown && ddInfo.items.some(t => t.includes('我的消息')) && Number(ddInfo.count) >= 1,
+    `小框项=${JSON.stringify(ddInfo.items)}，未读数=${ddInfo.count}`);
+
+  await cdp.eval(`
+    [...document.querySelectorAll('.dropdown .dd-item')]
+      .find(b => b.innerText.includes('我的消息')).click()`);
   await sleep(1500);
   const convView = await cdp.eval(`
     (() => ({
@@ -791,9 +809,17 @@ async function feature7(cdp) {
       previewText: document.querySelector('#avatar-preview')?.innerText.trim() || '',
       menuItems: [...document.querySelectorAll('.menu-item')].map(m => m.innerText.trim()),
     }))()`);
-  check('侧边栏有「个人资料」入口，页面能读到当前昵称',
-    loaded.menuItems.some(t => t.includes('个人资料')) && loaded.nick === originalNick,
-    `菜单=${JSON.stringify(loaded.menuItems)}，昵称=「${loaded.nick}」`);
+  // 入口已在界面调整②中移入右上角用户小框，这里顺便复核一下
+  await cdp.eval(`document.querySelector('#user-menu').click()`);
+  await sleep(400);
+  const ddItems = await cdp.eval(`
+    [...document.querySelectorAll('.dropdown .dd-item')].map(i => i.innerText.replace(/\\s+/g, ' ').trim())`);
+  await cdp.eval(`document.querySelector('.dropdown')?.remove()`);
+  check('「个人资料」入口在右上角用户小框里、且左侧功能列已不再有它',
+    ddItems.some(t => t.includes('个人资料')) && !loaded.menuItems.some(t => t.includes('个人资料')),
+    `小框项=${JSON.stringify(ddItems)}，左侧菜单=${JSON.stringify(loaded.menuItems)}`);
+  check('资料页能读到当前昵称',
+    loaded.nick === originalNick, `昵称=「${loaded.nick}」`);
   check('资料页有头像上传入口，未设置头像时显示昵称首字',
     loaded.hasPicker && loaded.previewText === originalNick.slice(0, 1),
     `预览=「${loaded.previewText}」`);
@@ -952,6 +978,81 @@ async function feature8(cdp) {
   }
 }
 
+/* ================================================================ 功能⑨ 用户小框收纳 */
+async function feature9(cdp) {
+  console.log('\n===== 功能⑨ 「我的消息」「个人资料」移入右上角用户小框 =====');
+
+  const readShell = () => cdp.eval(`
+    (() => ({
+      menuItems: [...document.querySelectorAll('.menu-item')].map(m => m.innerText.trim()),
+      avatarBtn: !!document.querySelector('#user-menu'),
+      badgeInAvatar: !!document.querySelector('#user-menu #msg-badge'),
+      legacyMsgEntry: !!document.querySelector('#msg-entry'),
+    }))()`);
+
+  // ---- 1. 买家视角 ----
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go('/search');
+  const buyerShell = await readShell();
+  check('买家左侧功能列不再有「我的消息」「个人资料」',
+    !buyerShell.menuItems.some(t => t.includes('我的消息')) && !buyerShell.menuItems.some(t => t.includes('个人资料')),
+    `左侧菜单=${JSON.stringify(buyerShell.menuItems)}`);
+  check('顶栏不再有单独的消息图标按钮（合并进用户小框）',
+    buyerShell.legacyMsgEntry === false && buyerShell.avatarBtn, JSON.stringify(buyerShell));
+
+  // ---- 2. 打开用户小框，两个入口都在里面 ----
+  await cdp.eval(`document.querySelector('#user-menu').click()`);
+  await sleep(600);
+  const dd = await cdp.eval(`
+    (() => {
+      const box = document.querySelector('.dropdown');
+      return {
+        shown: !!box,
+        items: [...(box?.querySelectorAll('.dd-item') || [])].map(i => i.innerText.replace(/\\s+/g, ' ').trim()),
+      };
+    })()`);
+  check('用户小框里有「我的消息」和「个人资料」',
+    dd.shown && dd.items.some(t => t.includes('我的消息')) && dd.items.some(t => t.includes('个人资料')),
+    `小框项=${JSON.stringify(dd.items)}`);
+
+  await cdp.shot(path.join(SHOT_DIR, 'f9-user-dropdown.png'));
+
+  // ---- 3. 从小框点进「个人资料」 ----
+  await cdp.eval(`
+    [...document.querySelectorAll('.dropdown .dd-item')]
+      .find(b => b.innerText.includes('个人资料')).click()`);
+  await sleep(1300);
+  const profileHash = await cdp.eval(`({ hash: location.hash, hasNick: !!document.querySelector('#pf-nickname') })`);
+  check('从小框能直接进入个人资料页', profileHash.hash === '#/profile' && profileHash.hasNick, JSON.stringify(profileHash));
+
+  // ---- 4. 从小框点进「我的消息」 ----
+  await cdp.eval(`document.querySelector('#user-menu').click()`);
+  await sleep(500);
+  await cdp.eval(`
+    [...document.querySelectorAll('.dropdown .dd-item')]
+      .find(b => b.innerText.includes('我的消息')).click()`);
+  await sleep(1300);
+  const msgHash = await cdp.eval(`location.hash`);
+  check('从小框能直接进入我的消息页', msgHash.startsWith('#/messages'), `hash=${msgHash}`);
+
+  // ---- 5. 卖家 / 管理员视角同样不再出现在左侧 ----
+  for (const [account, role, view] of [['seller1', '123456', 'seller'], ['admin', '123456', 'admin']]) {
+    await cdp.loginAs(account, role, view);
+    await cdp.go('/search');
+    const shell = await readShell();
+    const ok = !shell.menuItems.some(t => t.includes('我的消息'))
+      && !shell.menuItems.some(t => t.includes('个人资料')) && shell.avatarBtn;
+    await cdp.eval(`document.querySelector('#user-menu').click()`);
+    await sleep(500);
+    const items = await cdp.eval(`
+      [...document.querySelectorAll('.dropdown .dd-item')].map(i => i.innerText.replace(/\\s+/g, ' ').trim())`);
+    await cdp.eval(`document.querySelector('.dropdown')?.remove()`);
+    check(`${view} 视角：左侧无这两项、小框里有`,
+      ok && items.some(t => t.includes('我的消息')) && items.some(t => t.includes('个人资料')),
+      `左侧=${JSON.stringify(shell.menuItems)}；小框=${JSON.stringify(items)}`);
+  }
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -962,6 +1063,7 @@ const GROUPS = {
   6: { title: '帖子配图', fn: feature6 },
   7: { title: '个人资料（昵称、头像）', fn: feature7 },
   8: { title: '站名回首页 / 菜单去掉首页', fn: feature8 },
+  9: { title: '消息与资料移入用户小框', fn: feature9 },
 };
 
 async function main() {

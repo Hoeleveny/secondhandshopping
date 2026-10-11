@@ -28,9 +28,9 @@ const M = {
 
 const MENUS = {
   guest: [M.search, M.compare, M.posts],
-  buyer: [M.search, M.compare, M.orders, M.favorites, M.swaps, M.messages, M.posts, M.profile],
-  seller: [M.publish, M.myProducts, M.sold, M.swaps, M.messages, M.posts, M.profile],
-  admin: [M.admin, M.dashboard, M.messages, M.profile],
+  buyer: [M.search, M.compare, M.orders, M.favorites, M.swaps, M.posts],
+  seller: [M.publish, M.myProducts, M.sold, M.swaps, M.posts],
+  admin: [M.admin, M.dashboard],
 };
 
 /* ---------------------------------------------------------------- 路由表 */
@@ -105,15 +105,14 @@ function topbarHtml(viewKey) {
     </div>` : '';
 
   const rightHtml = store.isLoggedIn ? `
-    <button class="btn btn-ghost" id="msg-entry" title="我的消息" style="position:relative;font-size:17px">
-      ✉️<span class="badge badge-danger" id="msg-badge" style="display:none;position:absolute;top:-4px;right:-4px">0</span>
-    </button>
-    <button class="avatar-btn" id="user-menu">
+    <button class="avatar-btn" id="user-menu" style="position:relative">
       <span class="avatar-dot">${store.user?.avatar
         ? `<img src="/uploads/${encodeURIComponent(store.user.avatar)}" alt="">`
         : esc(initials(store.nickname))}</span>
       <span>${esc(store.nickname)}</span>
       <span class="muted small">${store.isAdmin ? '管理员' : (viewKey === 'seller' ? '卖家视角' : '买家视角')}</span>
+      <span class="badge badge-danger" id="msg-badge"
+            style="display:none;position:absolute;top:-3px;left:-3px">0</span>
     </button>` : `
     <button class="btn btn-primary" id="go-login">登录 / 注册</button>`;
 
@@ -276,10 +275,8 @@ function bindShellEvents() {
   const loginBtn = root.querySelector('#go-login');
   if (loginBtn) loginBtn.addEventListener('click', () => go('#/login'));
 
-  // 顶栏消息入口 + 未读红点（登录后每 30 秒刷一次）
-  const msgEntry = root.querySelector('#msg-entry');
-  if (msgEntry) {
-    msgEntry.addEventListener('click', () => go('#/messages'));
+  // 未读私信红点（登录后每 30 秒刷一次；入口在右上角用户小框里）
+  if (root.querySelector('#user-menu')) {
     refreshUnreadBadge();
     clearInterval(window.__unreadTimer);
     window.__unreadTimer = setInterval(refreshUnreadBadge, 30000);
@@ -294,13 +291,29 @@ function bindShellEvents() {
     if (existing) { existing.remove(); return; }
     const dd = document.createElement('div');
     dd.className = 'dropdown';
+    const unread = document.getElementById('msg-badge')?.textContent || '0';
     dd.innerHTML = `
       <div class="dd-head"><b>${esc(store.nickname)}</b>
         <span>${store.isAdmin ? '管理员' : (viewKeyLabel())}　信用分 ${esc(store.user?.credit ?? '-')}</span></div>
+      <button class="dd-item" data-go="#/messages">✉️ 我的消息
+        <span class="badge badge-danger" id="dd-msg-count" style="${unread === '0' ? 'display:none' : ''}">${esc(unread)}</span>
+      </button>
+      <button class="dd-item" data-go="#/profile">👤 个人资料</button>
+      <div class="dd-sep"></div>
       ${store.isAdmin ? '' : '<button class="dd-item" data-go="#/orders">📦 我的订单</button>'}
       ${store.isAdmin ? '' : '<button class="dd-item" data-go="#/favorites">⭐ 我的收藏</button>'}
       <button class="dd-item" data-logout>🚪 退出登录</button>`;
     document.body.appendChild(dd);
+
+    // 小框打开后顺手把未读数刷成最新（同时更新头像上的红点）
+    api.get('/api/messages/unread').then((data) => {
+      const count = data?.count ?? 0;
+      const ddCount = dd.querySelector('#dd-msg-count');
+      if (ddCount) { ddCount.textContent = count; ddCount.style.display = count > 0 ? '' : 'none'; }
+      const badge = document.getElementById('msg-badge');
+      if (badge) { badge.textContent = count; badge.style.display = count > 0 ? '' : 'none'; }
+    }).catch(() => { /* 静默 */ });
+
     dd.querySelectorAll('[data-go]').forEach(btn =>
       btn.addEventListener('click', () => { dd.remove(); go(btn.dataset.go); }));
     dd.querySelector('[data-logout]').addEventListener('click', async () => {
