@@ -472,6 +472,10 @@ class Post(db.Model):
                                cascade="all, delete-orphan", order_by="PostComment.id")
     likes = db.relationship("PostLike", backref="post", lazy="select",
                             cascade="all, delete-orphan")
+    # 功能⑥：帖子配图
+    images = db.relationship("PostImage", backref="post", lazy="select",
+                             cascade="all, delete-orphan",
+                             order_by="PostImage.sort, PostImage.id")
 
     def to_dict(self, viewer_id: int | None = None, with_comments: bool = False) -> dict:
         data = {
@@ -484,6 +488,7 @@ class Post(db.Model):
             "status": self.status,
             "like_count": len(self.likes),
             "comment_count": len(self.comments),
+            "images": [img.url for img in self.images],
             "liked": bool(viewer_id and any(lk.user_id == viewer_id for lk in self.likes)),
             "created_at": _dt(self.created_at),
         }
@@ -524,6 +529,20 @@ class PostLike(db.Model):
     user_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
 
     __table_args__ = (db.UniqueConstraint("post_id", "user_id", name="uk_post_likes_post_user"),)
+
+
+# ---------------------------------------------------------------- 14. 帖子配图（功能⑥）
+class PostImage(db.Model):
+    __tablename__ = "post_images"
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    post_id = db.Column(db.BigInteger, db.ForeignKey("posts.id"), nullable=False)
+    url = db.Column(db.String(255), nullable=False)
+    sort = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "url": self.url, "sort": self.sort}
 
 
 # ---------------------------------------------------------------- 15. 私信消息（功能①）

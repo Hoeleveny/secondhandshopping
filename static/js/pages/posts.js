@@ -123,6 +123,9 @@ export default {
 /* ------------------------------------------------------------------ 发帖弹窗 */
 export function openPostModal(onDone) {
   const tags = ['安利', '避雷', '闲聊', '求助'];
+  const maxImages = 6;
+  const images = [];     // 已上传成功的文件名
+
   openModal({
     title: '发帖',
     body: `
@@ -139,10 +142,52 @@ export function openPostModal(onDone) {
       <div class="form-row">
         <label>内容<span class="req">*</span></label>
         <textarea class="textarea" id="po-content" style="min-height:140px" placeholder="安利 / 避雷 / 闲聊 / 求助 都可以写"></textarea>
+      </div>
+      <div class="form-row">
+        <label>配图（最多 ${maxImages} 张，jpg / png / webp，单张 ≤ 2MB）</label>
+        <input type="file" id="po-images" accept="image/jpeg,image/png,image/webp" multiple style="display:none">
+        <button type="button" class="btn" id="po-pick">📎 选择图片</button>
+        <div class="gallery-thumbs" id="po-image-list"></div>
       </div>`,
     footer: `<button class="btn" data-close>取消</button>
              <button class="btn btn-primary" id="po-submit">发布</button>`,
     onMount(modal, close) {
+      const list = modal.querySelector('#po-image-list');
+      const fileInput = modal.querySelector('#po-images');
+
+      function renderImages() {
+        list.innerHTML = images.map((file, index) => `
+          <span style="position:relative;display:inline-block">
+            <img src="/uploads/${encodeURIComponent(file)}" alt="">
+            <button type="button" data-rm="${index}"
+                    style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;
+                           border:none;background:var(--danger);color:#fff;cursor:pointer;line-height:1;font-size:12px">×</button>
+          </span>`).join('');
+        list.querySelectorAll('[data-rm]').forEach(btn =>
+          btn.addEventListener('click', () => {
+            images.splice(Number(btn.dataset.rm), 1);
+            renderImages();
+          }));
+      }
+
+      modal.querySelector('#po-pick').addEventListener('click', () => fileInput.click());
+      fileInput.addEventListener('change', async (event) => {
+        const files = Array.from(event.target.files || []);
+        event.target.value = '';
+        for (const file of files) {
+          if (images.length >= maxImages) { toast(`最多上传 ${maxImages} 张图片`, 'warn'); break; }
+          if (!/^image\/(jpeg|png|webp)$/.test(file.type)) { toast(`${file.name}：只支持 jpg / png / webp`, 'warn'); continue; }
+          if (file.size > 2 * 1024 * 1024) { toast(`${file.name}：超过 2MB`, 'warn'); continue; }
+          try {
+            const data = await api.upload(file);
+            images.push(data.url);
+            renderImages();
+          } catch (err) {
+            toast(`上传失败：${err.message}`, 'error');
+          }
+        }
+      });
+
       modal.querySelector('#po-submit').addEventListener('click', async (event) => {
         const button = event.currentTarget;
         button.disabled = true;
@@ -151,9 +196,10 @@ export function openPostModal(onDone) {
             title: modal.querySelector('#po-title').value.trim(),
             content: modal.querySelector('#po-content').value.trim(),
             tag: modal.querySelector('input[name="po-tag"]:checked').value,
+            images,
           });
           close();
-          toast('发布成功');
+          toast(`发布成功${images.length ? `（含 ${images.length} 张配图）` : ''}`);
           if (onDone) onDone();
         } catch (err) {
           toast(err.message, 'error');

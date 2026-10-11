@@ -6,9 +6,10 @@
 
 用法：
     .venv\\Scripts\\python.exe tools\\cleanup_test_data.py
+    .venv\\Scripts\\python.exe tools\\cleanup_test_data.py --files   # 顺便删孤儿图片
     .venv\\Scripts\\python.exe manage.py clean-test
 
-注意：只删「冒烟」/「验收」前缀的测试数据，不会碰任何真实业务数据。
+注意：只删「冒烟」/「验收」/「自动化测试」前缀的测试数据，不会碰任何真实业务数据。
 """
 import sys
 from pathlib import Path
@@ -95,14 +96,60 @@ def cleanup(verbose: bool = True) -> dict[str, int]:
     return result
 
 
+def cleanup_orphan_uploads(verbose: bool = True) -> int:
+    """删除 uploads/ 下没有被任何商品或帖子引用的图片文件。
+
+    测试上传的图片在测试数据被清掉后会变成孤儿文件，长期会越积越多。
+    只删「数据库里查不到引用」的文件，仍在使用的图片一律不动。
+    """
+    from pathlib import Path as _Path
+
+    upload_dir = _Path(Config.UPLOAD_FOLDER)
+    if not upload_dir.is_dir():
+        return 0
+
+    conn = pymysql.connect(
+        host=Config.DB_HOST, port=int(Config.DB_PORT), user=Config.DB_USER,
+        password=Config.DB_PASSWORD, database=Config.DB_NAME, charset="utf8mb4",
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT url FROM product_images UNION SELECT url FROM post_images"
+            )
+            used = {row[0] for row in cur.fetchall()}
+    finally:
+        conn.close()
+
+    removed = 0
+    for path in sorted(upload_dir.iterdir()):
+        if not path.is_file() or path.name.startswith("."):
+            continue
+        if path.name in used:
+            continue
+        if verbose:
+            print(f"      删除孤儿图片：{path.name}")
+        path.unlink()
+        removed += 1
+    return removed
+
+
 def main() -> int:
-    print("清理自动化测试残留（只删「冒烟」前缀的测试数据）…")
+    args = set(sys.argv[1:])
+    with_files = "--files" in args or "--with-files" in args
+
+    print("清理自动化测试残留（只删「冒烟 / 验收 / 自动化测试」前缀的测试数据）…")
     result = cleanup()
     total = sum(v for v in result.values() if v > 0)
     if total:
         print(f"[OK]  共清理 {total} 行")
     else:
         print("[OK]  没有需要清理的数据")
+
+    if with_files:
+        print("\n清理 uploads/ 下无人引用的孤儿图片…")
+        removed = cleanup_orphan_uploads()
+        print(f"[OK]  共清理 {removed} 个文件" if removed else "[OK]  没有孤儿图片")
     return 0
 
 

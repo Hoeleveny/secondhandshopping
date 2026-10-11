@@ -334,4 +334,19 @@ CREATE TABLE `product_wants` (
   CONSTRAINT `fk_product_wants_product` FOREIGN KEY (`product_id`) REFERENCES `products` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='我想要（商品收藏意愿）';
 
+-- -------------------------------------------------------------
+-- 表 17：post_images（帖子配图）—— 功能⑥，新增于迁移 004
+-- -------------------------------------------------------------
+DROP TABLE IF EXISTS `post_images`;
+CREATE TABLE `post_images` (
+  `id`         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `post_id`    BIGINT UNSIGNED NOT NULL,
+  `url`        VARCHAR(255)    NOT NULL                COMMENT '相对于 uploads/ 的文件名',
+  `sort`       INT             NOT NULL DEFAULT 0      COMMENT '展示顺序',
+  `created_at` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_post_images_post` (`post_id`, `sort`),
+  CONSTRAINT `fk_post_images_post` FOREIGN KEY (`post_id`) REFERENCES `posts` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='帖子配图';
+
 SET FOREIGN_KEY_CHECKS = 1;

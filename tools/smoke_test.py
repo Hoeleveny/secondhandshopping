@@ -61,6 +61,38 @@ def section(title: str) -> None:
     print(f"\n===== {title} =====")
 
 
+def db_table_names() -> set[str]:
+    """库里真实的表名集合（用于动态校验备份覆盖率）。"""
+    import sys
+    from pathlib import Path
+
+    import pymysql
+
+    root = str(Path(__file__).resolve().parent.parent)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+
+    from config import Config
+
+    conn = pymysql.connect(
+        host=Config.DB_HOST, port=int(Config.DB_PORT), user=Config.DB_USER,
+        password=Config.DB_PASSWORD, database=Config.DB_NAME, charset="utf8mb4",
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = %s",
+                (Config.DB_NAME,),
+            )
+            return {row[0] for row in cur.fetchall()}
+    finally:
+        conn.close()
+
+
+def db_table_count() -> int:
+    return len(db_table_names())
+
+
 def cleanup_test_data() -> None:
     """清掉本脚本留下的测试数据（商品 / 帖子 / 消息等）。
 
@@ -629,9 +661,13 @@ def main() -> int:
     section("备份 / 恢复 / 重置示例数据")
     status, res = call("POST", "/api/admin/backup", token=admin_token)
     payload = (res.get("data") or {}).get("payload")
-    check("备份导出 JSON 且包含 16 张表",
-          res.get("code") == 0 and payload and len(payload.get("data", {})) == 16,
-          str(res)[:200])
+    # 动态对比库里真实表数，避免每次加表都要改这条断言
+    expected_tables = db_table_count()
+    backup_tables = set((payload or {}).get("data", {}).keys())
+    real_tables = db_table_names()
+    check(f"备份导出 JSON 且覆盖库里全部 {expected_tables} 张表",
+          res.get("code") == 0 and payload is not None and backup_tables == real_tables,
+          f"备份 {len(backup_tables)} 张，实际 {len(real_tables)} 张，差集 {sorted(real_tables ^ backup_tables)}")
 
     status, res = call("GET", "/api/admin/backups", token=admin_token)
     check("备份文件落地到 backups/ 目录", len(res.get("data") or []) >= 1, str(res)[:150])
@@ -859,6 +895,43 @@ def main() -> int:
 
     status, res = call("DELETE", f"/api/orders/{order['id']}/record", token=token)
     check("同一条订单不能重复删除记录", res.get("code") != 0, str(res)[:150])
+
+    # ---------------- 功能⑥ 帖子配图 ----------------
+    section("功能⑥ 帖子配图")
+
+    status, res = call("POST", "/api/posts", token=token,
+                       body={"title": "冒烟-配图帖子", "content": "带两张图的测试帖",
+                             "tag": "闲聊", "images": ["post-a.png", "post-b.png"]})
+    post_id = (res.get("data") or {}).get("id")
+    check("发帖可以带配图", res.get("code") == 0 and bool(post_id), str(res)[:180])
+
+    status, res = call("GET", f"/api/posts/{post_id}")
+    images = (res.get("data") or {}).get("images") or []
+    check("帖子详情返回配图且顺序正确",
+          images == ["post-a.png", "post-b.png"], str(images)[:150])
+
+    status, res = call("GET", "/api/posts?keyword=冒烟-配图帖子")
+    first = ((res.get("data") or {}).get("list") or [{}])[0]
+    check("帖子列表里也带配图（用于显示缩略图）",
+          (first.get("images") or []) == ["post-a.png", "post-b.png"],
+          str(first.get("images"))[:150])
+
+    status, res = call("POST", "/api/posts", token=token,
+                       body={"title": "冒烟-无图帖子", "content": "不带图",
+                             "tag": "闲聊", "images": []})
+    check("不配图也能正常发帖",
+          res.get("code") == 0 and (res.get("data") or {}).get("images") == [],
+          str(res)[:150])
+
+    status, res = call("POST", "/api/posts", token=token,
+                       body={"title": "冒烟-图太多", "content": "超出上限",
+                             "tag": "闲聊", "images": [f"x{i}.png" for i in range(20)]})
+    check("配图超过上限被拒", res.get("code") != 0, str(res)[:150])
+
+    status, res = call("POST", "/api/posts", token=token,
+                       body={"title": "冒烟-图片参数非法", "content": "images 不是数组",
+                             "tag": "闲聊", "images": "not-a-list"})
+    check("配图参数格式非法被拒", res.get("code") != 0, str(res)[:150])
 
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()

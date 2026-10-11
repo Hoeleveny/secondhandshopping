@@ -643,6 +643,128 @@ async function feature5(cdp) {
     /^#\/post\/\d+/.test(afterComment), `hash=${afterComment}`);
 }
 
+/* ================================================================ 功能⑥ 帖子配图 */
+async function feature6(cdp) {
+  console.log('\n===== 功能⑥ 帖子发布支持配图 =====');
+
+  // 造两张极小的真实 PNG，走真实的 input[type=file] 上传链路
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64');
+  const img1 = path.join(WORK, 'post-img-1.png');
+  const img2 = path.join(WORK, 'post-img-2.png');
+  fs.writeFileSync(img1, png);
+  fs.writeFileSync(img2, png);
+
+  const title = `自动化测试：带图帖子-${Date.now() % 100000}`;
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go('/posts');
+
+  await cdp.eval(`document.querySelector('#btn-new-post').click()`);
+  await sleep(600);
+  const modalReady = await cdp.eval(`
+    (() => {
+      const m = document.querySelector('.modal-mask');
+      return { shown: !!m, hasPicker: !!m?.querySelector('#po-images'), hasBtn: !!m?.querySelector('#po-pick') };
+    })()`);
+  check('发帖弹窗里有配图上传入口',
+    modalReady.shown && modalReady.hasPicker && modalReady.hasBtn, JSON.stringify(modalReady));
+
+  const { root } = await cdp.send('DOM.getDocument');
+  const { nodeId } = await cdp.send('DOM.querySelector',
+    { nodeId: root.nodeId, selector: '#po-images' });
+  await cdp.send('DOM.setFileInputFiles', { files: [img1, img2], nodeId });
+  await sleep(1800);
+
+  const thumbs = await cdp.eval(`
+    (() => ({
+      count: document.querySelectorAll('#po-image-list img').length,
+      srcs: [...document.querySelectorAll('#po-image-list img')].map(i => i.getAttribute('src')),
+    }))()`);
+  check('选择两张图后弹窗里出现缩略图',
+    thumbs.count === 2 && thumbs.srcs.every(s => s.startsWith('/uploads/')),
+    `缩略图 ${thumbs.count} 张：${JSON.stringify(thumbs.srcs)}`);
+
+  await cdp.shot(path.join(SHOT_DIR, 'f6-post-modal.png'));
+
+  // 删掉一张，验证可以移除
+  await cdp.eval(`document.querySelector('#po-image-list [data-rm]').click()`);
+  await sleep(400);
+  const afterRemove = await cdp.eval(`document.querySelectorAll('#po-image-list img').length`);
+  check('点缩略图上的 × 可以移除已选图片', afterRemove === 1, `剩余 ${afterRemove} 张`);
+
+  // 再补一张回来，凑够两张发布
+  await cdp.send('DOM.setFileInputFiles', { files: [img2], nodeId });
+  await sleep(1500);
+
+  await cdp.eval(`
+    (() => {
+      const set = (sel, val) => {
+        const el = document.querySelector(sel);
+        el.value = val;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      };
+      set('#po-title', ${JSON.stringify(title)});
+      set('#po-content', '自动化测试：这条帖子带两张配图，用来验证发帖配图全链路。');
+      document.querySelector('input[name="po-tag"][value="安利"]').checked = true;
+      document.querySelector('#po-submit').click();
+    })()`);
+  await sleep(1800);
+
+  const inList = await cdp.eval(`
+    (() => {
+      const item = [...document.querySelectorAll('#list-area .post-item')]
+        .find(i => i.innerText.includes('带图帖子'));
+      return {
+        found: !!item,
+        thumbs: item ? item.querySelectorAll('.post-thumbs img').length : 0,
+        toast: document.querySelector('.toast')?.innerText || '',
+      };
+    })()`);
+  check('新帖出现在列表里并带缩略图',
+    inList.found && inList.thumbs === 2, JSON.stringify(inList));
+
+  // 进详情看图集
+  await cdp.eval(`
+    (() => {
+      const item = [...document.querySelectorAll('#list-area .post-item')]
+        .find(i => i.innerText.includes('带图帖子'));
+      item.click();
+    })()`);
+  await sleep(1300);
+  const detail = await cdp.eval(`
+    (() => ({
+      hash: location.hash,
+      gallery: document.querySelectorAll('#post-gallery img').length,
+    }))()`);
+  check('帖子详情页展示配图',
+    /^#\/post\/\d+/.test(detail.hash) && detail.gallery === 2, JSON.stringify(detail));
+
+  await cdp.shot(path.join(SHOT_DIR, 'f6-post-detail.png'));
+
+  // 点图片放大
+  await cdp.eval(`document.querySelector('#post-gallery img').click()`);
+  await sleep(600);
+  const zoom = await cdp.eval(`
+    (() => {
+      const m = document.querySelector('.modal-mask');
+      return { shown: !!m, hasImg: !!m?.querySelector('img') };
+    })()`);
+  check('点配图可以放大查看', zoom.shown && zoom.hasImg, JSON.stringify(zoom));
+  await cdp.eval(`document.querySelector('.modal-mask [data-close]').click()`);
+  await sleep(400);
+
+  // 接口层面复核
+  const found = await api('GET', `/api/posts?keyword=${encodeURIComponent('带图帖子')}`);
+  const post = (found.data?.list || [])[0];
+  check('接口里该帖确实存了两张配图',
+    (post?.images || []).length === 2, JSON.stringify(post?.images || []));
+
+  // 删掉测试帖（配图随外键级联删除）
+  if (post) await api('DELETE', `/api/posts/${post.id}`, { token: await login('buyer1', '123456', 'buyer') });
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -650,6 +772,7 @@ const GROUPS = {
   3: { title: '我想要', fn: feature3 },
   4: { title: '删除记录', fn: feature4 },
   5: { title: '帖子点击响应范围', fn: feature5 },
+  6: { title: '帖子配图', fn: feature6 },
 };
 
 async function main() {

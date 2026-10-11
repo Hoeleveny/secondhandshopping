@@ -388,6 +388,22 @@ h3 { font-size: 16px; }
 .post-item:last-child { border-bottom: none; }
 .post-title { font-size: 16px; font-weight: 700; }
 .post-meta { font-size: 12px; color: var(--muted); display: flex; gap: 12px; margin-top: 4px; flex-wrap: wrap; }
+
+/* 功能⑥：帖子配图 */
+.post-thumbs { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+.post-thumbs img {
+  width: 96px; height: 96px; object-fit: cover; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--green-soft);
+}
+.post-thumb-more {
+  width: 34px; height: 34px; border-radius: 8px; background: #f0f2f1;
+  color: var(--text-sub); display: flex; align-items: center; justify-content: center; font-size: 12px;
+}
+.post-gallery { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.post-gallery img {
+  max-width: 240px; max-height: 240px; border-radius: 10px;
+  border: 1px solid var(--border); cursor: zoom-in; background: var(--green-soft);
+}
 .post-actions { display: flex; gap: 14px; margin-top: 8px; font-size: 13px; color: var(--text-sub); }
 .post-actions button {
   border: none; background: none; cursor: pointer; color: inherit; font-size: 13px; padding: 2px 4px;

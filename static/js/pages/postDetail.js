@@ -3,7 +3,7 @@
    ========================================================================== */
 import { api } from '../api.js';
 import { store } from '../store.js';
-import { confirmDialog, emptyHtml, esc, fmtTime, toast } from '../ui.js';
+import { confirmDialog, emptyHtml, esc, fmtTime, openModal, toast } from '../ui.js';
 
 async function renderPost(root, ctx) {
   const id = ctx.params.id;
@@ -37,6 +37,10 @@ async function renderPost(root, ctx) {
       </div>
       <div class="divider"></div>
       <div style="white-space:pre-wrap">${esc(post.content)}</div>
+      ${(post.images || []).length ? `
+        <div class="post-gallery" id="post-gallery">
+          ${post.images.map(url => `<img src="/uploads/${encodeURIComponent(url)}" alt="" data-full="/uploads/${encodeURIComponent(url)}">`).join('')}
+        </div>` : ''}
       <div class="divider"></div>
       <button class="btn ${post.liked ? 'btn-primary' : ''}" id="btn-like">
         ${post.liked ? '❤️ 已点赞' : '🤍 点赞'}
@@ -63,6 +67,21 @@ async function renderPost(root, ctx) {
     </div>`;
 
   root.querySelector('#btn-back').addEventListener('click', () => { location.hash = '#/posts'; });
+
+  // 功能⑥：点配图放大看原图
+  const gallery = root.querySelector('#post-gallery');
+  if (gallery) {
+    gallery.addEventListener('click', (event) => {
+      const img = event.target.closest('img[data-full]');
+      if (!img) return;
+      openModal({
+        title: '查看图片',
+        wide: true,
+        body: `<img src="${esc(img.dataset.full)}" alt=""
+                    style="width:100%;border-radius:10px;background:var(--green-soft)">`,
+      });
+    });
+  }
 
   const deleteBtn = root.querySelector('#btn-del');
   if (deleteBtn) {

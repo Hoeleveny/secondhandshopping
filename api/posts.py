@@ -7,7 +7,7 @@ from api.common import (
 )
 from config import Config
 from extensions import db
-from models import Post, PostComment, PostLike, PRODUCT_DELETED  # noqa: F401
+from models import Post, PostComment, PostImage, PostLike  # noqa: F401
 
 bp = Blueprint("posts", __name__, url_prefix="/api")
 
@@ -75,8 +75,19 @@ def create_post():
     if tag not in Config.POST_TAGS:
         return fail("请选择标签（安利 / 避雷 / 闲聊 / 求助）")
 
+    # 功能⑥：帖子配图（前端先调用 /api/upload 拿到文件名，再随发帖提交）
+    images = body.get("images") or []
+    if not isinstance(images, list):
+        return fail("图片参数格式不正确")
+    images = [str(i).strip() for i in images if str(i).strip()]
+    if len(images) > Config.MAX_IMAGES_PER_PRODUCT:
+        return fail(f"一篇帖子最多配 {Config.MAX_IMAGES_PER_PRODUCT} 张图")
+
     post = Post(author_id=user.id, title=title, content=content[:5000], tag=tag)
     db.session.add(post)
+    db.session.flush()
+    for index, filename in enumerate(images):
+        db.session.add(PostImage(post_id=post.id, url=filename, sort=index))
     db.session.commit()
     return ok(post.to_dict(user.id), msg="发布成功")
 

@@ -96,6 +96,11 @@ export function postItemHtml(post, options = {}) {
       <span class="badge ${tagClass[post.tag] || 'badge-gray'}">${esc(post.tag)}</span>
     </div>
     ${options.preview === false ? '' : `<div class="muted small mt-8" style="overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${esc(post.content)}</div>`}
+    ${(post.images || []).length ? `
+      <div class="post-thumbs">
+        ${post.images.slice(0, 3).map(url => `<img src="/uploads/${encodeURIComponent(url)}" alt="" loading="lazy">`).join('')}
+        ${post.images.length > 3 ? `<span class="post-thumb-more">+${post.images.length - 3}</span>` : ''}
+      </div>` : ''}
     <div class="post-meta">
       <span>👤 ${esc(post.author_nickname || '')}</span>
       <span>🕒 ${esc(fmtTime(post.created_at))}</span>
