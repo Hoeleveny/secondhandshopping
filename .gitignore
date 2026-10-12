@@ -37,3 +37,6 @@ backups/
 .idea/
 Thumbs.db
 desktop.ini
+
+# 常驻服务的运行日志
+logs/

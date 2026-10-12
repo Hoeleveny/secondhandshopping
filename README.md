@@ -31,7 +31,27 @@ start.bat
 
 浏览器打开 <http://127.0.0.1:5000>。
 
-## 二、演示账号
+## 二、让网站一直挂着（推荐）
+
+`start.bat` 是前台运行，**关掉命令行窗口服务就停了**。想让网站长期可访问，用下面这套：
+
+| 操作 | 做什么 |
+|------|--------|
+| 双击 `start-service.bat` | 后台启动，**没有黑窗口**，日志写到 `logs\server.log` |
+| 双击 `stop-service.bat` | 停止服务（按 5000 端口精确结束进程） |
+| 看 `logs\server.log` | 访问日志与启动信息 |
+
+**已配置登录自启**：启动文件夹里放了一个 `SecondHandShop.vbs`
+（`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\`），每次登录 Windows 会以无窗口
+方式自动把服务拉起来。不想要就把它删掉，不影响手动启动。
+
+它和 `start.bat` 的区别在 `service.py`：关掉调试模式与热重载（不会双进程、不会因为改文件自己
+重启）、开启多线程，并且**自己把输出写进 `logs\server.log`**（所以能用 `pythonw.exe` 无窗口跑）。
+
+> 服务只监听 `127.0.0.1:5000`，即同一台电脑的浏览器可访问、局域网其他设备访问不到。
+> 需要局域网访问就把 `service.py` 里的 `APP_HOST` 环境变量改成 `0.0.0.0`。
+
+## 三、演示账号
 
 密码统一为 `123456`。
 
@@ -51,17 +71,20 @@ start.bat
 > 游客（未登录）可以浏览首页、搜索与筛选、比价、商品详情、交流广场；下单、收藏、发布等操作
 > 会引导登录。
 
-## 三、常用命令
+## 四、常用命令
 
 | 命令 | 作用 |
 |------|------|
 | `manage.py init-db` | 按 `sql/schema.sql` 建表（幂等，会重建表） |
+| `manage.py migrate` | 执行 `sql/migrations/` 增量迁移（幂等，只增不删） |
+| `manage.py clean-test` | 清理自动化测试残留数据 |
 | `manage.py reset-demo` | 清空业务数据并重新写入示例数据（＝后台「重置示例数据」） |
 | `manage.py check` | 环境自检：依赖、模块、MySQL、表结构与约定修正 |
 | `manage.py run` | 启动开发服务器（等同 `start.bat`） |
-| `start.bat` | 一键启动 |
+| `start.bat` | 前台启动（关掉窗口就停） |
+| `start-service.bat` / `stop-service.bat` | 后台常驻启动 / 停止（日志在 `logs\server.log`） |
 
-## 四、自检工具（都可重复运行）
+## 五、自检工具（都可重复运行）
 
 | 命令 | 检查内容 | 最近结果 |
 |------|----------|----------|
@@ -82,7 +105,7 @@ start.bat
 > 跑 `e2e_check.mjs` / `acceptance_check.mjs` / `feature_check.mjs` 需要本机有 Chrome 或无头 Edge；
 > 可通过环境变量 `CHROME_PATH` 指定浏览器路径，`APP_BASE` 指定站点地址。
 
-## 五、目录结构
+## 六、目录结构
 
 ```
 secondhandshop/
@@ -131,7 +154,7 @@ secondhandshop/
    └─ sandbox_pip.py      受限文件沙箱下可用的 pip 包装（见第八节）
 ```
 
-## 六、数据库
+## 七、数据库
 
 | 项 | 值 |
 |----|-----|
@@ -152,7 +175,7 @@ FLUSH PRIVILEGES;
 连接参数可用环境变量覆盖：`DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD`。
 腾讯地图 key 用 `TENCENT_MAP_KEY` 传入，**不写死在代码里**。
 
-## 七、相对原文档已确认的修正
+## 八、相对原文档已确认的修正
 
 | 处 | 原文档 | 本项目实现 |
 |----|--------|-----------|
@@ -171,7 +194,7 @@ FLUSH PRIVILEGES;
 - 关键词模糊搜索在文档基础上做了超集扩展：除商品名与描述外，还匹配**分类名与小类名**，
   这样搜「教材」也能命中教材类商品。
 
-## 八、在受限文件沙箱下开发时的两个坑（已解决）
+## 九、在受限文件沙箱下开发时的两个坑（已解决）
 
 如果本机 DSH 会话运行在 `workspace-write` 文件沙箱下，`pip` 会以两种方式失败：
 
@@ -190,7 +213,7 @@ set TMPDIR=%CD%\_build_tmp
     cryptography flask-bcrypt flask-jwt-extended
 ```
 
-## 九、本机 HTTPS 被拦截时的 git 配置
+## 十、本机 HTTPS 被拦截时的 git 配置
 
 本机装了 HTTPS 拦截工具（Steam++ / 瓦特工具箱，证书签发者为 `SteamTools Certificate`），
 它会替 github.com 等站点签发自己的证书。表现是：
@@ -219,7 +242,7 @@ git config http.sslCAInfo .git/git-ca-bundle.crt
 
 ---
 
-## 九、功能迭代记录
+## 十一、功能迭代记录
 
 在 v2.0 交付版本之上，后续按「一次只做一个功能、每个功能先写并跑通测试、再单独提交一次」的
 方式迭代了 7 项功能。数据库变更全部走 `sql/migrations/` 下的**幂等增量脚本**
