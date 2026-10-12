@@ -272,6 +272,55 @@ async function checkPages(cdp) {
   check('三套主题可来回切换且写入 localStorage', cycle.join(' ') === 'ink/ink cream/cream paper/paper', cycle.join(' '));
 }
 
+/* ---------------------------------------------------------------- 4. 宽屏几何 */
+/* 之前的验证窗口固定 1500×1000，1500−190=1310 < 内容上限，所以「宽屏下内容偏左、
+   右侧一大片空」的问题一直没被发现。这里补一条宽屏断言，防止回归。 */
+async function checkWideLayout(cdp) {
+  const widths = [1500, 1680, 1920, 2560];
+  const pages = [
+    { hash: '/home', name: '首页', as: null },
+    { hash: '/dashboard', name: '数据看板', as: ['admin', '123456', 'admin'] },
+  ];
+  const problems = [];
+
+  for (const width of widths) {
+    await cdp.send('Emulation.setDeviceMetricsOverride',
+      { width, height: 900, deviceScaleFactor: 1, mobile: false });
+    await sleep(250);
+    for (const page of pages) {
+      if (page.as) await cdp.loginAs(...page.as);
+      else await cdp.logout();
+      await cdp.go(page.hash);
+      await sleep(page.as ? 800 : 600);
+      const m = await cdp.eval(`
+        (() => {
+          const de = document.documentElement;
+          const content = document.querySelector('.content');
+          const side = document.querySelector('.sidebar');
+          const cr = content.getBoundingClientRect();
+          const sr = side.getBoundingClientRect();
+          return {
+            viewport: de.clientWidth,
+            scrollX: de.scrollWidth - de.clientWidth,
+            gapLeft: Math.round(cr.left - sr.right),      // 侧栏与内容之间的空当
+            gapRight: Math.round(de.clientWidth - cr.right), // 内容右侧的空当
+            contentW: Math.round(cr.width),
+          };
+        })()`);
+      if (m.scrollX > 2) problems.push(`${width}/${page.name}: 出现横向滚动 ${m.scrollX}px`);
+      // 只有在没有把可用宽度吃满时才要求左右均分（窄屏时本来就该铺满）
+      if (m.gapLeft > 4 || m.gapRight > 4) {
+        if (Math.abs(m.gapLeft - m.gapRight) > 4) {
+          problems.push(`${width}/${page.name}: 左右留白不均（左 ${m.gapLeft} / 右 ${m.gapRight}）`);
+        }
+      }
+    }
+  }
+  await cdp.send('Emulation.clearDeviceMetricsOverride');
+  check(`宽屏（${widths.join('/')}）下内容居中、无横向滚动`,
+    problems.length === 0, problems.join('；') || '四个屏宽 × 两个页面均已确认');
+}
+
 /* ---------------------------------------------------------------- 主流程 */
 async function main() {
   try {
@@ -290,6 +339,8 @@ async function main() {
     await checkTopbar(cdp);
     console.log('\n===== 三、逐页 × 三套主题 =====');
     await checkPages(cdp);
+    console.log('\n===== 四、宽屏几何（内容居中、无横向滚动）=====');
+    await checkWideLayout(cdp);
   } finally {
     close();
   }

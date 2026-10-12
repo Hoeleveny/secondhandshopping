@@ -126,7 +126,11 @@
 .menu-item.active { background: var(--primary); color: var(--on-primary); font-weight: 600; }
 .menu-item .mi-icon { font-size: 16px; }
 
-.content { flex: 1; padding: 22px 26px 60px; min-width: 0; max-width: 1400px; }
+/* 内容区：宽屏时居中，避免「贴着侧栏、右边一大片空」。
+   margin: auto 在 flex 布局里会吸收 flex-grow 与 max-width 之外剩下的自由空间，从而左右均分。 */
+.content {
+  flex: 1; padding: 22px 28px 64px; min-width: 0; max-width: 1720px; margin: 0 auto;
+}
 
 /* ---------------------------------------------------------------- 卡片 */
 .card {
@@ -146,8 +150,11 @@
 .page-head .sub { color: var(--text-muted); font-size: 13px; letter-spacing: .04em; }
 
 .grid { display: grid; gap: 16px; }
-.grid-4 { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+/* grid-4 用 auto-fit：条目数少于轨道数时把空轨道折叠掉，让 4 张卡铺满整行，
+   否则宽屏下右边会留出一条空轨道（和「内容偏左」是同一类观感问题）。 */
+.grid-4 { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
 .grid-2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+/* 商品卡保持 auto-fill：卡片尺寸统一，条目少时左对齐，不要被拉成大宽卡 */
 .grid-cards { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
 
 /* ---------------------------------------------------------------- 商品卡 */
