@@ -7,6 +7,10 @@ import { api } from './api.js';
 import { store } from './store.js';
 import { ensureMeta } from './data.js';
 import { emptyHtml, esc, initials, loadingHtml, toast } from './ui.js';
+import { initTheme, mountThemeSwitcher } from './theme.js';
+
+// 尽早贴主题，减少首屏闪一下默认配色
+initTheme();
 
 /* ---------------------------------------------------------------- 菜单 */
 const M = {
@@ -247,6 +251,8 @@ function buildShell(viewKey, activeMenu) {
       ${sidebarHtml(viewKey, activeMenu)}
       <main class="content" id="page"></main>
     </div>`;
+  // 主题切换器是全站唯一「追加」的节点，只放在顶栏末尾，不移动任何原有元素
+  mountThemeSwitcher(root.querySelector('.topbar'));
   bindShellEvents();
 }
 

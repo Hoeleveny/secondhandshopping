@@ -1,0 +1,276 @@
+/* ==========================================================================
+   校园二手集市 —— 主题令牌（Editorial 现代杂志感）
+   --------------------------------------------------------------------------
+   只做「视觉皮肤」：颜色 / 字体 / 字号 / 字重 / 字距 / 行高 / 内边距 /
+   圆角 / 边框 / 阴影。不含任何布局声明（栅格、flex 方向、元素顺序都不在这）。
+   通过 <html data-theme="paper|ink|cream"> 切换，默认 paper。
+   三套主题共用同一个「松柏绿」色相，只改底色与明度 —— 这是协调感的关键。
+   ========================================================================== */
+
+/* ---------------------------------------------------------------- 字体栈 */
+:root {
+  /* 标题一律衬线，正文一律无衬线 */
+  --font-serif: Georgia, "Songti SC", "Noto Serif SC", "Source Han Serif SC",
+                "Songti TC", SimSun, "Times New Roman", serif;
+  --font-sans: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB",
+               system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+
+  /* 布局常量：不随主题变化，放这里只是集中管理 */
+  --topbar-h: 60px;
+  --sidebar-w: 190px;
+}
+
+/* ================================================================
+   主题一：paper 纸白（默认）
+   ================================================================ */
+:root,
+[data-theme="paper"] {
+  --bg: #FAF9F6;                    /* 暖白底 */
+  --bg-secondary: #F2F0EA;          /* 次级底（输入框、内嵌块） */
+  --surface: #FFFFFF;               /* 卡片 */
+  --surface-hover: #FBFAF7;
+
+  --text: #1C1B18;                  /* 近黑墨 */
+  --text-secondary: #4A463E;        /* 对比度 ≈9.4:1 */
+  --text-muted: #6F6B63;            /* 对比度 ≈5.3:1（小字也过 AA） */
+
+  --primary: #2F4A3B;               /* 松柏绿 */
+  --primary-hover: #24392E;
+  --primary-soft: #E8EEE9;
+  --accent: #7D9483;                /* 辅助雾松 */
+
+  --border: #E7E4DC;                 /* 1px 发丝线 */
+  --border-strong: #D8D4C8;
+
+  --shadow-sm: 0 4px 16px rgba(28, 27, 24, .06);
+  --shadow-md: 0 8px 24px rgba(28, 27, 24, .08);
+  --shadow-lg: 0 16px 40px rgba(28, 27, 24, .10);
+
+  --success: #2F6B45;
+  --warning: #8A6420;
+  --danger:  #A33F35;
+
+  /* 语义淡底：显式给值，不用 color-mix()——canvas 取不到未解析的 token */
+  --danger-soft: #FBEDEB;
+  --warn-soft: #F7F0E2;
+
+  /* 对比度辅助：主色之上应有的文字色 / 遮罩色 */
+  --on-primary: #FFFFFF;
+  --overlay: rgba(28, 27, 24, .45);
+
+  color-scheme: light;
+}
+
+/* ================================================================
+   主题二：ink 墨黑（主色同色相，仅提亮明度）
+   ================================================================ */
+[data-theme="ink"] {
+  --bg: #131412;                    /* 墨黑底 */
+  --bg-secondary: #1A1B18;
+  --surface: #1F201D;               /* 卡片 */
+  --surface-hover: #262722;
+
+  --text: #F0EEE7;                  /* 暖白文字 */
+  --text-secondary: #B9B5AA;        /* 对比度 ≈8.0:1 */
+  --text-muted: #948E82;            /* 对比度 ≈5.0:1 */
+
+  --primary: #8FAE98;               /* 松柏绿提亮 */
+  --primary-hover: #A3C0AB;
+  --primary-soft: rgba(143, 174, 152, .16);
+  --accent: #9FB3A6;
+
+  --border: #2E2F2A;
+  --border-strong: #3C3D36;
+
+  --shadow-sm: 0 4px 16px rgba(0, 0, 0, .30);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, .38);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, .48);
+
+  --success: #86C79A;
+  --warning: #E0B96A;
+  --danger:  #E5948A;
+
+  --danger-soft: rgba(229, 148, 138, .14);
+  --warn-soft: rgba(224, 185, 106, .14);
+
+  /* 墨黑主题主色是提亮后的浅绿，压在上面的字要用深色才够对比 */
+  --on-primary: #131412;
+  --overlay: rgba(0, 0, 0, .62);
+
+  color-scheme: dark;
+}
+
+/* ================================================================
+   主题三：cream 米杏暖调（同色相更沉）
+   ================================================================ */
+[data-theme="cream"] {
+  --bg: #F7F1E7;
+  --bg-secondary: #F1EADD;
+  --surface: #FFFDF9;
+  --surface-hover: #FBF6EE;
+
+  --text: #2A2620;                  /* 暖褐文字 */
+  --text-secondary: #514B41;        /* 对比度 ≈8.7:1 */
+  --text-muted: #756C5D;            /* 对比度 ≈4.6:1 */
+
+  --primary: #3A5244;
+  --primary-hover: #2D4136;
+  --primary-soft: #E9EDE4;
+  --accent: #7D9483;
+
+  --border: #E8DECC;
+  --border-strong: #D9CDB6;
+
+  --shadow-sm: 0 4px 16px rgba(42, 38, 32, .06);
+  --shadow-md: 0 8px 24px rgba(42, 38, 32, .09);
+  --shadow-lg: 0 16px 40px rgba(42, 38, 32, .12);
+
+  --success: #2F6344;
+  --warning: #8A6420;
+  --danger:  #9E3E33;
+
+  --danger-soft: #F6E9E4;
+  --warn-soft: #F6EFE0;
+
+  --on-primary: #FFFDF9;
+  --overlay: rgba(42, 38, 32, .45);
+
+  color-scheme: light;
+}
+
+/* ================================================================
+   圆角：三套主题一致（不随主题变）
+   ================================================================ */
+:root {
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+  --radius-full: 999px;
+}
+
+/* ================================================================
+   向后兼容别名
+   —— 项目里已有大量 var(--green-soft) / var(--text-sub) 之类的旧名字
+   （app.css 与若干 JS 内联样式），这里统一映射到新令牌。
+   这样任何一处旧写法都自动跟随主题，不必逐个改。
+   ================================================================ */
+:root {
+  --green: var(--primary);
+  --green-dark: var(--primary-hover);
+  --green-soft: var(--primary-soft);
+  --green-line: var(--border-strong);
+
+  --card: var(--surface);
+  --text-sub: var(--text-secondary);
+  --muted: var(--text-muted);
+
+  --radius: var(--radius-md);
+  --shadow: var(--shadow-sm);
+
+  --warn: var(--warning);
+  --info: var(--primary);
+  --info-soft: var(--primary-soft);
+}
+
+/* ================================================================
+   基础元素
+   ================================================================ */
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.75;                /* 行高舒展 */
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  transition: background-color .25s ease, color .25s ease;
+}
+
+/* 标题一律衬线、字距松弛 */
+h1, h2, h3, h4 {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  letter-spacing: .01em;
+  line-height: 1.25;
+  color: var(--text);
+}
+h1 { margin: 0 0 12px; font-size: 24px; }   /* H1 页面主标题 */
+h2 { margin: 0 0 10px; font-size: 18px; }   /* H2 区块标题 */
+h3 { margin: 0 0 8px; font-size: 15px; font-family: var(--font-sans); font-weight: 600; }
+h4 { margin: 0 0 6px; font-size: 14px; font-family: var(--font-sans); font-weight: 600; }
+
+p { margin: 0 0 10px; }
+
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+button, input, select, textarea { font-family: inherit; }
+
+hr {
+  border: none;
+  border-top: 1px solid var(--border);   /* 1px 发丝线 */
+  margin: 16px 0;
+}
+
+::selection { background: var(--primary-soft); color: var(--text); }
+
+/* 细滚动条，避免在墨黑主题下露出系统白条 */
+* { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: var(--radius-full); }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* ================================================================
+   排版阶梯（严格套用；不要在各页面另造字号）
+   ================================================================ */
+.t-display {                       /* 封面 / 详情大标题 */
+  font-family: var(--font-serif); font-size: 32px; font-weight: 600;
+  line-height: 1.25; letter-spacing: .01em;
+}
+.t-h1 { font-family: var(--font-serif); font-size: 24px; font-weight: 600; line-height: 1.3; }
+.t-h2 { font-family: var(--font-serif); font-size: 18px; font-weight: 600; line-height: 1.35; }
+.t-h3 { font-family: var(--font-sans);   font-size: 15px; font-weight: 600; line-height: 1.45; }
+.t-body { font-family: var(--font-sans); font-size: 14px; font-weight: 400; line-height: 1.75; }
+.t-meta {                          /* 辅助信息 */
+  font-family: var(--font-sans); font-size: 12px; letter-spacing: .04em;
+  color: var(--text-muted);
+}
+.t-eyebrow {                       /* 栏目标签 */
+  font-family: var(--font-sans); font-size: 11px; font-weight: 600;
+  letter-spacing: .18em; text-transform: uppercase; color: var(--text-muted);
+}
+.t-price {                         /* 价格 */
+  font-family: var(--font-serif); font-size: 20px; font-weight: 600;
+  line-height: 1.2; color: var(--text);
+}
+.t-price-lg { font-family: var(--font-serif); font-size: 30px; font-weight: 600; line-height: 1.15; }
+
+/* ================================================================
+   主题切换器（顶栏末尾追加，三胶囊）
+   ================================================================ */
+.theme-switch {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 3px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+}
+.theme-switch button {
+  appearance: none; border: none; background: none; cursor: pointer;
+  padding: 4px 10px;
+  font-family: var(--font-sans); font-size: 11px; letter-spacing: .04em;
+  color: var(--text-muted);
+  border-radius: var(--radius-full);
+  transition: background-color .18s ease, color .18s ease;
+}
+.theme-switch button:hover { color: var(--text); }
+.theme-switch button[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+[data-theme="ink"] .theme-switch button[aria-pressed="true"] { color: var(--primary); }

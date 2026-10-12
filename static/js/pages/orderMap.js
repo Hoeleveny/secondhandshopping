@@ -7,6 +7,7 @@
 import { api } from '../api.js';
 import { ensureMeta, ensurePlaces } from '../data.js';
 import { emptyHtml, esc, toast } from '../ui.js';
+import { THEME_EVENT, canvasPalette } from '../theme.js';
 
 export default {
   async render(root, ctx) {
@@ -94,10 +95,11 @@ export default {
     }
 
     const points = [];
-    if (map.buyer_location) points.push({ ...map.buyer_location, color: '#2e9e63', label: '买家' });
-    if (map.seller_location) points.push({ ...map.seller_location, color: '#3f7fd0', label: '卖家' });
-    if (map.suggest_place) points.push({ lng: map.suggest_place.lng, lat: map.suggest_place.lat, color: '#e2503f', label: '建议' });
-    if (map.meet_place) points.push({ lng: map.meet_place.lng, lat: map.meet_place.lat, color: '#e0a03a', label: '自提点' });
+    const c = canvasPalette();                 // 跟随主题取色，不再写死
+    if (map.buyer_location) points.push({ ...map.buyer_location, color: c.primary, label: '买家' });
+    if (map.seller_location) points.push({ ...map.seller_location, color: c.accent, label: '卖家' });
+    if (map.suggest_place) points.push({ lng: map.suggest_place.lng, lat: map.suggest_place.lat, color: c.danger, label: '建议' });
+    if (map.meet_place) points.push({ lng: map.meet_place.lng, lat: map.meet_place.lat, color: c.warning, label: '自提点' });
 
     const key = String(meta.tencent_map_key || map.map_key || '').trim();
     if (key) {
@@ -112,6 +114,13 @@ export default {
       engineLabel.textContent = '未配置腾讯地图 key，使用自绘校园示意图';
       drawCanvas(canvas, points);
     }
+
+    // 切换主题后用新配色重绘地图；页面离开后自动摘掉监听
+    window.addEventListener(THEME_EVENT, function onTheme() {
+      if (!document.body.contains(canvas)) { window.removeEventListener(THEME_EVENT, onTheme); return; }
+      if (key) { renderTencentMap(root, map, key).catch(() => drawCanvas(canvas, points)); }
+      else { drawCanvas(canvas, points); }
+    });
 
     /* ---------- 位置更新 ---------- */
     if (canEdit) {
@@ -188,7 +197,7 @@ async function renderTencentMap(root, map, key) {
   if (map.buyer_location && map.seller_location) {
     new TMap.MultiPolyline({
       map: tmap,
-      styles: { line: new TMap.PolylineStyle({ color: '#2e9e63', width: 3, borderWidth: 1, borderColor: '#ffffff' }) },
+      styles: { line: new TMap.PolylineStyle({ color: canvasPalette().primary, width: 3, borderWidth: 1, borderColor: canvasPalette().surface }) },
       geometries: [{
         id: 'link', styleId: 'line',
         paths: [
@@ -225,18 +234,19 @@ export function drawCanvas(canvas, points) {
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, width, height);
+  const c = canvasPalette();
 
-  // 背景网格（示意校园平面）
-  ctx.fillStyle = '#eef3f0';
+  // 背景网格（示意校园平面）——跟随主题底色
+  ctx.fillStyle = c.bg;
   ctx.fillRect(0, 0, width, height);
-  ctx.strokeStyle = '#dde6e1';
+  ctx.strokeStyle = c.line;
   ctx.lineWidth = 1;
   for (let x = 0; x < width; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke(); }
   for (let y = 0; y < height; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke(); }
 
   if (points.length === 0) {
-    ctx.fillStyle = '#93a29b';
-    ctx.font = '14px "Microsoft YaHei", sans-serif';
+    ctx.fillStyle = c.muted;
+    ctx.font = '13px "PingFang SC", "Microsoft YaHei", system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('还没有位置信息，请在下方选择校园地点或使用浏览器定位', width / 2, height / 2);
     return;
@@ -256,7 +266,7 @@ export function drawCanvas(canvas, points) {
   const buyer = points.find(p => p.label === '买家');
   const seller = points.find(p => p.label === '卖家');
   if (buyer && seller) {
-    ctx.strokeStyle = '#2e9e63';
+    ctx.strokeStyle = c.primary;
     ctx.setLineDash([6, 5]);
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -269,22 +279,24 @@ export function drawCanvas(canvas, points) {
   points.forEach(point => {
     const x = toX(Number(point.lng));
     const y = toY(Number(point.lat));
+    // 现取主题色，保证切主题后重绘也是新配色
+    const dotColor = { '买家': c.primary, '卖家': c.accent, '建议': c.danger, '自提点': c.warning }[point.label] || c.primary;
     ctx.beginPath();
     ctx.arc(x, y, 9, 0, Math.PI * 2);
-    ctx.fillStyle = point.color;
+    ctx.fillStyle = dotColor;
     ctx.fill();
-    ctx.strokeStyle = '#fff';
+    ctx.strokeStyle = c.surface;
     ctx.lineWidth = 2.5;
     ctx.stroke();
 
-    ctx.fillStyle = '#21372c';
-    ctx.font = 'bold 12px "Microsoft YaHei", sans-serif';
+    ctx.fillStyle = c.text;
+    ctx.font = '600 12px "PingFang SC", "Microsoft YaHei", system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(point.label, x, y - 15);
   });
 
-  ctx.fillStyle = '#93a29b';
-  ctx.font = '11px "Microsoft YaHei", sans-serif';
+  ctx.fillStyle = c.muted;
+  ctx.font = '11px "PingFang SC", "Microsoft YaHei", system-ui, sans-serif';
   ctx.textAlign = 'left';
   ctx.fillText('示意图（非真实地图，仅表示相对位置）', 10, height - 10);
 }

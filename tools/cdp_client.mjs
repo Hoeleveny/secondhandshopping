@@ -134,7 +134,12 @@ export class CDP {
       await this.send('Page.navigate', { url: `${BASE}/` });
       await sleep(700);
     }
-    await this.eval(`(() => { try { localStorage.clear(); } catch (e) {} return 1; })()`);
+    // 只清认证相关的键：与真实「退出登录」一致（store.clearAuth 也只删这两个），
+    // 用 localStorage.clear() 会顺手把主题偏好 cm_theme 也清掉。
+    await this.eval(`(() => {
+      try { localStorage.removeItem('cm_token'); localStorage.removeItem('cm_view'); } catch (e) {}
+      return 1;
+    })()`);
     await this.send('Page.reload', { ignoreCache: true });
     await sleep(800);
   }

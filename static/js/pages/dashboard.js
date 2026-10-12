@@ -5,8 +5,32 @@
    ========================================================================== */
 import { api } from '../api.js';
 import { emptyHtml, esc, loadingHtml } from '../ui.js';
+import { THEME_EVENT, canvasPalette } from '../theme.js';
 
-const PALETTE = ['#2e9e63', '#4a8fdc', '#e0a03a', '#e2503f', '#8a6bd1', '#39a9a0', '#c96fa8'];
+/* 分类配色：与主题同一色相家族的克制配色（不用高饱和彩虹）；深色主题单独给一套 */
+const PALETTE_LIGHT = ['#2F4A3B', '#4E6B58', '#7D9483', '#A3B5A6', '#C3B79E', '#9A8F7C', '#6E6A5F'];
+const PALETTE_DARK = ['#8FAE98', '#A3C0AB', '#7D9483', '#C0CDBF', '#D3C6AC', '#B3A791', '#9C978A'];
+
+function paletteFor() {
+  return getComputedStyle(document.documentElement)
+    .getPropertyValue('color-scheme').trim() === 'dark' ? PALETTE_DARK : PALETTE_LIGHT;
+}
+
+/** 当前主题下 canvas 要用到的一组颜色 */
+function ink() {
+  const t = canvasPalette();
+  return {
+    ...t,
+    palette: paletteFor(),
+    fontSans: '13px "PingFang SC", "Microsoft YaHei", system-ui, sans-serif',
+    fontSerif: '600 22px Georgia, "Songti SC", "Noto Serif SC", SimSun, serif',
+    fontSmall: '11px "PingFang SC", "Microsoft YaHei", system-ui, sans-serif',
+  };
+}
+
+// 主题切换后重绘（render 时覆盖本变量；页面重渲染不会累积监听）
+let themeOff = null;
+window.addEventListener(THEME_EVENT, () => themeOff?.());
 
 export default {
   async render(root) {
@@ -74,6 +98,12 @@ export default {
 
     drawPie(body.querySelector('#pie'), stats.category_pie || [], body.querySelector('#pie-legend'));
     drawBars(body.querySelector('#bars'), stats.price_bars || { labels: [], values: [] });
+
+    // 切换主题后用新配色重绘两张图（只改画笔颜色，不动任何数据与结构）
+    themeOff = () => {
+      drawPie(body.querySelector('#pie'), stats.category_pie || [], body.querySelector('#pie-legend'));
+      drawBars(body.querySelector('#bars'), stats.price_bars || { labels: [], values: [] });
+    };
   },
 };
 
@@ -84,12 +114,13 @@ function drawPie(canvas, data, legendBox) {
   const center = size / 2;
   const radius = center - 12;
   const total = data.reduce((sum, item) => sum + item.count, 0);
+  const c = ink();
 
   ctx.clearRect(0, 0, size, size);
 
   if (!total) {
-    ctx.fillStyle = '#93a29b';
-    ctx.font = '14px "Microsoft YaHei", sans-serif';
+    ctx.fillStyle = c.muted;
+    ctx.font = c.fontSans;
     ctx.textAlign = 'center';
     ctx.fillText('暂无数据', center, center);
     legendBox.innerHTML = '';
@@ -103,9 +134,9 @@ function drawPie(canvas, data, legendBox) {
     ctx.moveTo(center, center);
     ctx.arc(center, center, radius, start, start + angle);
     ctx.closePath();
-    ctx.fillStyle = PALETTE[index % PALETTE.length];
+    ctx.fillStyle = c.palette[index % c.palette.length];
     ctx.fill();
-    ctx.strokeStyle = '#fff';
+    ctx.strokeStyle = c.surface;
     ctx.lineWidth = 2;
     ctx.stroke();
     start += angle;
@@ -114,19 +145,19 @@ function drawPie(canvas, data, legendBox) {
   // 中心挖空，做成环形，中间写总数
   ctx.beginPath();
   ctx.arc(center, center, radius * 0.55, 0, Math.PI * 2);
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = c.surface;
   ctx.fill();
-  ctx.fillStyle = '#21372c';
-  ctx.font = 'bold 22px "Microsoft YaHei", sans-serif';
+  ctx.fillStyle = c.text;
+  ctx.font = c.fontSerif;              // 大数字用衬线，呼应杂志排版
   ctx.textAlign = 'center';
   ctx.fillText(String(total), center, center + 2);
-  ctx.font = '11px "Microsoft YaHei", sans-serif';
-  ctx.fillStyle = '#93a29b';
+  ctx.font = c.fontSmall;
+  ctx.fillStyle = c.muted;
   ctx.fillText('件商品', center, center + 18);
 
   legendBox.innerHTML = data.map((item, index) => `
     <div class="row" style="gap:8px;margin-bottom:7px">
-      <span style="width:11px;height:11px;border-radius:3px;background:${PALETTE[index % PALETTE.length]};display:inline-block"></span>
+      <span style="width:11px;height:11px;border-radius:3px;background:${c.palette[index % c.palette.length]};display:inline-block"></span>
       <span style="flex:1">${esc(item.icon || '')} ${esc(item.name)}</span>
       <span class="strong">${item.count}</span>
       <span class="muted small">${(item.count / total * 100).toFixed(1)}%</span>
@@ -151,6 +182,7 @@ function drawBars(canvas, data) {
   const labels = data.labels || [];
   const values = data.values || [];
   const max = Math.max(1, ...values);
+  const c = ink();
 
   const padLeft = 34;
   const padBottom = 30;
@@ -159,9 +191,9 @@ function drawBars(canvas, data) {
   const chartH = height - padBottom - padTop;
 
   // 横向网格与刻度
-  ctx.strokeStyle = '#eef2f0';
-  ctx.fillStyle = '#93a29b';
-  ctx.font = '11px "Microsoft YaHei", sans-serif';
+  ctx.strokeStyle = c.line;
+  ctx.fillStyle = c.muted;
+  ctx.font = c.fontSmall;
   ctx.textAlign = 'right';
   for (let i = 0; i <= 4; i += 1) {
     const y = padTop + (chartH / 4) * i;
@@ -183,10 +215,10 @@ function drawBars(canvas, data) {
     const x = padLeft + slot * index + (slot - barW) / 2;
     const y = padTop + chartH - barH;
 
-    // 渐变柱
+    // 柱体：同色相由浅到深，不用彩虹渐变
     const gradient = ctx.createLinearGradient(0, y, 0, padTop + chartH);
-    gradient.addColorStop(0, '#48b87c');
-    gradient.addColorStop(1, '#2e9e63');
+    gradient.addColorStop(0, c.accent);
+    gradient.addColorStop(1, c.primary);
     ctx.fillStyle = gradient;
     ctx.beginPath();
     const radius = Math.min(6, barW / 2);
@@ -200,14 +232,14 @@ function drawBars(canvas, data) {
     ctx.fill();
 
     // 数值
-    ctx.fillStyle = '#21372c';
-    ctx.font = 'bold 12px "Microsoft YaHei", sans-serif';
+    ctx.fillStyle = c.text;
+    ctx.font = '600 12px Georgia, "Songti SC", "Noto Serif SC", SimSun, serif';
     ctx.textAlign = 'center';
     ctx.fillText(String(value), x + barW / 2, y - 6);
 
     // 区间标签
-    ctx.fillStyle = '#5b6f65';
-    ctx.font = '11px "Microsoft YaHei", sans-serif';
+    ctx.fillStyle = c.muted;
+    ctx.font = c.fontSmall;
     ctx.fillText(label, x + barW / 2, height - 10);
   });
 }

@@ -259,17 +259,42 @@ git config http.sslCAInfo .git/git-ca-bundle.crt
 | ⑦ | 用户资料页（昵称、头像） | `users.avatar` | `PUT /api/auth/profile`；「个人资料」页可改昵称、上传/恢复头像，顶栏与消息页同步显示 | `fe0ad4b` |
 | ⑧ | 点站名回首页、左侧去掉「首页」 | — | 顶栏站名改为可点击按钮（跳 `#/home`）；四种视角左侧功能列均移除「首页」 | `4e682a9` |
 | ⑨ | 「我的消息」「个人资料」移入右上角用户小框 | — | 顶栏去掉单独的消息图标，未读红点挂在头像上；小框内新增这两项（消息带未读数），与订单/收藏用分隔线区分 | `88822d1` |
+| ⑩ | 界面升级为「现代杂志感 Editorial」+ 三套主题 | — | 新建 `static/css/theme.css`（paper/ink/cream 三套令牌 + 排版阶梯）与 `static/js/theme.js`（主题切换，切换器追加在顶栏末尾）；`app.css` 全面改用令牌。**布局零改动** | 见下方说明 |
 
 **回归验证（全部完成后一次性跑通）**
 
 ```
 manage.py check              环境与表结构自检        通过
 tools/smoke_test.py          后端接口冒烟            171 / 171
-tools/check_frontend.mjs     前端模块依赖一致性      22 个模块正常
+tools/check_frontend.mjs     前端模块依赖一致性      23 个模块正常
 tools/e2e_check.mjs --shots  无头浏览器跑 27 个页面   0 问题
 tools/feature_check.mjs all  9 组功能浏览器测试       72 / 72
+tools/theme_check.mjs        三套主题逐页视觉验证     11 / 11
 tools/acceptance_check.mjs   PRD 第 10 章 23 条验收   23 / 23（在临时库上执行）
 ```
+
+## 十二、视觉主题（Editorial 现代杂志感）
+
+三套主题通过 `<html data-theme="paper|ink|cream">` 切换，在**顶栏最右侧**的三胶囊里点选，
+选择记在 `localStorage.cm_theme`（键名 `cm_theme`），默认 `paper`。
+
+| 主题 | 底色 | 说明 |
+|------|------|------|
+| `paper` 纸白 | `#FAF9F6` | 暖白底 + 白卡片 + 近黑墨文字，默认 |
+| `ink` 墨黑 | `#131412` | 墨黑底 + 暖白文字，主色同色相提亮为 `#8FAE98` |
+| `cream` 米杏 | `#F7F1E7` | 米杏底 + 暖褐文字，主色同色相更沉 `#3A5244` |
+
+设计约束：**全站只有一个强调色（松柏绿）**，其余靠黑/白/暖灰三阶与留白；标题衬线、正文无衬线；
+不用高饱和红蓝黄绿、不用彩虹渐变、不用粗重边框与厚阴影。
+
+视觉令牌全部定义在 `static/css/theme.css`，`app.css` 里不出现任何硬编码色值；
+JS 中需要取色画图的地方（看板图表、交易地图 canvas）通过 `theme.js` 的 `canvasPalette()` 读当前主题，
+并监听 `cm:theme-changed` 事件重绘——所以深色主题下图表与地图也是深色的。
+
+> ⚠️ 改样式时请遵守「布局零改动」：只动颜色/字体/字号/圆角/边框/阴影/内边距，
+> 不要改 `grid-template-columns`、`flex-direction`、元素顺序与固定宽高。
+> 改完可以跑 `.venv\Scripts\python.exe tools\css_layout_diff.py`——它逐选择器比对
+> 新旧 `app.css` 的**布局类声明**，把这些差异单独列出来供复核（视觉属性的差异不会混进来）。
 
 **界面导航速查（调整后）**
 
