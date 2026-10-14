@@ -45,6 +45,13 @@ STEPS: list[tuple[str, str]] = [
      "DELETE FROM product_images WHERE product_id IN (SELECT id FROM tmp_smoke_pid)"),
     ("测试商品本身",
      "DELETE FROM products WHERE id IN (SELECT id FROM tmp_smoke_pid)"),
+    ("测试分类下的小类",
+     "DELETE FROM subcategories WHERE category_id IN "
+     "(SELECT id FROM categories WHERE name LIKE '冒烟%' "
+     "OR name LIKE '验收%' OR name LIKE '自动化测试%')"),
+    ("测试分类（要先删干净它名下的商品，否则删不掉）",
+     "DELETE FROM categories WHERE name LIKE '冒烟%' "
+     "OR name LIKE '验收%' OR name LIKE '自动化测试%'"),
     ("测试帖子（评论/点赞随外键级联删除）",
      "DELETE FROM posts WHERE title LIKE '冒烟%' "
      "OR title LIKE '验收%' OR title LIKE '自动化测试%'"),

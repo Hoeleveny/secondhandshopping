@@ -228,6 +228,13 @@ def seed_all(reset: bool = True) -> dict:
             db.session.flush()
             subs[(name, sub_name)] = s
 
+    # 商品编号的「分类码」= 大类字母码 + 小类在大类内的序号。
+    # 必须在建商品之前就位，否则生成编号时会退化成用 id 补零（如 0100-…）。
+    from tools.backfill_product_code import assign_category_codes, assign_subcategory_seqs
+
+    assign_category_codes()
+    assign_subcategory_seqs()
+
     # ---- 校园地点 ----
     places: dict[str, CampusPlace] = {}
     for name, ptype, dx, dy, sort in PLACES:
@@ -240,6 +247,8 @@ def seed_all(reset: bool = True) -> dict:
         places[name] = p
 
     # ---- 商品 ----
+    import product_code as pc  # 商品编号生成器（与发布接口同一套实现）
+
     now = datetime.now()
     base_time = now - timedelta(days=30)
     products: dict[str, Product] = {}
@@ -253,6 +262,9 @@ def seed_all(reset: bool = True) -> dict:
             created_at=base_time + timedelta(days=idx, hours=idx * 2),
             updated_at=base_time + timedelta(days=idx, hours=idx * 2),
         )
+        # product_code 是 NOT NULL，必须在 INSERT（下面的 flush）之前算好。
+        # 生成器只读「该卖家已落库的编号」，此时前面几件都已 flush，顺序正确。
+        p.product_code = pc.assign_for(users[seller], p)
         db.session.add(p)
         db.session.flush()
         products[name] = p
@@ -332,6 +344,13 @@ def seed_all(reset: bool = True) -> dict:
         ))
 
     db.session.commit()
+
+    # 商品编号是 NOT NULL 且由「发布接口」生成，种子数据是直接插库的，所以这里
+    # 必须补一次回填（同时把大类字母码、小类序号、卖家码、订单快照一并补上）。
+    # 不回填的话：INSERT 会因为 product_code 为 NULL 而失败，示例数据整体灌不进去。
+    from tools.backfill_product_code import run as backfill_codes
+
+    backfill_codes(verbose=False)
 
     stats = {
         "users": User.query.count(),

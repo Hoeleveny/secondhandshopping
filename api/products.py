@@ -1,10 +1,12 @@
 """M02 首页 / M03 搜索与筛选（数据交叉筛选）/ M04 商品详情 / M09 发布与管理商品。"""
 import os
 import uuid
+from datetime import datetime
 
 from flask import Blueprint, current_app, request
 from sqlalchemy import or_
 
+import product_code
 from api.common import (
     arg_float, arg_int, arg_str, current_user, fail, json_body, login_required,
     ok, paginate_args,
@@ -318,6 +320,8 @@ def create_product():
 
     images = data.pop("images")
     product = Product(seller_id=user.id, status=PRODUCT_ON_SALE, views=0, **data)
+    # 商品编号：同一事务内、入库前生成（生成逻辑统一在 product_code.py）
+    product.product_code = product_code.assign_for(user, product)
     db.session.add(product)
     db.session.flush()
     _replace_images(product, images)
@@ -339,6 +343,10 @@ def update_product(pid: int):
     data, error = _parse_product_body(json_body())
     if error:
         return fail(error)
+
+    # 不可变约定：编辑接口忽略并丢弃前端可能传来的 product_code / seller_seq，
+    # _parse_product_body 只挑已知字段，所以这里天然不会被覆盖。
+    data.pop("product_code", None)
 
     images = data.pop("images")
     for key, value in data.items():

@@ -129,9 +129,13 @@ def main() -> int:
 
     status, res = call("GET", "/api/categories?with_subs=1")
     cats = res.get("data") or []
-    check("GET /api/categories 返回 5 个分类且带小类",
-          status == 200 and len(cats) == 5 and all(c.get("subcategories") for c in cats),
-          f"count={len(cats)}")
+    # 不写死「等于 5 个」：管理员完全可以再建分类。改为断言初始 5 个都在、且各自带小类。
+    SEED_CATS = {"教材", "数码", "生活用品", "运动", "其他"}
+    cat_names = {c.get("name") for c in cats}
+    check("GET /api/categories 返回初始 5 个分类且都带小类",
+          status == 200 and SEED_CATS <= cat_names
+          and all(c.get("subcategories") for c in cats if c.get("name") in SEED_CATS),
+          f"共 {len(cats)} 个：{sorted(cat_names)}")
 
     status, res = call("GET", "/api/places")
     check("GET /api/places 返回 12 个校园地点",
@@ -140,15 +144,22 @@ def main() -> int:
     status, res = call("GET", "/api/home")
     home = res.get("data") or {}
     check("GET /api/home 首页聚合",
-          status == 200 and len(home.get("categories", [])) == 5
+          status == 200
+          and SEED_CATS <= {c.get("name") for c in home.get("categories", [])}
           and len(home.get("newest", [])) <= 8, str(res)[:150])
 
     # ---------------- 交叉筛选 ----------------
     section("M03 数据交叉筛选")
     status, res = call("GET", "/api/products")
     data = res.get("data") or {}
-    check("默认只返回在售商品（11 件）",
-          status == 200 and data.get("total") == 11, f"total={data.get('total')}")
+    # 不写死件数：用户随时会自己发布商品。改为「列表里只有在售」+「总数与首页口径一致」
+    _listed = data.get("list") or []
+    _statuses = {p.get("status") for p in _listed}
+    _home = call("GET", "/api/home")[1].get("data") or {}
+    _on_sale = (_home.get("stats") or {}).get("on_sale")
+    check("默认只返回在售商品，且总数与首页「在售」口径一致",
+          status == 200 and _statuses == {"on_sale"} and data.get("total") == _on_sale,
+          f"total={data.get('total')}，首页在售={_on_sale}，列表状态={_statuses}")
 
     status, res = call("GET", "/api/products?category_id=4&min_price=50&max_price=500&sort=price_asc")
     data = res.get("data") or {}
@@ -302,8 +313,15 @@ def main() -> int:
     buyer1 = (res.get("data") or {}).get("token")
     check("买家 buyer1 登录", bool(buyer1), str(res)[:150])
 
-    status, res = call("GET", "/api/products?page_size=1")
-    fav_pid = ((res.get("data") or {}).get("list") or [{}])[0].get("id")
+    status, res = call("GET", "/api/products?page_size=50")
+    # 不能直接取「最新第一件」——用户自己发布的商品会排在最前，而它可能正是 buyer1 自己的，
+    # 那样后面「我想要」的「不能对自己商品操作」断言就会走错分支。
+    _me = (call("GET", "/api/auth/me", token=buyer1)[1].get("data") or {}).get("user") or {}
+    _my_id = _me.get("id")
+    fav_pid = next((p["id"] for p in ((res.get("data") or {}).get("list") or [])
+                    if p.get("seller_id") != _my_id), None)
+    check("能选到一件「非 buyer1 自己发布」的在售商品用于后续断言",
+          bool(fav_pid), f"buyer1 id={_my_id}, fav_pid={fav_pid}")
     call("DELETE", f"/api/favorites/{fav_pid}", token=buyer1)  # 先清掉，保证可重复运行
 
     status, res = call("POST", "/api/favorites", token=buyer1, body={"product_id": fav_pid})
@@ -975,6 +993,107 @@ def main() -> int:
     status, res = call("PUT", "/api/auth/profile", body={"nickname": "冒烟改名人"}, token=token)
     check("资料没有变化时给出友好提示而不是报错",
           res.get("code") == 0, str(res)[:150])
+
+    # ---------------- 商品编号 product_code ----------------
+    section("商品编号 product_code")
+
+    import re as _re
+
+    code_re = _re.compile(r"^[A-Z0-9]{2}\d{2}-\d{4}-\d{6}-\d{5}$")
+
+    def _publish(name, price, category_id=1, subcategory_id=1, token_=None):
+        _st, r = call("POST", "/api/products", token=token_ or seller_token,
+                      body={"name": name, "price": price, "category_id": category_id,
+                            "subcategory_id": subcategory_id, "condition": "九成新",
+                            "description": "商品编号测试用", "default_place_id": 2, "images": []})
+        return r.get("data") or {}
+
+    a = _publish("冒烟-编号A", 12.0)
+    b = _publish("冒烟-编号B", 13.0)
+    check("发布商品自动生成商品编号（格式 22 位四段）",
+          bool(code_re.match(a.get("product_code") or "")),
+          f"编号={a.get('product_code')!r}")
+    check("两件商品编号互不相同",
+          a.get("product_code") != b.get("product_code"),
+          f"{a.get('product_code')} vs {b.get('product_code')}")
+
+    pa, pb = (a.get("product_code") or "").split("-"), (b.get("product_code") or "").split("-")
+    check("同一卖家的卖家码一致、流水号递增 1",
+          len(pa) == 4 and pa[1] == pb[1] and int(pb[3]) == int(pa[3]) + 1,
+          f"{a.get('product_code')} / {b.get('product_code')}")
+
+    c = _publish("冒烟-编号无小类", 14.0, category_id=2, subcategory_id=None)
+    check("分类码取大类字母码，无小类时小类段为 00",
+          (c.get("product_code") or "").startswith("DG00-"),
+          f"编号={c.get('product_code')!r}（数码应为 DG，无小类应为 00）")
+
+    d = _publish("冒烟-编号换分类", 15.0, category_id=3, subcategory_id=None)
+    check("换个大类，分类码随之变化",
+          (d.get("product_code") or "").startswith("LF"),
+          f"编号={d.get('product_code')!r}（生活用品应为 LF）")
+
+    # 不可变：改名 + 改分类都不重算
+    before = d.get("product_code")
+    _st, r = call("PUT", f"/api/products/{d['id']}", token=seller_token,
+                  body={"name": "冒烟-编号改过名", "price": 16.0, "category_id": 1,
+                        "subcategory_id": 1, "condition": "九成新",
+                        "description": "改名并改分类", "default_place_id": 2, "images": [],
+                        "product_code": "HACK-0000-000000-99999"})
+    check("编辑商品（含改分类、且前端硬塞编号）都不改变原编号",
+          (r.get("data") or {}).get("product_code") == before,
+          f"编辑前 {before!r} -> 编辑后 {(r.get('data') or {}).get('product_code')!r}")
+
+    _st, r = call("GET", f"/api/products/{a['id']}")
+    check("商品详情返回商品编号",
+          (r.get("data") or {}).get("product_code") == a.get("product_code"),
+          str(r)[:150])
+
+    _st, r = call("GET", "/api/products/mine?page_size=50", token=seller_token)
+    mine = {p["id"]: p.get("product_code") for p in (r.get("data") or {}).get("list", [])}
+    check("「我的商品」列表带商品编号", mine.get(a["id"]) == a.get("product_code"), str(mine)[:150])
+
+    _st, r = call("GET", f"/api/admin/products?keyword={a['product_code'][:8]}",
+                  token=admin_token)
+    ids = [p["id"] for p in (r.get("data") or {}).get("list", [])]
+    check("管理后台可按编号前缀搜索到该商品", a["id"] in ids, f"搜到 {ids[:6]}")
+
+    _o = call("POST", "/api/orders", token=token,
+              body={"product_id": b["id"], "meet_place_id": 2})[1].get("data") or {}
+    check("下单时把商品编号写进订单快照",
+          (_o.get("product") or {}).get("product_code") == b.get("product_code")
+          and _o.get("product_code") == b.get("product_code"),
+          f"快照编号={( _o.get('product') or {}).get('product_code')!r}")
+
+    # 大类字母码的维护与校验
+    _st, r = call("POST", "/api/admin/categories", token=admin_token,
+                  body={"name": "冒烟编号分类", "icon": "🧪", "sort": 99, "code": "XYZ"})
+    check("字母码不是 2 位时被拒", r.get("code") != 0, str(r)[:150])
+
+    _st, r = call("POST", "/api/admin/categories", token=admin_token,
+                  body={"name": "冒烟编号分类", "icon": "🧪", "sort": 99, "code": "TA"})
+    check("字母码与其他分类重复时被拒", r.get("code") != 0, str(r)[:150])
+
+    _st, r = call("POST", "/api/admin/categories", token=admin_token,
+                  body={"name": "冒烟编号分类", "icon": "🧪", "sort": 99, "code": "ZZ"})
+    new_cat = r.get("data") or {}
+    check("字母码合法时新增分类成功且回显字母码",
+          r.get("code") == 0 and new_cat.get("code") == "ZZ", str(r)[:150])
+    if new_cat.get("id"):
+        _st, r = call("POST", "/api/products", token=seller_token,
+                      body={"name": "冒烟-新分类商品", "price": 9.0,
+                            "category_id": new_cat["id"], "subcategory_id": None,
+                            "condition": "九成新", "description": "用新分类发布",
+                            "default_place_id": 2, "images": []})
+        _new_pid = (r.get("data") or {}).get("id")
+        check("新分类的商品编号用上了新配的字母码",
+              ((r.get("data") or {}).get("product_code") or "").startswith("ZZ00-"),
+              f"编号={(r.get('data') or {}).get('product_code')!r}")
+        # 顺序很重要：分类名下有商品记录（哪怕是软删除的）就删不掉分类，
+        # 所以要先把商品记录彻底删掉，再删分类。
+        _st, r = call("DELETE", f"/api/products/{_new_pid}", token=seller_token)
+        _st, r = call("DELETE", f"/api/products/{_new_pid}/record", token=seller_token)
+        _st, r = call("DELETE", f"/api/admin/categories/{new_cat['id']}", token=admin_token)
+        check("测试用分类已清理（否则会污染分类数量）", r.get("code") == 0, str(r)[:150])
 
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()

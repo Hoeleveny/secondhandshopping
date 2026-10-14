@@ -1053,6 +1053,143 @@ async function feature9(cdp) {
   }
 }
 
+/* ================================================================ 功能⑩ 商品编号 */
+const CODE_RE = /^[A-Z0-9]{2}\d{2}-\d{4}-\d{6}-\d{5}$/;
+
+async function feature10(cdp) {
+  console.log('\n===== 功能⑩ 商品编号 product_code =====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+
+  // 找一件 seller1 的在售商品作为样本
+  const mine = await api('GET', '/api/products/mine?status=on_sale&page_size=1', { token: sellerToken });
+  const sample = (mine.data?.list || [])[0];
+  check('样本商品的编号格式正确（分类码-卖家码-日期码-流水号）',
+    CODE_RE.test(sample?.product_code || ''), `编号=${sample?.product_code}`);
+
+  // ---- 1. 商品详情页展示编号 ----
+  await cdp.logout();
+  await cdp.go(`/product/${sample.id}`);
+  await sleep(1200);   // 详情页要发一次请求后才有内容，别抢在渲染前断言
+  const detail = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#product-code');
+      return { shown: !!el, text: (el?.innerText || '').trim(),
+               selectable: el ? getComputedStyle(el).userSelect : '' };
+    })()`);
+  check('商品详情页在信息区展示商品编号（可选中复制）',
+    detail.shown && detail.text === sample.product_code && detail.selectable === 'all',
+    JSON.stringify(detail));
+
+  await cdp.shot(path.join(SHOT_DIR, 'f10-detail-code.png'));
+
+  // ---- 2. 我的商品 列表带编号 ----
+  await cdp.loginAs('seller1', '123456', 'seller');
+  await cdp.go('/my-products');
+  const list = await cdp.eval(`
+    (() => {
+      const text = document.querySelector('#list-area')?.innerText || '';
+      const found = text.match(/[A-Z0-9]{2}\\d{2}-\\d{4}-\\d{6}-\\d{5}/g) || [];
+      return { count: found.length, first: found[0] || '' };
+    })()`);
+  check('「我的商品」列表里每行都能看到编号',
+    list.count > 0 && CODE_RE.test(list.first), JSON.stringify(list));
+
+  // ---- 3. 我的订单 显示编号 ----
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go('/orders');
+  const orderCodes = await cdp.eval(`
+    (() => {
+      const text = document.querySelector('#list-area')?.innerText || '';
+      return (text.match(/编号\\s*[A-Z0-9]{2}\\d{2}-\\d{4}-\\d{6}-\\d{5}/g) || []).length;
+    })()`);
+  check('「我的订单」卡片上显示商品编号', orderCodes > 0, `命中 ${orderCodes} 处`);
+
+  // ---- 4. 管理后台：行内展示 + 按编号搜索 ----
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=products');
+  const adminView = await cdp.eval(`
+    (() => {
+      // 管理后台商品列表的容器是 #ad-list（不是前台的 #list-area）
+      const box = document.querySelector('#ad-list') || document.querySelector('#page');
+      const text = box?.innerText || '';
+      const hits = text.match(/[A-Z0-9]{2}\\d{2}-\\d{4}-\\d{6}-\\d{5}/g) || [];
+      const input = document.querySelector('#ad-keyword');
+      return { hits: hits.length, first: hits[0] || '', placeholder: input?.placeholder || '' };
+    })()`);
+  check('管理后台商品列表展示编号，且搜索框提示已含「编号」',
+    adminView.hits > 0 && adminView.placeholder.includes('编号'),
+    JSON.stringify(adminView));
+
+  // 用样本编号的前 8 位（分类码 + 卖家码）做前缀搜索
+  const prefix = sample.product_code.slice(0, 8);
+  await cdp.eval(`
+    (() => {
+      const input = document.querySelector('#ad-keyword');
+      input.value = ${JSON.stringify(prefix)};
+      document.querySelector('#ad-search').click();
+    })()`);
+  await sleep(1300);
+  const searched = await cdp.eval(`
+    (() => {
+      const text = document.querySelector('#ad-list')?.innerText || '';
+      return { hits: [...new Set(text.match(/[A-Z0-9]{2}\\d{2}-\\d{4}-\\d{6}-\\d{5}/g) || [])] };
+    })()`);
+  check(`管理后台可按编号前缀「${prefix}」搜索`,
+    searched.hits.length > 0 && searched.hits.every(c => c.startsWith(prefix)),
+    JSON.stringify(searched.hits));
+
+  // ---- 5. 基础数据：字母码输入框 / 列表展示 ----
+  await cdp.go('/admin?tab=base');
+  const base = await cdp.eval(`
+    (() => ({
+      catHasCode: /\\b(TA|DG|LF|SP|OT)\\b/.test(document.querySelector('#cat-table')?.innerText || ''),
+      subHasSeq: /序号\\s*\\d{2}/.test(document.querySelector('#sub-table')?.innerText || ''),
+    }))()`);
+  check('基础数据里分类显示字母码、小类显示序号',
+    base.catHasCode && base.subHasSeq, JSON.stringify(base));
+
+  await cdp.eval(`document.querySelector('#cat-add').click()`);
+  await sleep(700);
+  const modal = await cdp.eval(`
+    (() => {
+      const m = document.querySelector('.modal-mask');
+      return { shown: !!m, fields: [...(m?.querySelectorAll('[data-field]') || [])].map(i => i.dataset.field) };
+    })()`);
+  check('新增分类弹窗里有「字母码」输入框（其余字段不变）',
+    modal.shown && ['name', 'icon', 'code', 'sort'].every(f => modal.fields.includes(f)),
+    JSON.stringify(modal.fields));
+
+  await cdp.shot(path.join(SHOT_DIR, 'f10-admin-base.png'));
+  await cdp.eval(`document.querySelector('.modal-mask [data-close]')?.click()`);
+  await sleep(400);
+
+  // ---- 6. 新发布的商品立刻有编号，详情页能看到 ----
+  const created = await api('POST', '/api/products', {
+    token: sellerToken,
+    body: { name: '自动化测试：编号回显', price: 7.7, category_id: 1, subcategory_id: 1,
+            condition: '九成新', description: '验证发布后编号回显', default_place_id: 2, images: [] },
+  });
+  const fresh = created.data || {};
+  check('发布成功后接口立即返回编号', CODE_RE.test(fresh.product_code || ''),
+    `编号=${fresh.product_code}`);
+  check('同卖家流水号在前一件基础上递增',
+    Number((fresh.product_code || '').split('-')[3]) > Number(sample.product_code.split('-')[3]),
+    `${sample.product_code} -> ${fresh.product_code}`);
+
+  await cdp.logout();
+  await cdp.go(`/product/${fresh.id}`);
+  await sleep(1200);
+  const freshDetail = await cdp.eval(`document.querySelector('#product-code')?.innerText.trim() || ''`);
+  check('新商品详情页能看到它的编号', freshDetail === fresh.product_code, `页面显示「${freshDetail}」`);
+
+  // 收尾：彻底删掉测试商品
+  await api('DELETE', `/api/products/${fresh.id}`, { token: sellerToken });
+  await api('DELETE', `/api/products/${fresh.id}/record`, { token: sellerToken });
+  const stillThere = await api('GET', `/api/products/${fresh.id}`);
+  check('测试商品已彻底清理', stillThere.code !== 0, `接口 code=${stillThere.code}`);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -1064,6 +1201,7 @@ const GROUPS = {
   7: { title: '个人资料（昵称、头像）', fn: feature7 },
   8: { title: '站名回首页 / 菜单去掉首页', fn: feature8 },
   9: { title: '消息与资料移入用户小框', fn: feature9 },
+  10: { title: '商品编号 product_code', fn: feature10 },
 };
 
 async function main() {

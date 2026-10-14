@@ -29,6 +29,8 @@ class User(db.Model):
     credit = db.Column(db.Numeric(3, 1), nullable=False, default=5.0)
     # 功能⑦：头像文件名（相对 uploads/）
     avatar = db.Column(db.String(255))
+    # 商品编号的「卖家码」来源：首次发布商品时惰性分配，不透出真实 id
+    seller_seq = db.Column(db.Integer, unique=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
     # ---- 业务方法 ----
@@ -65,6 +67,8 @@ class Category(db.Model):
     name = db.Column(db.String(50), nullable=False, unique=True)
     icon = db.Column(db.String(10), nullable=False, default="")
     sort = db.Column(db.Integer, nullable=False, default=0)
+    # 商品编号的「分类码」前两位：大类字母助记码（TA/DG/LF/SP/OT…）
+    code = db.Column(db.String(2), unique=True)
 
     subcategories = db.relationship(
         "Subcategory", backref="category", lazy="select",
@@ -72,7 +76,8 @@ class Category(db.Model):
     )
 
     def to_dict(self, with_subs: bool = False) -> dict:
-        data = {"id": self.id, "name": self.name, "icon": self.icon, "sort": self.sort}
+        data = {"id": self.id, "name": self.name, "icon": self.icon,
+                "sort": self.sort, "code": self.code}
         if with_subs:
             data["subcategories"] = [s.to_dict() for s in self.subcategories]
         return data
@@ -85,11 +90,17 @@ class Subcategory(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     category_id = db.Column(db.Integer, db.ForeignKey("categories.id"), nullable=False)
     name = db.Column(db.String(50), nullable=False)
+    # 商品编号的「分类码」后两位：在大类内的稳定序号（迁移时按 id 顺序固化）
+    seq_in_category = db.Column(db.Integer)
 
-    __table_args__ = (db.UniqueConstraint("category_id", "name", name="uk_subcategories_category_name"),)
+    __table_args__ = (
+        db.UniqueConstraint("category_id", "name", name="uk_subcategories_category_name"),
+        db.UniqueConstraint("category_id", "seq_in_category", name="uk_subcategories_seq"),
+    )
 
     def to_dict(self) -> dict:
-        return {"id": self.id, "category_id": self.category_id, "name": self.name}
+        return {"id": self.id, "category_id": self.category_id, "name": self.name,
+                "seq_in_category": self.seq_in_category}
 
 
 # ---------------------------------------------------------------- 14. 校园地点
@@ -142,6 +153,8 @@ class Product(db.Model):
     )
     views = db.Column(db.Integer, nullable=False, default=0)
     default_place_id = db.Column(db.BigInteger, db.ForeignKey("campus_places.id"))
+    # 商品编号：分类码-卖家码-日期码-流水号，发布时生成、永不改变
+    product_code = db.Column(db.String(32), unique=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
     updated_at = db.Column(
         db.DateTime, nullable=False, default=datetime.now, onupdate=datetime.now
@@ -187,6 +200,7 @@ class Product(db.Model):
             "views": self.views,
             "want_count": len(self.wants),
             "wanted": bool(viewer_id and any(w.user_id == viewer_id for w in self.wants)),
+            "product_code": self.product_code,
             "created_at": _dt(self.created_at),
         }
         if detail:
@@ -285,6 +299,9 @@ class Order(db.Model):
             "order_no": self.order_no,
             "product_id": self.product_id,
             "product": snap,
+            # 商品编号：快照里有就用快照的（商品被删也还能显示原编号），
+            # 老订单快照没有该字段时回退到商品当前编号。
+            "product_code": snap.get("product_code") or (self.product.product_code if self.product else None),
             "price": float(self.price),
             "status": self.status,
             "status_text": self.STATUS_TEXT.get(self.status, self.status),

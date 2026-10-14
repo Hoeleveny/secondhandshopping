@@ -59,6 +59,7 @@ export default {
               <dt>浏览量</dt><dd>👁 ${product.views}</dd>
               <dt>平均评分</dt><dd>${product.avg_rating ? `<span class="stars">★ ${product.avg_rating}</span>（${product.review_count} 条）` : '<span class="muted">暂无评价</span>'}</dd>
               <dt>想要人数</dt><dd id="want-count-line">❤️ <b id="want-count">${product.want_count ?? 0}</b> 人想要</dd>
+              ${product.product_code ? `<dt>商品编号</dt><dd class="muted small" id="product-code" style="user-select:all">${esc(product.product_code)}</dd>` : ''}
             </dl>
 
             <div class="divider"></div>

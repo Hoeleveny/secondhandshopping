@@ -27,9 +27,11 @@ CREATE TABLE `users` (
                                                           COMMENT '注册时的初始身份；admin 为管理员，不可切换',
   `credit`        DECIMAL(3,1)    NOT NULL DEFAULT 5.0    COMMENT '信用分（展示用，默认 5.0）',
   `avatar`        VARCHAR(255)    NULL                    COMMENT '头像文件名（相对 uploads/），功能⑦',
+  `seller_seq`    INT             NULL                    COMMENT '商品编号的卖家码来源：首次发布商品时惰性分配（迁移 006）',
   `created_at`    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_users_username` (`username`),
+  UNIQUE KEY `uk_users_seller_seq` (`seller_seq`),
   KEY `idx_users_role` (`role`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户（买家/卖家/管理员）';
 
@@ -42,8 +44,10 @@ CREATE TABLE `categories` (
   `name` VARCHAR(50)  NOT NULL          COMMENT '分类名',
   `icon` VARCHAR(10)  NOT NULL DEFAULT '' COMMENT 'emoji 图标',
   `sort` INT          NOT NULL DEFAULT 0  COMMENT '排序，小的在前',
+  `code` VARCHAR(2)   NULL                COMMENT '商品编号的大类字母码：TA/DG/LF/SP/OT…（迁移 006，管理员维护）',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_categories_name` (`name`)
+  UNIQUE KEY `uk_categories_name` (`name`),
+  UNIQUE KEY `uk_categories_code` (`code`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商品大类';
 
 -- -------------------------------------------------------------
@@ -54,8 +58,10 @@ CREATE TABLE `subcategories` (
   `id`          INT UNSIGNED NOT NULL AUTO_INCREMENT,
   `category_id` INT UNSIGNED NOT NULL,
   `name`        VARCHAR(50)  NOT NULL,
+  `seq_in_category` INT      NULL     COMMENT '商品编号小类段：在大类内的稳定序号（迁移 006）',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_subcategories_category_name` (`category_id`, `name`),
+  UNIQUE KEY `uk_subcategories_seq` (`category_id`, `seq_in_category`),
   KEY `idx_subcategories_category` (`category_id`),
   CONSTRAINT `fk_subcategories_category` FOREIGN KEY (`category_id`)
       REFERENCES `categories` (`id`) ON DELETE CASCADE
@@ -94,9 +100,11 @@ CREATE TABLE `products` (
                                                           COMMENT '在售/已售/已下架/已删除(deleted=软删除，所有角色不可见)',
   `views`            INT UNSIGNED    NOT NULL DEFAULT 0   COMMENT '浏览量',
   `default_place_id` BIGINT UNSIGNED NULL                 COMMENT '默认自提点',
+  `product_code`     VARCHAR(32)     NOT NULL             COMMENT '商品编号：分类码4-卖家码4-日期码6-流水号5，系统生成、永不改变（迁移 006）',
   `created_at`       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at`       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_product_code` (`product_code`),
   KEY `idx_products_status_category_price` (`status`, `category_id`, `price`),
   KEY `idx_products_seller` (`seller_id`, `status`),
   KEY `idx_products_subcategory` (`subcategory_id`),

@@ -47,7 +47,9 @@ def all_products():
 
     if keyword:
         like = f"%{keyword}%"
-        q = q.filter(or_(Product.name.like(like), Product.description.like(like)))
+        # 顺带支持按「商品编号」搜索（前缀/精确/包含都能命中）
+        q = q.filter(or_(Product.name.like(like), Product.description.like(like),
+                         Product.product_code.like(like)))
     if category_id:
         q = q.filter(Product.category_id == category_id)
 
@@ -159,6 +161,13 @@ def create_category():
         return fail("分类名已存在")
     category = Category(name=name, icon=(body.get("icon") or "").strip()[:10],
                         sort=int(body.get("sort") or 0))
+    code = (body.get("code") or "").strip().upper()
+    if code:
+        if len(code) != 2:
+            return fail("字母码必须是 2 位（如 TA / DG / LF / SP / OT）")
+        if Category.query.filter_by(code=code).first():
+            return fail(f"字母码 {code} 已被其他分类占用")
+        category.code = code
     db.session.add(category)
     db.session.commit()
     return ok(category.to_dict(with_subs=True), msg="分类已新增")
@@ -183,6 +192,15 @@ def update_category(cid: int):
         category.icon = (body.get("icon") or "").strip()[:10]
     if "sort" in body:
         category.sort = int(body.get("sort") or 0)
+    if "code" in body:
+        code = (body.get("code") or "").strip().upper()
+        if code and len(code) != 2:
+            return fail("字母码必须是 2 位（如 TA / DG / LF / SP / OT）")
+        if code:
+            taken = Category.query.filter(Category.code == code, Category.id != cid).first()
+            if taken:
+                return fail(f"字母码 {code} 已被「{taken.name}」占用")
+        category.code = code or None
     db.session.commit()
     return ok(category.to_dict(with_subs=True), msg="分类已保存")
 
@@ -197,6 +215,12 @@ def delete_category(cid: int):
                                 Product.status != PRODUCT_DELETED).count()
     if used:
         return fail(f"该分类下还有 {used} 件商品，不能删除")
+    # 已软删除的商品仍然占着 category_id 外键：只统计「未删除」会放行，
+    # 然后被 FK 拦住抛 500。这里提前给出可读提示。
+    dangling = Product.query.filter(Product.category_id == cid).count()
+    if dangling:
+        return fail(f"该分类下还有 {dangling} 件商品记录（含已删除的），"
+                    "请先到「我的商品 → 已删除」彻底删除这些记录再删分类")
     Subcategory.query.filter_by(category_id=cid).delete()
     db.session.delete(category)
     db.session.commit()
@@ -218,6 +242,13 @@ def create_subcategory():
     if exists:
         return fail("该分类下已存在同名小类")
     sub = Subcategory(category_id=int(category_id), name=name[:50])
+    # 商品编号的小类段要的是「大类内稳定序号」：新增小类时自动排在末尾，
+    # 之后不随删除变化（所以后台不提供手填，避免把已有编号的含义改掉）。
+    biggest = (
+        db.session.query(db.func.max(Subcategory.seq_in_category))
+        .filter(Subcategory.category_id == int(category_id)).scalar() or 0
+    )
+    sub.seq_in_category = int(biggest) + 1
     db.session.add(sub)
     db.session.commit()
     return ok(sub.to_dict(), msg="小类已新增")

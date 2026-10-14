@@ -398,15 +398,21 @@ async function check8() {
 
   await cdp.go('/compare?category_id=2');
   const ui = await cdp.eval(`
-    (() => ({
-      stats: [...document.querySelectorAll('.stat-card')].map(c => c.innerText.replace(/\\n/g, ' ').trim()),
-      firstRowBadge: document.querySelector('tbody tr .badge')?.innerText.trim() || '',
-      firstRowBg: getComputedStyle(document.querySelector('tbody tr')).backgroundColor,
-    }))()`);
+    (() => {
+      const rows = [...document.querySelectorAll('tbody tr')];
+      return {
+        stats: [...document.querySelectorAll('.stat-card')].map(c => c.innerText.replace(/\\n/g, ' ').trim()),
+        firstRowBadge: rows[0]?.querySelector('.badge')?.innerText.trim() || '',
+        firstRowBg: rows[0] ? getComputedStyle(rows[0]).backgroundColor : '',
+        otherRowBg: rows[1] ? getComputedStyle(rows[1]).backgroundColor : '',
+      };
+    })()`);
+  // 不再写死具体色值（换主题/换皮肤就会变）：只要求「最低价那行底色与其它行不同」
+  const highlighted = ui.firstRowBg !== ui.otherRowBg && ui.firstRowBg !== 'rgba(0, 0, 0, 0)';
 
   record(8, '比价显示最低/最高/平均/件数，列表价格升序，最低价高亮',
-    cmp.count === cmp.list.length && asc && ui.firstRowBadge === '最低价' && /rgb\(232, 245, 238\)/.test(ui.firstRowBg),
-    `接口 件数${cmp.count} 最低${cmp.min_price} 最高${cmp.max_price} 平均${cmp.avg_price}，升序=${asc}；界面卡片「${ui.stats.join(' / ')}」，首行标记「${ui.firstRowBadge}」底色${ui.firstRowBg}`);
+    cmp.count === cmp.list.length && asc && ui.firstRowBadge === '最低价' && highlighted,
+    `接口 件数${cmp.count} 最低${cmp.min_price} 最高${cmp.max_price} 平均${cmp.avg_price}，升序=${asc}；界面卡片「${ui.stats.join(' / ')}」，首行标记「${ui.firstRowBadge}」底色${ui.firstRowBg}（其它行${ui.otherRowBg}）`);
 }
 
 /* ================================================================ 9-10

@@ -79,6 +79,7 @@ export default {
                         ${coverHtml(p, 22)}
                       </div>
                       <span class="strong" data-open="${p.id}" style="cursor:pointer">${esc(p.name)}</span>
+                      ${p.product_code ? `<div class="muted small" style="letter-spacing:.04em;user-select:all">${esc(p.product_code)}</div>` : ''}
                     </div>
                   </td>
                   <td>${esc(p.category_icon || '')} ${esc(p.category_name || '')}${p.subcategory_name ? ` / ${esc(p.subcategory_name)}` : ''}</td>

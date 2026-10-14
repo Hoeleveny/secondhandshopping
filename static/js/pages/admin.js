@@ -65,7 +65,7 @@ async function renderProducts(panel) {
       <div class="form-grid">
         <div class="form-row">
           <label>关键词</label>
-          <input class="input" id="ad-keyword" placeholder="商品名 / 描述">
+          <input class="input" id="ad-keyword" placeholder="商品名 / 描述 / 编号">
         </div>
         <div class="form-row">
           <label>分类</label>
@@ -127,7 +127,8 @@ async function renderProducts(panel) {
           <tbody>
             ${data.list.map(p => `
               <tr>
-                <td><span class="strong" data-open="${p.id}" style="cursor:pointer">${esc(p.name)}</span></td>
+                <td><span class="strong" data-open="${p.id}" style="cursor:pointer">${esc(p.name)}</span>
+                  ${p.product_code ? `<div class="muted small" style="letter-spacing:.04em">${esc(p.product_code)}</div>` : ''}</td>
                 <td>${esc(p.category_icon || '')} ${esc(p.category_name || '')}</td>
                 <td>${esc(p.seller_nickname || '')}</td>
                 <td class="text-right price">${fmtPrice(p.price)}</td>
@@ -351,7 +352,8 @@ async function renderBaseData(panel) {
     <tbody>
       ${categories.map(c => `
         <tr>
-          <td>${c.id}</td><td style="font-size:18px">${esc(c.icon)}</td><td>${esc(c.name)}</td>
+          <td>${c.id}</td><td style="font-size:18px">${esc(c.icon)}</td>
+          <td>${esc(c.name)}${c.code ? ` <span class="muted small">${esc(c.code)}</span>` : ''}</td>
           <td>${c.sort}</td><td>${(c.subcategories || []).length}</td>
           <td><div class="ops">
             <button class="btn btn-sm" data-edit-cat="${c.id}">编辑</button>
@@ -366,7 +368,8 @@ async function renderBaseData(panel) {
     <tbody>
       ${categories.flatMap(c => (c.subcategories || []).map(s => `
         <tr>
-          <td>${s.id}</td><td>${esc(c.icon)} ${esc(c.name)}</td><td>${esc(s.name)}</td>
+          <td>${s.id}</td><td>${esc(c.icon)} ${esc(c.name)}</td>
+          <td>${esc(s.name)}${s.seq_in_category ? ` <span class="muted small">序号 ${String(s.seq_in_category).padStart(2, '0')}</span>` : ''}</td>
           <td><div class="ops">
             <button class="btn btn-sm" data-edit-sub="${s.id}" data-cat="${c.id}" data-name="${esc(s.name)}">编辑</button>
             <button class="btn btn-danger btn-sm" data-del-sub="${s.id}">删除</button>
@@ -403,6 +406,7 @@ async function renderBaseData(panel) {
       fields: [
         { key: 'name', label: '分类名', required: true, placeholder: '例如：教材' },
         { key: 'icon', label: 'emoji 图标', placeholder: '例如：📚' },
+        { key: 'code', label: '字母码（商品编号用）', placeholder: '2 位，如 TA / DG / LF / SP / OT' },
         { key: 'sort', label: '排序（小的在前）', type: 'number', value: '0' },
       ],
       submit: (values) => api.post('/api/admin/categories', values),
@@ -417,6 +421,7 @@ async function renderBaseData(panel) {
         fields: [
           { key: 'name', label: '分类名', required: true, value: cat.name },
           { key: 'icon', label: 'emoji 图标', value: cat.icon },
+          { key: 'code', label: '字母码（商品编号用）', value: cat.code || '', placeholder: '留空则编号回退用分类 ID' },
           { key: 'sort', label: '排序', type: 'number', value: String(cat.sort) },
         ],
         submit: (values) => api.put(`/api/admin/categories/${cat.id}`, values),

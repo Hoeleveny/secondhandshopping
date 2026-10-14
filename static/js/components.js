@@ -71,6 +71,7 @@ export function orderCardHtml(order, side = 'buyer') {
       <div class="pc-cover" style="width:72px;height:72px;border-radius:10px;flex:0 0 72px">${cover}</div>
       <div style="flex:1;min-width:0">
         <div class="strong">${esc(snap.name || '（商品已删除）')}</div>
+        ${order.product_code ? `<div class="small muted mt-0" style="letter-spacing:.04em;user-select:all">编号 ${esc(order.product_code)}</div>` : ''}
         <div class="small muted mt-0">${esc(other)}　·　${esc(fmtTime(order.created_at))}</div>
         <div class="small muted">自提点：${esc(order.meet_place?.name || '未指定')}</div>
         ${order.trade_note ? `<div class="small muted">交易说明：${esc(order.trade_note)}</div>` : ''}

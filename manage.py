@@ -47,9 +47,14 @@ def cmd_init_db() -> int:
             count = cur.fetchone()[0]
         expected = sql_text.upper().count("CREATE TABLE")
         print(f"[OK]  建表完成，{Config.DB_NAME} 内共 {count} 张表（脚本定义了 {expected} 张）")
-        return 0 if count >= expected else 1
     finally:
         conn.close()
+
+    # schema.sql 只反映最初的表结构，迁移新增的列（product_code / seller_seq /
+    # categories.code / subcategories.seq_in_category…）不在里面。建完表**必须**补跑
+    # 迁移，否则紧接着灌示例数据会报「未知列」。这里自动补上，避免踩坑。
+    print("      补跑增量迁移，让表结构与最新代码对齐")
+    return cmd_migrate()
 
 
 def cmd_reset_demo() -> int:
@@ -63,6 +68,24 @@ def cmd_reset_demo() -> int:
     print("[OK]  示例数据已重置：")
     for key, value in stats.items():
         print(f"      {key:<18} {value}")
+    return 0
+
+
+def cmd_backfill_codes() -> int:
+    """回填商品编号（category.code / seller_seq / product_code / 老订单快照）。"""
+    from app import create_app
+    from tools.backfill_product_code import run
+
+    application = create_app()
+    with application.app_context():
+        stats = run()
+    print("[OK]  商品编号回填完成：")
+    labels = {
+        "categories": "大类字母码", "subcategories": "小类序号", "sellers": "卖家码",
+        "products": "商品编号", "snapshots": "老订单快照补编号", "tightened": "NOT NULL 收紧",
+    }
+    for key, value in stats.items():
+        print(f"      {labels.get(key, key):<18} {value}")
     return 0
 
 
@@ -132,6 +155,7 @@ def cmd_run() -> int:
 COMMANDS = {
     "init-db": cmd_init_db,
     "migrate": cmd_migrate,
+    "backfill-codes": cmd_backfill_codes,
     "clean-test": cmd_clean_test,
     "reset-demo": cmd_reset_demo,
     "check": cmd_check,

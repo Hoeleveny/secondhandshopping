@@ -39,6 +39,8 @@ def product_snapshot(product: Product) -> dict:
         "category_icon": product.category.icon if product.category else "",
         "subcategory_name": product.subcategory.name if product.subcategory else None,
         "seller_nickname": product.seller.nickname if product.seller else None,
+        # 一并冻结商品编号，商品被彻底删除后订单仍能显示原编号
+        "product_code": product.product_code,
     }
 
 
