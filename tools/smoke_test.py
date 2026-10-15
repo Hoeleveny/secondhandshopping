@@ -9,6 +9,7 @@ import json
 import sys
 import urllib.error
 import urllib.request
+from datetime import date, timedelta
 from urllib.parse import quote
 
 BASE = "http://127.0.0.1:5000"
@@ -1279,6 +1280,63 @@ def main() -> int:
     check("日志详情：不存在的日志返回 404", r.get("code") != 0, str(r)[:120])
     _st, r = call("GET", f"/api/admin/logs/{_pid_log}", token=buyer1)
     check("日志详情：普通用户看不到（403）", r.get("code") != 0, str(r)[:120])
+
+    # 需求③-新：动态监控的多条件筛选
+    def _logs_q(**params):
+        _q = "&".join(f"{k}={quote(str(v))}" for k, v in params.items() if v not in (None, ""))
+        _s, rr = call("GET", f"/api/admin/logs?{_q}", token=admin_token)
+        return rr.get("data") or {}
+
+    _d = _logs_q(page_size=5)
+    check("动态监控返回筛选所需的「动作」与「发起人」清单",
+          bool(_d.get("actions")) and "actors" in _d,
+          f"动作 {len(_d.get('actions') or [])} 个 / 发起人 {len(_d.get('actors') or [])} 位")
+
+    _d = _logs_q(action="order_create", page_size=50)
+    check("按**动作**筛选：结果动作全为所选动作",
+          bool(_d.get("list")) and all(x["action"] == "order_create" for x in _d["list"]),
+          f"{_d.get('total')} 条")
+
+    _d = _logs_q(user_id=_my_id, page_size=50)
+    check("按**动作发起人**筛选：结果发起人全为该用户",
+          bool(_d.get("list")) and all(x["user_id"] == _my_id for x in _d["list"]),
+          f"{_d.get('total')} 条")
+
+    _pcode = tp.get("product_code")
+    _d = _logs_q(product=_pcode, page_size=50)
+    _acts = {x["action"] for x in _d.get("list") or []}
+    check("按**商品编号**筛选：能关联到该商品的发布/下单等日志",
+          {"product_create", "order_create"} <= _acts, str(sorted(_acts)))
+    _d2 = _logs_q(product="交易监管商品", page_size=50)
+    check("按**商品名**筛选也能命中同一批日志", _d2.get("total") == _d.get("total"),
+          f"编号 {_d.get('total')} 条 / 名称 {_d2.get('total')} 条")
+
+    _st, r = call("GET", f"/api/admin/orders?status=all&keyword={quote(_pcode)}", token=admin_token)
+    _some = ((r.get("data") or {}).get("list") or [{}])[0]
+    _ono = _some.get("order_no")
+    _d = _logs_q(order_no=_ono, page_size=50)
+    check("按**订单号**筛选：命中该订单的下单/取消/完成日志",
+          bool(_d.get("list"))
+          and all(x["target_type"] == "order" for x in _d["list"]),
+          f"订单 {_ono} -> {_d.get('total')} 条")
+
+    _today = date.today().isoformat()
+    _tmr = (date.today() + timedelta(days=1)).isoformat()
+    _d = _logs_q(date_from=_today, date_to=_today, page_size=50)
+    check("按**动作时间**筛选（今天）：结果都在今天",
+          bool(_d.get("list"))
+          and all(x["created_at"].startswith(_today) for x in _d["list"]),
+          f"{_d.get('total')} 条")
+    _d = _logs_q(date_from=_tmr, page_size=50)
+    check("起始时间设为明天时查不到任何记录", _d.get("total") == 0, str(_d.get("total")))
+
+    _d = _logs_q(product=_pcode, action="review_create", page_size=50)
+    check("多个条件可以叠加（商品编号 + 动作），结果同时满足两者",
+          all(x["action"] == "review_create" for x in _d.get("list") or []),
+          f"{_d.get('total')} 条")
+
+    _st, r = call("GET", "/api/admin/logs?date_from=不是日期", token=admin_token)
+    check("非法日期格式被拒", r.get("code") != 0, str(r)[:120])
 
     # ---------------- 需求②：卖家商品主页 + 商家简介 ----------------
     section("需求② 卖家商品主页与商家简介")

@@ -8,7 +8,7 @@
 - 数据管理：备份 / 恢复 / 重置示例数据。
 """
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from flask import Blueprint, current_app, send_from_directory
@@ -336,10 +336,21 @@ def admin_log_detail(log_id: int):
 @bp.get("/logs")
 @admin_required
 def admin_logs():
-    """操作日志时间线（「动态监控」）：默认按时间倒序，可按动作/关键词筛。"""
+    """操作日志时间线（「动态监控」）：默认按时间倒序。
+
+    支持按 动作 / 关键词 / **动作时间区间** / **动作发起人** / **具体商品（名称或商品编号）** /
+    **订单号** 筛选（需求③）。商品与订单号这两种筛选要跨表关联：
+    - 商品：命中「日志直接指向该商品」以及「指向该商品相关订单/评价」的日志；
+    - 订单号：命中「日志直接指向该订单」的日志。
+    """
     page, size = paginate_args(30)
     action = arg_str("action")
     keyword = arg_str("keyword")
+    date_from = arg_str("date_from")
+    date_to = arg_str("date_to")
+    user_id = arg_int("user_id")
+    product = arg_str("product")
+    order_no = arg_str("order_no")
 
     q = OperationLog.query
     if action and action != "all":
@@ -350,17 +361,77 @@ def admin_logs():
                          OperationLog.username.like(like),
                          OperationLog.action.like(like)))
 
+    if date_from:
+        try:
+            q = q.filter(OperationLog.created_at >= datetime.strptime(date_from, "%Y-%m-%d"))
+        except ValueError:
+            return fail("起始日期格式应为 YYYY-MM-DD")
+    if date_to:
+        try:
+            # 结束日期含当天整天，所以要 < 次日 00:00
+            end = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+        except ValueError:
+            return fail("结束日期格式应为 YYYY-MM-DD")
+        q = q.filter(OperationLog.created_at < end)
+
+    if user_id:
+        q = q.filter(OperationLog.user_id == user_id)
+
+    if order_no:
+        oids = [o.id for o in
+                Order.query.filter(Order.order_no.like(f"%{order_no}%")).limit(500)]
+        q = q.filter(OperationLog.target_type == "order",
+                     OperationLog.target_id.in_(oids or [-1]))
+
+    if product:
+        # 商品编号精确匹配 + 商品名模糊匹配，两者都算
+        pids = {p.id for p in Product.query.filter(Product.product_code == product).all()}
+        pids |= {p.id for p in
+                 Product.query.filter(Product.name.like(f"%{product}%")).limit(200).all()}
+        if not pids:
+            return ok({"list": [], "total": 0, "page": 1, "page_size": size,
+                       "actions": _log_actions(), "actors": _log_actors()})
+        pids = list(pids)
+        oids = [o.id for o in Order.query.filter(Order.product_id.in_(pids))]
+        rids = [r.id for r in Review.query.filter(Review.product_id.in_(pids))]
+        conds = [and_(OperationLog.target_type == "product",
+                      OperationLog.target_id.in_(pids))]
+        if oids:
+            conds.append(and_(OperationLog.target_type == "order",
+                              OperationLog.target_id.in_(oids)))
+        if rids:
+            conds.append(and_(OperationLog.target_type == "review",
+                              OperationLog.target_id.in_(rids)))
+        q = q.filter(or_(*conds))
+
     total = q.count()
     rows = (q.order_by(OperationLog.created_at.desc(), OperationLog.id.desc())
             .offset((page - 1) * size).limit(size).all())
 
-    # 供前端筛选下拉用：当前库里出现过的动作
-    used = [a for (a,) in db.session.query(OperationLog.action).distinct().all()]
-    actions = [{"action": a, "text": OperationLog.ACTIONS.get(a, a)} for a in used]
-    actions.sort(key=lambda x: x["action"])
-
     return ok({"list": [r.to_dict() for r in rows], "total": total,
-               "page": page, "page_size": size, "actions": actions})
+               "page": page, "page_size": size,
+               "actions": _log_actions(), "actors": _log_actors()})
+
+
+def _log_actions() -> list[dict]:
+    """筛选下拉用：库里出现过的动作码。"""
+    used = [a for (a,) in db.session.query(OperationLog.action).distinct().all()]
+    return sorted(({"action": a, "text": OperationLog.ACTIONS.get(a, a)} for a in used),
+                  key=lambda x: x["action"])
+
+
+def _log_actors() -> list[dict]:
+    """筛选下拉用：库里出现过的操作人。"""
+    pairs = (db.session.query(OperationLog.user_id, OperationLog.username)
+             .filter(OperationLog.user_id.isnot(None)).distinct().all())
+    ids = [uid for uid, _name in pairs]
+    users = {u.id: u for u in User.query.filter(User.id.in_(ids)).all()} if ids else {}
+    actors = [{
+        "id": uid,
+        "nickname": users[uid].nickname if uid in users else (name or ""),
+        "username": users[uid].username if uid in users else name,
+    } for uid, name in pairs]
+    return sorted(actors, key=lambda x: x["nickname"] or "")
 
 
 @bp.patch("/products/<int:pid>/status")

@@ -1865,6 +1865,105 @@ async function feature17(cdp) {
   }
 }
 
+/* ================================================================ 功能⑱ 动态监控筛选（需求③） */
+async function feature18(cdp) {
+  console.log('\n===== 功能⑱ 动态监控多条件筛选（需求③）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+
+  // 造一条特征明显的链路，便于用「商品编号 / 订单号」筛选验证
+  const product = (await api('POST', '/api/products', {
+    token: sellerToken,
+    body: { name: '自动化测试：筛选验证商品', price: 13, category_id: 1, subcategory_id: 1,
+            condition: '九成新', description: '筛选验证用', default_place_id: 2, images: [] },
+  })).data;
+  const order = (await api('POST', '/api/orders', {
+    token: buyerToken, body: { product_id: product.id, meet_place_id: 2 },
+  })).data;
+  await api('PATCH', `/api/orders/${order.id}/complete`, { token: buyerToken });
+  await api('POST', '/api/reviews', {
+    token: buyerToken, body: { order_id: order.id, rating: 5, content: '自动化测试：筛选' },
+  });
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=trades');
+  await waitFor(cdp, `document.querySelectorAll('#lg-list .tl-item').length > 0`);
+
+  const controls = await cdp.eval(`
+    (() => ['lg-action', 'lg-user', 'lg-product', 'lg-order', 'lg-from', 'lg-to', 'lg-search', 'lg-reset']
+      .map(id => ({ id, exists: !!document.getElementById(id) })))()`);
+  check('动态监控具备动作/发起人/商品/订单号/起止时间 6 个筛选控件与筛选·重置按钮',
+    controls.every(c => c.exists), JSON.stringify(controls.filter(c => !c.exists)));
+
+  const options = await cdp.eval(`
+    (() => ({
+      actions: [...document.querySelectorAll('#lg-action option')].map(o => o.value),
+      actors: [...document.querySelectorAll('#lg-user option')].map(o => o.textContent.trim()),
+    }))()`);
+  check('「动作」与「发起人」下拉有可选项（来自库里真实出现过的记录）',
+    options.actions.length > 1 && options.actors.length > 1,
+    JSON.stringify({ actions: options.actions.length, actors: options.actors.slice(0, 4) }));
+
+  const before = await cdp.eval(`document.querySelectorAll('#lg-list .tl-item').length`);
+
+  // 按商品编号筛
+  await cdp.eval(`
+    (() => {
+      document.querySelector('#lg-product').value = ${JSON.stringify(product.product_code)};
+      document.querySelector('#lg-search').click();
+    })()`);
+  await waitFor(cdp, `document.querySelectorAll('#lg-list .tl-item').length > 0`);
+  await sleep(900);
+  const byProduct = await cdp.eval(`
+    (() => {
+      const t = document.querySelector('#lg-list')?.innerText || '';
+      const items = document.querySelectorAll('#lg-list .tl-item').length;
+      const pg = document.querySelector('#lg-pager')?.innerText || '';
+      return { items, text: t.slice(0, 160), pg };
+    })()`);
+  check('按商品编号筛选后只剩与该商品相关的日志（条数变少且不再是全部）',
+    byProduct.items > 0 && byProduct.items < before, JSON.stringify(byProduct));
+
+  // 叠加时间筛选（今天）
+  const today = new Date().toISOString().slice(0, 10);
+  await cdp.eval(`
+    (() => {
+      document.querySelector('#lg-from').value = ${JSON.stringify(today)};
+      document.querySelector('#lg-to').value = ${JSON.stringify(today)};
+      document.querySelector('#lg-search').click();
+    })()`);
+  await sleep(1200);
+  const withDate = await cdp.eval(`document.querySelectorAll('#lg-list .tl-item').length`);
+  check('叠加「动作时间（今天）」后仍能查到记录', withDate > 0, `items=${withDate}`);
+
+  // 起始时间设成明天 → 空态
+  await cdp.eval(`
+    (() => {
+      const d = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+      document.querySelector('#lg-from').value = d;
+      document.querySelector('#lg-to').value = d;
+      document.querySelector('#lg-search').click();
+    })()`);
+  await waitFor(cdp, `!!document.querySelector('#lg-list .empty')`);
+  check('起始时间设为明天后显示空态（确实查不到）', true, '');
+
+  // 重置
+  await cdp.eval(`document.querySelector('#lg-reset').click()`);
+  await waitFor(cdp, `document.querySelectorAll('#lg-list .tl-item').length > 0`);
+  const afterReset = await cdp.eval(`
+    (() => ({
+      items: document.querySelectorAll('#lg-list .tl-item').length,
+      product: document.querySelector('#lg-product').value,
+      from: document.querySelector('#lg-from').value,
+      action: document.querySelector('#lg-action').value,
+    }))()`);
+  check('「重置」清空各筛选项并恢复到全部记录',
+    afterReset.items >= before && afterReset.product === '' && afterReset.from === ''
+    && afterReset.action === 'all', JSON.stringify(afterReset));
+  await cdp.shot(path.join(SHOT_DIR, 'f18-log-filters.png'));
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -1884,6 +1983,7 @@ const GROUPS = {
   15: { title: '私信删除会话（需求⑤）', fn: feature15 },
   16: { title: '交易管理状态卡下钻（需求①）', fn: feature16 },
   17: { title: '动态监控条目详情（需求②）', fn: feature17 },
+  18: { title: '动态监控多条件筛选（需求③）', fn: feature18 },
 };
 
 async function main() {

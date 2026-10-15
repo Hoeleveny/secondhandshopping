@@ -219,6 +219,11 @@ async function renderTrades(panel) {
   let keyword = '';
   let page = 1;
   let logAction = 'all';
+  let logUser = '';
+  let logProduct = '';
+  let logOrder = '';
+  let logFrom = '';
+  let logTo = '';
   let logPage = 1;
 
   panel.innerHTML = `
@@ -252,9 +257,40 @@ async function renderTrades(panel) {
     <div class="card mt-16">
       <div class="row-between mb-8">
         <h3 style="margin:0">动态监控</h3>
-        <select class="select" id="lg-action" style="width:auto">
-          <option value="all">全部动作</option>
-        </select>
+        <span class="muted small">点任意一条可看详细交易信息</span>
+      </div>
+      <div class="form-grid mb-8">
+        <div class="form-row">
+          <label>动作</label>
+          <select class="select" id="lg-action"><option value="all">全部动作</option></select>
+        </div>
+        <div class="form-row">
+          <label>动作发起人</label>
+          <select class="select" id="lg-user"><option value="">全部发起人</option></select>
+        </div>
+        <div class="form-row">
+          <label>商品（名称 / 编号）</label>
+          <input class="input" id="lg-product" placeholder="如 保温杯 或 LF03-0002-260925-00006">
+        </div>
+        <div class="form-row">
+          <label>订单号</label>
+          <input class="input" id="lg-order" placeholder="如 CM20261015224541">
+        </div>
+        <div class="form-row">
+          <label>动作时间（起）</label>
+          <input class="input" type="date" id="lg-from">
+        </div>
+        <div class="form-row">
+          <label>动作时间（止）</label>
+          <input class="input" type="date" id="lg-to">
+        </div>
+        <div class="form-row">
+          <label>&nbsp;</label>
+          <div class="row" style="gap:8px">
+            <button class="btn btn-primary" id="lg-search">筛选</button>
+            <button class="btn" id="lg-reset">重置</button>
+          </div>
+        </div>
       </div>
       <div id="lg-list">${loadingHtml()}</div>
       <div class="pagination" id="lg-pager"></div>
@@ -626,30 +662,44 @@ async function renderTrades(panel) {
       }));
   }
 
-  /* ---------------- 动态监控（操作日志时间线）---------------- */
+  /* ---------------- 动态监控（操作日志时间线 + 多条件筛选）---------------- */
   async function loadLogs(silent = false) {
     const box = panel.querySelector('#lg-list');
     if (!box) return;
     if (!silent) box.innerHTML = loadingHtml();
     let data;
     try {
-      data = await api.get(`/api/admin/logs${qs({ action: logAction, page: logPage, page_size: 20 })}`);
+      data = await api.get(`/api/admin/logs${qs({
+        action: logAction, user_id: logUser, product: logProduct,
+        order_no: logOrder, date_from: logFrom, date_to: logTo,
+        page: logPage, page_size: 20,
+      })}`);
     } catch (err) {
       box.innerHTML = emptyHtml(`加载失败：${err.message}`, '😵');
       return;
     }
 
-    const sel = panel.querySelector('#lg-action');
-    if (data.actions && sel.options.length - 1 !== data.actions.length) {
-      const current = sel.value;
-      sel.innerHTML = `<option value="all">全部动作</option>`
+    // 两个下拉的选项来自库里实际出现过的动作与发起人（保留当前选中值）
+    const actionSel = panel.querySelector('#lg-action');
+    if (data.actions) {
+      const current = actionSel.value;
+      actionSel.innerHTML = `<option value="all">全部动作</option>`
         + data.actions.map(a => `<option value="${esc(a.action)}">${esc(a.text)}</option>`).join('');
-      sel.value = current;
+      actionSel.value = current || 'all';
+    }
+    const userSel = panel.querySelector('#lg-user');
+    if (data.actors) {
+      const current = userSel.value;
+      userSel.innerHTML = `<option value="">全部发起人</option>`
+        + data.actors.map(a =>
+            `<option value="${a.id}">${esc(a.nickname || a.username || '')}</option>`).join('');
+      userSel.value = current;
     }
 
     if (!data.list.length) {
-      box.innerHTML = emptyHtml('还没有操作记录', '📋');
-      renderPagination(panel.querySelector('#lg-pager'), { page: 1, pages: 1, total: 0, onGo: () => {} });
+      box.innerHTML = emptyHtml('没有符合条件的操作记录', '📋');
+      renderPagination(panel.querySelector('#lg-pager'),
+        { page: 1, pages: 1, total: 0, onGo: () => {} });
       return;
     }
 
@@ -698,8 +748,47 @@ async function renderTrades(panel) {
   panel.querySelector('#td-keyword').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') panel.querySelector('#td-search').click();
   });
+  // ---- 动态监控的多条件筛选（需求③）----
   panel.querySelector('#lg-action').addEventListener('change', (e) => {
     logAction = e.target.value;
+    logPage = 1;
+    loadLogs();
+  });
+  panel.querySelector('#lg-user').addEventListener('change', (e) => {
+    logUser = e.target.value;
+    logPage = 1;
+    loadLogs();
+  });
+  const readLogFilters = () => {
+    logProduct = panel.querySelector('#lg-product').value.trim();
+    logOrder = panel.querySelector('#lg-order').value.trim();
+    logFrom = panel.querySelector('#lg-from').value;
+    logTo = panel.querySelector('#lg-to').value;
+    logPage = 1;
+  };
+  panel.querySelector('#lg-search').addEventListener('click', () => {
+    readLogFilters();
+    loadLogs();
+  });
+  ['#lg-product', '#lg-order'].forEach((sel) =>
+    panel.querySelector(sel).addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        readLogFilters();
+        loadLogs();
+      }
+    }));
+  panel.querySelector('#lg-reset').addEventListener('click', () => {
+    ['#lg-product', '#lg-order', '#lg-from', '#lg-to'].forEach((sel) => {
+      panel.querySelector(sel).value = '';
+    });
+    panel.querySelector('#lg-user').value = '';
+    panel.querySelector('#lg-action').value = 'all';
+    logAction = 'all';
+    logUser = '';
+    logProduct = '';
+    logOrder = '';
+    logFrom = '';
+    logTo = '';
     logPage = 1;
     loadLogs();
   });
