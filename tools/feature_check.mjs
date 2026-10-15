@@ -1328,7 +1328,7 @@ async function feature12(cdp) {
   await waitFor(cdp, `document.querySelectorAll('.product-card').length > 0`);
   const head = await cdp.eval(`
     (() => ({
-      name: document.querySelector('.seller-name')?.innerText.trim() || '',
+      name: document.querySelector('.seller-nick')?.innerText.trim() || '',
       hasBio: !!document.querySelector('.seller-bio'),
       stats: document.querySelector('.seller-stats')?.innerText.replace(/\\n/g, ' ') || '',
       avatar: !!document.querySelector('.seller-avatar'),
@@ -1418,6 +1418,119 @@ async function feature12(cdp) {
     (restored.data?.seller?.bio || '') === originalBio, `当前=${restored.data?.seller?.bio}`);
 }
 
+/* ================================================================ 功能⑬ 商家好评率（需求③） */
+/** 与后端 rating.py 的档位阈值保持一致，用来断言「界面档位 = 接口口径」 */
+function tierOf(rate, total) {
+  if (!total) return 'none';
+  if (rate >= 95) return 'excellent';
+  if (rate >= 85) return 'good';
+  if (rate >= 70) return 'fair';
+  return 'poor';
+}
+
+/** 无评价时界面刻意用中性灰（不硬凑成某个档位），所以期望值不是 rating-none */
+function expectedBadgeClass(rating) {
+  return rating.total ? `rating-${tierOf(rating.rate, rating.total)}` : 'badge-gray';
+}
+
+async function feature13(cdp) {
+  console.log('\n===== 功能⑬ 商家好评率与分级（需求③）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const sellerId = (await api('GET', '/api/auth/me', { token: sellerToken })).data.user.id;
+
+  const apiRating = async () => (await api('GET', `/api/sellers/${sellerId}`)).data.seller.rating;
+  const readBadge = async () => cdp.eval(`
+    (() => {
+      const el = document.querySelector('.rating-badge');
+      return { text: (el?.innerText || '').trim(), cls: (el?.className || ''),
+               title: el?.getAttribute('title') || '' };
+    })()`);
+
+  // ---- 1. 商品详情页 ----
+  const sample = (await api('GET', '/api/products/mine?status=on_sale&page_size=1',
+    { token: sellerToken })).data.list[0];
+  await cdp.logout();
+  await cdp.go(`/product/${sample.id}`);
+  await waitFor(cdp, `!!document.querySelector('.rating-badge')`);
+  const detailBadge = await readBadge();
+  let r = await apiRating();
+  check('商品详情页显示卖家好评率徽标，且档位与接口口径一致',
+    detailBadge.cls.includes(expectedBadgeClass(r))
+    && (r.total ? detailBadge.text.includes(`${r.rate}%`) : detailBadge.text.includes('暂无评价')),
+    JSON.stringify({ badge: detailBadge, rating: r }));
+
+  // ---- 2. 卖家主页 ----
+  await cdp.go(`/seller/${sellerId}`);
+  await waitFor(cdp, `!!document.querySelector('.rating-badge')`);
+  const sellerBadge = await readBadge();
+  check('卖家主页顶部显示好评率徽标与分级',
+    /好评率 \d/.test(sellerBadge.text) || sellerBadge.text.includes('暂无评价'),
+    JSON.stringify(sellerBadge));
+  check('徽标带悬停说明（讲清好评口径与评价条数）', sellerBadge.title.length > 0, sellerBadge.title);
+
+  // ---- 3. 个人资料页：用好评率取代信用分 ----
+  await cdp.loginAs('seller1', '123456', 'seller');
+  await cdp.go('/profile');
+  await waitFor(cdp, `!!document.querySelector('#pf-rating')`);
+  const profile = await cdp.eval(`
+    (() => ({
+      ratingValue: document.querySelector('#pf-rating')?.value || '',
+      hasCreditField: /信用分/.test(document.body.innerText),
+      hintMentionsDirection: /只统计买家对你的评价/.test(document.body.innerText),
+    }))()`);
+  check('个人资料页显示「商家好评率」，不再显示「信用分」',
+    profile.ratingValue.length > 0 && !profile.hasCreditField, JSON.stringify(profile));
+  check('个人资料页写清了口径（只统计买家对你的评价）',
+    profile.hintMentionsDirection, '');
+
+  // ---- 4. 造评价推动档位变化，界面必须跟着变 ----
+  async function makeReviewedOrder(name, rating) {
+    const p = (await api('POST', '/api/products', {
+      token: sellerToken,
+      body: { name, price: 6, category_id: 1, subcategory_id: 1, condition: '九成新',
+              description: '好评率界面测试用', default_place_id: 2, images: [] },
+    })).data;
+    const o = (await api('POST', '/api/orders', {
+      token: buyerToken, body: { product_id: p.id, meet_place_id: 2 },
+    })).data;
+    await api('PATCH', `/api/orders/${o.id}/complete`, { token: buyerToken });
+    await api('POST', '/api/reviews', {
+      token: buyerToken, body: { order_id: o.id, rating, content: '自动化测试：好评率' },
+    });
+  }
+
+  const before = await apiRating();
+  await makeReviewedOrder('自动化测试：好评率好评', 5);
+  const afterGood = await apiRating();
+  check('新增 5 星好评后好评率上升',
+    (afterGood.rate ?? 0) >= (before.rate ?? 0) && afterGood.total === before.total + 1,
+    `好评率 ${before.rate}% -> ${afterGood.rate}%`);
+
+  await cdp.logout();
+  await cdp.go(`/seller/${sellerId}`);
+  await waitFor(cdp, `!!document.querySelector('.rating-badge')`);
+  const goodBadge = await readBadge();
+  check('界面档位跟着变成接口算出的档位（好评）',
+    goodBadge.cls.includes(expectedBadgeClass(afterGood)),
+    JSON.stringify({ badge: goodBadge, rate: afterGood.rate }));
+  await cdp.shot(path.join(SHOT_DIR, 'f13-rating-good.png'));
+
+  await makeReviewedOrder('自动化测试：好评率差评', 2);
+  const afterBad = await apiRating();
+  check('新增 2 星差评后好评率下降',
+    afterBad.rate < afterGood.rate, `${afterGood.rate}% -> ${afterBad.rate}%`);
+
+  await cdp.go(`/seller/${sellerId}`);
+  await waitFor(cdp, `!!document.querySelector('.rating-badge')`);
+  const badBadge = await readBadge();
+  check('界面档位跟着降档（差评后）',
+    badBadge.cls.includes(expectedBadgeClass(afterBad)),
+    JSON.stringify({ badge: badBadge, rate: afterBad.rate }));
+  await cdp.shot(path.join(SHOT_DIR, 'f13-rating-after.png'));
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -1432,6 +1545,7 @@ const GROUPS = {
   10: { title: '商品编号 product_code', fn: feature10 },
   11: { title: '管理员交易监管（需求①）', fn: feature11 },
   12: { title: '卖家商品主页（需求②）', fn: feature12 },
+  13: { title: '商家好评率（需求③）', fn: feature13 },
 };
 
 async function main() {

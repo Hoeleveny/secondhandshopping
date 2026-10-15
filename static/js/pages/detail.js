@@ -7,7 +7,7 @@ import { ensureMeta, ensurePlaces } from '../data.js';
 import { reviewItemHtml } from '../components.js';
 import {
   confirmDialog, emptyHtml, esc, fmtPrice, fmtTime, go, imgUrl,
-  openModal, statusFlagHtml, toast,
+  openModal, ratingBadgeHtml, statusFlagHtml, toast,
 } from '../ui.js';
 
 export default {
@@ -53,7 +53,7 @@ export default {
             <dl class="info-list mt-16">
               <dt>成色</dt><dd>${esc(product.condition)}</dd>
               <dt>分类</dt><dd>${esc(product.category_icon || '')} ${esc(product.category_name || '')}${product.subcategory_name ? ` / ${esc(product.subcategory_name)}` : ''}</dd>
-              <dt>卖家</dt><dd><button class="link-btn" data-seller="${product.seller_id}">${esc(product.seller_nickname || '')}</button></dd>
+              <dt>卖家</dt><dd><button class="link-btn" data-seller="${product.seller_id}">${esc(product.seller_nickname || '')}</button> ${ratingBadgeHtml(product.seller_rating)}</dd>
               <dt>默认自提点</dt><dd>${esc(product.default_place?.name || '未指定')}</dd>
               <dt>发布时间</dt><dd>${esc(fmtTime(product.created_at))}</dd>
               <dt>浏览量</dt><dd>👁 ${product.views}</dd>

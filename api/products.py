@@ -19,6 +19,7 @@ from models import (
     Subcategory, SwapOffer, User,
     PRODUCT_DELETED, PRODUCT_OFF_SHELF, PRODUCT_ON_SALE, PRODUCT_SOLD, ROLE_ADMIN,
 )
+from rating import seller_rating
 
 bp = Blueprint("products", __name__, url_prefix="/api")
 
@@ -198,6 +199,8 @@ def product_detail(pid: int):
     data["avg_rating"] = (
         round(sum(r.rating for r in reviews) / len(reviews), 1) if reviews else None
     )
+    # 需求③：商品详情页也要显示卖家的好评率与分级（买家下单前最需要这个）
+    data["seller_rating"] = seller_rating(product.seller_id)
     return ok(data)
 
 
@@ -245,6 +248,8 @@ def seller_profile(uid: int):
             "seller_code": f"{seller.seller_seq:04d}" if seller.seller_seq else None,
             "joined_at": (seller.created_at.strftime("%Y-%m-%d")
                           if seller.created_at else None),
+            # 需求③：好评率与分级（只算「买家评卖家」的那一半）
+            "rating": seller_rating(seller.id),
         },
         "counts": counts,
         "list": [p.to_dict() for p in items],

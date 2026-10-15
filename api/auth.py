@@ -14,6 +14,7 @@ from flask_jwt_extended import create_access_token
 from api.common import current_user, fail, json_body, login_required, ok
 from extensions import db
 from models import ROLE_ADMIN, ROLE_BUYER, ROLE_SELLER, User
+from rating import seller_rating
 
 bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
@@ -98,7 +99,10 @@ def me():
         view = ROLE_ADMIN
     elif view not in NORMAL_ROLES:
         view = user.role
-    return ok({"user": user.to_dict(), "view": view, "is_admin": user.is_admin})
+    data = user.to_dict()
+    # 需求③：个人资料页把「信用分」换成「好评率 + 分级」，数据一并带出来
+    data["rating"] = seller_rating(user.id)
+    return ok({"user": data, "view": view, "is_admin": user.is_admin})
 
 
 @bp.put("/profile")

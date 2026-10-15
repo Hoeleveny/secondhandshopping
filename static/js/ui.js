@@ -92,6 +92,21 @@ export function confirmDialog({ title = '请确认', message = '', okText = '确
   });
 }
 
+/* ------------------------------------------------------------------ 好评率徽标（需求③） */
+/**
+ * 商家好评率与分级徽标。rating 来自后端：{rate,total,level,level_text,level_hint}。
+ * 没有评价时给中性提示，不硬凑成「100% 优秀」误导买家。
+ */
+export function ratingBadgeHtml(rating) {
+  if (!rating || !rating.total) {
+    return `<span class="badge badge-gray rating-badge" title="这位卖家还没有收到评价">暂无评价</span>`;
+  }
+  const level = rating.level || 'fair';
+  const hint = `${rating.level_hint || ''}（好评 ${rating.good} / 共 ${rating.total} 条，平均 ${rating.avg} 星）`;
+  return `<span class="badge rating-badge rating-${esc(level)}" title="${esc(hint)}">`
+    + `好评率 ${rating.rate}% · ${esc(rating.level_text)}</span>`;
+}
+
 /* ------------------------------------------------------------------ 状态块 */
 export const loadingHtml = (text = '加载中…') =>
   `<div class="loading"><div class="spinner"></div>${esc(text)}</div>`;

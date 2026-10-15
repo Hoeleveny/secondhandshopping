@@ -8,7 +8,7 @@
 import { api, qs } from '../api.js';
 import { ensureCategories } from '../data.js';
 import { bindProductCards, productCardHtml } from '../components.js';
-import { avatarHtml, emptyHtml, esc, loadingHtml, renderPagination } from '../ui.js';
+import { avatarHtml, emptyHtml, esc, loadingHtml, ratingBadgeHtml, renderPagination } from '../ui.js';
 
 export default {
   async render(root, ctx) {
@@ -64,7 +64,7 @@ export default {
         <div class="seller-head">
           <div class="seller-avatar">${avatarHtml(seller, 72, 'seller-avatar')}</div>
           <div class="seller-main">
-            <div class="seller-name">${esc(seller.nickname)}</div>
+            <div class="seller-name"><span class="seller-nick">${esc(seller.nickname)}</span>${ratingBadgeHtml(seller.rating)}</div>
             ${bio}
             <div class="seller-stats muted small">
               <span>在售 <b>${counts.on_sale ?? 0}</b> 件</span>

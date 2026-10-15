@@ -1274,6 +1274,96 @@ def main() -> int:
           ((r.get("data") or {}).get("seller") or {}).get("bio") == (original_bio or None),
           f"当前={((r.get('data') or {}).get('seller') or {}).get('bio')!r}")
 
+    # ---------------- 需求③：商家好评率 ----------------
+    section("需求③ 商家好评率与分级")
+
+    def _rating_of(uid):
+        _s, rr = call("GET", f"/api/sellers/{uid}")
+        return ((rr.get("data") or {}).get("seller") or {}).get("rating") or {}
+
+    buyer_uid = _my_id
+
+    check("卖家主页返回好评率字段（条数/好评数/平均分/档位）",
+          all(k in _rating_of(sid) for k in
+              ("total", "good", "bad", "rate", "avg", "level", "level_text", "level_hint")),
+          str(_rating_of(sid)))
+    # 用一个「从来没卖过东西」的账号验证「暂无评价」形态（smoke_buyer 只买不卖）。
+    # 不拿 seller1 断言 0 条——本脚本更早的段落已经给他造过评价了，基线不是 0。
+    _sb = (call("GET", "/api/auth/me", token=token)[1].get("data") or {}).get("user") or {}
+    no_review = _rating_of(_sb["id"])
+    check("没有被买家评过的卖家显示「暂无评价」且不参与分级",
+          no_review.get("total") == 0 and no_review.get("level") is None
+          and no_review.get("rate") is None
+          and no_review.get("level_text") == "暂无评价",
+          f"id={_sb['id']} -> {no_review}")
+
+    _st, r = call("GET", "/api/products/1")
+    check("商品详情页也带出卖家好评率", "seller_rating" in (r.get("data") or {}),
+          str(list(r.get("data") or {}))[:200])
+    _st, r = call("GET", "/api/auth/me", token=seller_token)
+    check("/api/auth/me 带出好评率（供个人资料页显示）",
+          "rating" in ((r.get("data") or {}).get("user") or {}),
+          str(list((r.get("data") or {}).get("user") or {}))[:200])
+
+    # 走一遍真实交易：seller1 发布 → buyer1 下单 → 完成 → 双方互评
+    before_seller = _rating_of(sid)
+    _st, r = call("POST", "/api/products", token=seller_token,
+                  body={"name": "冒烟-好评率好评单", "price": 40.0, "category_id": 1,
+                        "subcategory_id": 1, "condition": "九成新",
+                        "description": "好评率测试", "default_place_id": 2, "images": []})
+    rate_p1 = (r.get("data") or {})["id"]
+    _st, r = call("POST", "/api/orders", token=buyer1,
+                  body={"product_id": rate_p1, "meet_place_id": 2})
+    rate_o1 = (r.get("data") or {})["id"]
+    call("PATCH", f"/api/orders/{rate_o1}/complete", token=buyer1)
+    _st, r = call("POST", "/api/reviews", token=buyer1,
+                  body={"order_id": rate_o1, "rating": 5, "content": "冒烟测试：好评"})
+    check("买家可以给卖家打 5 星好评", r.get("code") == 0, str(r)[:150])
+
+    after_seller = _rating_of(sid)
+    check("买家给卖家的评价计入该卖家的好评率（+1 条）",
+          after_seller.get("total") == before_seller.get("total", 0) + 1,
+          f"{before_seller.get('total')} -> {after_seller.get('total')}")
+    check("好评率与平均分等于按评价实时算出的值",
+          after_seller.get("rate") == round(after_seller["good"] * 100 / after_seller["total"], 1)
+          and after_seller.get("bad") == after_seller["total"] - after_seller["good"],
+          str(after_seller))
+
+    # 卖家回评买家：这条属于「卖家评买家」，绝不能算进买家的商家好评率
+    b1_before = _rating_of(buyer_uid).get("total", 0)
+    _st, r = call("POST", "/api/reviews", token=seller_token,
+                  body={"order_id": rate_o1, "rating": 5, "content": "冒烟测试：回评买家"})
+    check("卖家可以回评买家（双向互评）", r.get("code") == 0, str(r)[:150])
+    b1_after = _rating_of(buyer_uid).get("total", 0)
+    check("卖家回评买家后，买家的「商家好评率」条数不变（方向过滤正确）",
+          b1_after == b1_before, f"买家 {b1_before} -> {b1_after}")
+
+    # 再来一单差评，验证档位会按约定阈值变化（不断言绝对条数，避免依赖基线）
+    _st, r = call("POST", "/api/products", token=seller_token,
+                  body={"name": "冒烟-好评率差评单", "price": 41.0, "category_id": 1,
+                        "subcategory_id": 1, "condition": "九成新",
+                        "description": "好评率测试", "default_place_id": 2, "images": []})
+    rate_p2 = (r.get("data") or {})["id"]
+    _st, r = call("POST", "/api/orders", token=buyer1,
+                  body={"product_id": rate_p2, "meet_place_id": 2})
+    rate_o2 = (r.get("data") or {})["id"]
+    call("PATCH", f"/api/orders/{rate_o2}/complete", token=buyer1)
+    call("POST", "/api/reviews", token=buyer1,
+         body={"order_id": rate_o2, "rating": 2, "content": "冒烟测试：差评"})
+
+    final_seller = _rating_of(sid)
+    check("新增的差评被算进去（好评数不变、差评数 +1）",
+          final_seller.get("bad") == after_seller.get("bad", 0) + 1
+          and final_seller.get("good") == after_seller.get("good", 0),
+          f"{after_seller.get('good')}/{after_seller.get('bad')} -> "
+          f"{final_seller.get('good')}/{final_seller.get('bad')}")
+    rate = final_seller.get("rate")
+    expected = ("优秀" if rate >= 95 else "良好" if rate >= 85
+                else "一般" if rate >= 70 else "待改进")
+    check("档位严格按约定阈值划分（≥95 优秀 / ≥85 良好 / ≥70 一般 / <70 待改进）",
+          final_seller.get("level_text") == expected,
+          f"好评率 {rate}% -> {final_seller.get('level_text')}（应为 {expected}）")
+
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 

@@ -17,6 +17,12 @@ export default {
     // 待提交的头像（null = 没有改动）
     let pendingAvatar = null;
 
+    // 需求③：用「好评率 + 分级」取代信用分显示（credit 字段保留在库里、不参与计算）
+    const rating = user.rating || {};
+    const ratingText = rating.total
+      ? `好评率 ${rating.rate}% · ${rating.level_text}（好评 ${rating.good} / 共 ${rating.total} 条，平均 ${rating.avg} 星）`
+      : '暂无评价（完成交易、收到买家评价后显示）';
+
     root.innerHTML = `
       <div class="page-head">
         <h1>个人资料</h1>
@@ -67,8 +73,12 @@ export default {
             <input class="input" value="${user.role === 'admin' ? '管理员' : (user.role === 'seller' ? '卖家（可切换买家视角）' : '买家（可切换卖家视角）')}" disabled>
           </div>
           <div class="form-row">
-            <label>信用分</label>
-            <input class="input" value="${user.credit ?? '-'}" disabled>
+            <label>商家好评率</label>
+            <input class="input" id="pf-rating" value="${esc(ratingText)}" disabled>
+            <div class="hint">
+              好评＝4~5 星；<b>只统计买家对你的评价</b>（你给买家的评价不计入商家信誉）。
+              分级：≥95% 优秀 / 85% 良好 / 70% 一般 / 低于 70% 待改进
+            </div>
           </div>
           <div class="form-row">
             <label>注册时间</label>
