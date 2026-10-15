@@ -49,14 +49,17 @@ export function orderCardHtml(order, side = 'buyer') {
     if (side === 'buyer') {
       ops.push(`<button class="btn btn-primary btn-sm" data-act="complete" data-id="${order.id}">确认完成</button>`);
       ops.push(`<button class="btn btn-danger btn-sm" data-act="cancel" data-id="${order.id}">取消订单</button>`);
+    } else {
+      // 需求⑥：卖家也能确认完成（线下交付后任一方确认都合理；取消仍只给买家）
+      ops.push(`<button class="btn btn-primary btn-sm" data-act="complete" data-id="${order.id}">确认完成</button>`);
     }
     ops.push(`<button class="btn btn-sm" data-act="map" data-id="${order.id}">📍 查看自提位置</button>`);
   }
   if (order.status === 'done') {
     ops.push(`<button class="btn btn-sm" data-act="review" data-id="${order.id}">⭐ 评价</button>`);
   }
-  // 功能④：买家可以删掉自己的订单记录（待完成的不行，需先完成或取消）
-  if (side === 'buyer' && order.status !== 'pending') {
+  // 功能④ / 需求⑥：买卖双方各自可以删掉自己那一侧的订单记录（待完成的不行）
+  if (order.status !== 'pending') {
     ops.push(`<button class="btn btn-danger btn-sm" data-act="del-order" data-id="${order.id}">删除记录</button>`);
   }
   ops.push(`<button class="btn btn-ghost btn-sm" data-act="product" data-id="${order.product_id}">查看商品</button>`);

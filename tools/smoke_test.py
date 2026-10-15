@@ -408,8 +408,9 @@ def main() -> int:
     status, res = call("GET", f"/api/orders/{order_id}/map", token=buyer1)
     check("非订单双方看不到该订单", res.get("code") != 0, str(res)[:150])
 
-    status, res = call("PATCH", f"/api/orders/{order_id}/complete", token=seller_token)
-    check("卖家不能替买家确认完成", res.get("code") != 0, str(res)[:150])
+    # 需求⑥ 起权限放宽：交易双方都可以确认完成（原来只允许买家）
+    status, res = call("PATCH", f"/api/orders/{order_id}/complete", token=buyer1)
+    check("与订单无关的人不能确认完成", res.get("code") != 0, str(res)[:150])
 
     status, res = call("PATCH", f"/api/orders/{order_id}/complete", token=token)
     check("买家确认完成，订单变「已完成」",
@@ -916,8 +917,9 @@ def main() -> int:
     check("「待完成」订单不能删除记录", res.get("code") != 0, str(res)[:180])
 
     call("PATCH", f"/api/orders/{order['id']}/complete", token=token)
-    status, res = call("DELETE", f"/api/orders/{order['id']}/record", token=seller_token)
-    check("卖家不能删买家的订单记录", res.get("code") != 0, str(res)[:150])
+    # 需求⑥ 起：卖家也能删，但删的是自己那一侧
+    status, res = call("DELETE", f"/api/orders/{order['id']}/record", token=buyer2)
+    check("与订单无关的人不能删订单记录", res.get("code") != 0, str(res)[:150])
 
     status, res = call("DELETE", f"/api/orders/{order['id']}/record", token=token)
     check("买家删除自己的订单记录成功", res.get("code") == 0, str(res)[:150])
@@ -928,7 +930,8 @@ def main() -> int:
 
     status, res = call("GET", "/api/orders/sold?page_size=50", token=seller_token)
     ids = [o["id"] for o in (res.get("data") or {}).get("list", [])]
-    check("卖家「卖出订单」仍然保留这条记录", order["id"] in ids, str(ids)[:120])
+    check("买家删自己那侧后，卖家「卖出订单」仍然保留这条记录",
+          order["id"] in ids, str(ids)[:120])
 
     status, res = call("DELETE", f"/api/orders/{order['id']}/record", token=token)
     check("同一条订单不能重复删除记录", res.get("code") != 0, str(res)[:150])
@@ -1656,6 +1659,60 @@ def main() -> int:
           bool(_d.get("list")) and all(x["action"] == "report_handle" for x in _d["list"])
           and "广告刷屏" in (_d["list"][0].get("summary") or ""),
           (_d.get("list") or [{}])[0].get("summary", "")[:120])
+
+    # ---------------- 需求⑥：卖家侧的交易收尾（确认完成 / 删除记录）----------------
+    section("需求⑥ 卖家侧的交易收尾")
+
+    def _ids_of(path, tk):
+        _s, rr = call("GET", path, token=tk)
+        return [o["id"] for o in (rr.get("data") or {}).get("list") or []]
+
+    def _trade(name, price):
+        _s, rr = call("POST", "/api/products", token=seller_token,
+                      body={"name": name, "price": price, "category_id": 1,
+                            "subcategory_id": 1, "condition": "九成新",
+                            "description": "卖家收尾测试", "default_place_id": 2, "images": []})
+        _pid = (rr.get("data") or {})["id"]
+        _s, rr = call("POST", "/api/orders", token=token,
+                      body={"product_id": _pid, "meet_place_id": 2})
+        return _pid, (rr.get("data") or {})["id"]
+
+    _sp, _so = _trade("冒烟-卖家收尾商品", 22.0)
+    _st, r = call("PATCH", f"/api/orders/{_so}/complete", token=seller_token)
+    check("卖家也能确认交易完成（原来只有买家可以）", r.get("code") == 0, str(r)[:150])
+    _st, r = call("GET", f"/api/orders/{_so}", token=seller_token)
+    check("卖家确认后订单变为已完成", (r.get("data") or {}).get("status") == "done", str(r)[:120])
+
+    _st, r = call("GET", "/api/products/mine?status=sold&page_size=50", token=seller_token)
+    _sold = next((p for p in (r.get("data") or {}).get("list") or [] if p["id"] == _sp), None)
+    check("「我的商品」里已售商品带出订单号与订单状态（供直接收尾）",
+          _sold is not None and _sold.get("order_id") == _so
+          and _sold.get("order_status") == "done", str(_sold)[:200])
+
+    _st, r = call("DELETE", f"/api/orders/{_so}/record", token=seller_token)
+    check("卖家可以删除卖出记录", r.get("code") == 0, str(r)[:150])
+    check("删除后不再出现在卖家的「卖出订单」里",
+          _so not in _ids_of("/api/orders/sold?page_size=50", seller_token), "")
+    check("买家那侧完全不受影响（仍能看到这笔订单）",
+          _so in _ids_of("/api/orders/mine?page_size=50", token), "")
+    check("管理员仍能看到（只对卖家隐藏）",
+          _so in _ids_of("/api/admin/orders?status=all&page_size=200", admin_token), "")
+    _st, r = call("DELETE", f"/api/orders/{_so}/record", token=seller_token)
+    check("重复删除同一笔卖出记录被拒", r.get("code") != 0, str(r)[:120])
+    _st, r = call("DELETE", f"/api/orders/{_so}/record", token=buyer2)
+    check("与这笔交易无关的用户不能删（403）", r.get("code") != 0, str(r)[:120])
+
+    _bp, _bo = _trade("冒烟-买家收尾商品", 23.0)
+    _st, r = call("PATCH", f"/api/orders/{_bo}/complete", token=token)
+    check("买家仍能确认完成（原有行为不受影响）", r.get("code") == 0, str(r)[:150])
+    _st, r = call("DELETE", f"/api/orders/{_bo}/record", token=token)
+    check("买家仍能删除自己的订单记录", r.get("code") == 0, str(r)[:150])
+    check("买家删掉后自己看不到，但卖家仍能看到",
+          _bo not in _ids_of("/api/orders/mine?page_size=50", token)
+          and _bo in _ids_of("/api/orders/sold?page_size=50", seller_token), "")
+    _st, r = call("DELETE", f"/api/orders/{_bo}/record", token=seller_token)
+    check("卖家删的是自己那一侧，不报错也不影响买家侧数据",
+          r.get("code") == 0, str(r)[:150])
 
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()

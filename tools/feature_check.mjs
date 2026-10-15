@@ -2194,6 +2194,110 @@ async function feature20(cdp) {
   check('普通入口的返回目标仍是交流广场', true, '');
 }
 
+/* ================================================================ 功能㉑ 卖家侧交易收尾（需求⑥） */
+async function feature21(cdp) {
+  console.log('\n===== 功能㉑ 卖家侧的交易收尾按钮（需求⑥）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+
+  const product = (await api('POST', '/api/products', {
+    token: sellerToken,
+    body: { name: '自动化测试：卖家收尾', price: 31, category_id: 1, subcategory_id: 1,
+            condition: '九成新', description: '卖家收尾用', default_place_id: 2, images: [] },
+  })).data;
+  const order = (await api('POST', '/api/orders', {
+    token: buyerToken, body: { product_id: product.id, meet_place_id: 2 },
+  })).data;
+  check('已备好一笔进行中的交易', order.status === 'pending', JSON.stringify(order.id));
+
+  const clickCardAct = (act) => cdp.eval(`
+    (() => {
+      const card = [...document.querySelectorAll('#list-area .card')]
+        .find(c => c.innerText.includes('自动化测试：卖家收尾'));
+      if (!card) return false;
+      const btn = card.querySelector('[data-act="${act}"]');
+      if (!btn) return false;
+      btn.click();
+      return true;
+    })()`);
+
+  await cdp.loginAs('seller1', '123456', 'seller');
+  await cdp.go('/sold');
+  await waitFor(cdp, `document.querySelectorAll('#list-area .card').length > 0`);
+
+  const sold = await cdp.eval(`
+    (() => {
+      const card = [...document.querySelectorAll('#list-area .card')]
+        .find(c => c.innerText.includes('自动化测试：卖家收尾'));
+      return card ? [...card.querySelectorAll('[data-act]')].map(b => b.innerText.trim()) : [];
+    })()`);
+  check('卖家「卖出订单」里，进行中的交易有「确认完成」按钮',
+    sold.includes('确认完成'), JSON.stringify(sold));
+  check('卖家侧不提供「取消订单」（取消仍只给买家）',
+    !sold.includes('取消订单'), JSON.stringify(sold));
+
+  // ---- 点确认完成：先弹确认框，取消则不变 ----
+  await clickCardAct('complete');
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-cancel]')`);
+  await cdp.eval(`document.querySelector('.modal-mask [data-cancel]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  const stillPending = (await api('GET', `/api/orders/${order.id}`, { token: buyerToken })).data.status;
+  check('取消确认时订单仍是「待完成」（数据不变）', stillPending === 'pending', stillPending);
+
+  // ---- 确认后变已完成 ----
+  await clickCardAct('complete');
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  await sleep(1300);
+  const done = (await api('GET', `/api/orders/${order.id}`, { token: buyerToken })).data.status;
+  check('卖家确认后订单变为「已完成」', done === 'done', done);
+
+  // ---- 已完成 → 出现「删除记录」 ----
+  await cdp.go('/sold');
+  await waitFor(cdp, `document.querySelectorAll('#list-area .card').length > 0`);
+  const afterDone = await cdp.eval(`
+    (() => {
+      const card = [...document.querySelectorAll('#list-area .card')]
+        .find(c => c.innerText.includes('自动化测试：卖家收尾'));
+      return card ? [...card.querySelectorAll('[data-act]')].map(b => b.innerText.trim()) : [];
+    })()`);
+  check('已完成的卖出记录出现「删除记录」', afterDone.includes('删除记录'), JSON.stringify(afterDone));
+
+  // ---- 「我的商品」的已售行也有收尾按钮 ----
+  await cdp.go('/my-products?status=sold');
+  await waitFor(cdp, `document.querySelectorAll('#list-area tbody tr').length > 0`);
+  const prodOps = await cdp.eval(`
+    (() => {
+      const row = [...document.querySelectorAll('#list-area tbody tr')]
+        .find(r => r.innerText.includes('自动化测试：卖家收尾'));
+      return row ? [...row.querySelectorAll('.ops button')].map(b => b.innerText.trim()) : [];
+    })()`);
+  check('「我的商品」的已售行出现交易收尾按钮（删除订单记录）',
+    prodOps.includes('删除订单记录'), JSON.stringify(prodOps));
+  await cdp.shot(path.join(SHOT_DIR, 'f21-seller-trade-ops.png'));
+
+  await cdp.eval(`
+    (() => {
+      const row = [...document.querySelectorAll('#list-area tbody tr')]
+        .find(r => r.innerText.includes('自动化测试：卖家收尾'));
+      row.querySelector('[data-del-order]').click();
+    })()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  await sleep(1300);
+
+  const soldIds = (await api('GET', '/api/orders/sold?page_size=50',
+    { token: sellerToken })).data.list.map(o => o.id);
+  check('卖家删掉卖出记录后不再出现在卖出订单里（只对卖家隐藏）',
+    !soldIds.includes(order.id), `共 ${soldIds.length} 笔`);
+  const buyerIds = (await api('GET', '/api/orders/mine?page_size=50',
+    { token: buyerToken })).data.list.map(o => o.id);
+  check('买家那侧仍然能看到这笔订单', buyerIds.includes(order.id), `共 ${buyerIds.length} 笔`);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -2216,6 +2320,7 @@ const GROUPS = {
   18: { title: '动态监控多条件筛选（需求③）', fn: feature18 },
   19: { title: '举报填写理由 + 私信反馈（需求④）', fn: feature19 },
   20: { title: '举报审核进详情后原路返回（需求⑤）', fn: feature20 },
+  21: { title: '卖家侧交易收尾（需求⑥）', fn: feature21 },
 };
 
 async function main() {

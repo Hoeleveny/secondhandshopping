@@ -93,6 +93,13 @@ export default {
                       <button class="btn btn-sm" data-edit="${p.id}">编辑</button>
                       ${p.status === 'on_sale' ? `<button class="btn btn-sm" data-off="${p.id}">下架</button>` : ''}
                       ${p.status === 'off_shelf' ? `<button class="btn btn-sm" data-on="${p.id}">重新上架</button>` : ''}
+                      ${p.status === 'sold' && p.order_id ? (
+                        p.order_status === 'pending'
+                          ? `<button class="btn btn-primary btn-sm" data-finish="${p.order_id}">确认完成</button>`
+                          : (p.order_seller_deleted
+                              ? `<span class="muted small">卖出记录已删除</span>`
+                              : `<button class="btn btn-sm" data-del-order="${p.order_id}">删除订单记录</button>`)
+                      ) : ''}
                       ${p.status !== 'deleted' ? `<button class="btn btn-danger btn-sm" data-del="${p.id}">删除</button>` : ''}
                       ${p.status === 'deleted' ? `<button class="btn btn-danger btn-sm" data-record="${p.id}">删除记录</button>` : ''}
                     </div>
@@ -114,6 +121,11 @@ export default {
         el.addEventListener('click', () => removeProduct(el.dataset.del)));
       listArea.querySelectorAll('[data-record]').forEach(el =>
         el.addEventListener('click', () => removeRecord(el.dataset.record)));
+      // 需求⑥：已售商品也能直接收尾交易
+      listArea.querySelectorAll('[data-finish]').forEach(el =>
+        el.addEventListener('click', () => finishOrder(el.dataset.finish)));
+      listArea.querySelectorAll('[data-del-order]').forEach(el =>
+        el.addEventListener('click', () => deleteOrderRecord(el.dataset.delOrder)));
 
       renderPagination(pager, {
         page: data.page,
@@ -123,8 +135,35 @@ export default {
       });
     }
 
-    async function changeStatus(id, target) {
-      const isOff = target === 'off_shelf';
+    // 需求⑥：卖家在「我的商品」里直接收尾交易
+    async function finishOrder(orderId) {
+      const sure = await confirmDialog({
+        title: '确认这笔交易已完成？',
+        message: '确认后订单变为「已完成」，双方都可以评价。线下交付完成后，买卖任一方确认都可以。',
+        okText: '确认完成',
+      });
+      if (!sure) return;
+      try {
+        await api.patch(`/api/orders/${orderId}/complete`);
+        toast('交易已完成，别忘了评价买家');
+        load();
+      } catch (err) { toast(err.message, 'error'); }
+    }
+
+    async function deleteOrderRecord(orderId) {
+      const sure = await confirmDialog({
+        title: '删除这条卖出记录？', danger: true, okText: '删除记录',
+        message: '只从你的「卖出订单」里移除，买家那边不受影响；交易与评价数据都保留。',
+      });
+      if (!sure) return;
+      try {
+        await api.del(`/api/orders/${orderId}/record`);
+        toast('卖出记录已删除（买家侧不受影响）');
+        load();
+      } catch (err) { toast(err.message, 'error'); }
+    }
+
+    async function changeStatus(id, target) {      const isOff = target === 'off_shelf';
       const sure = await confirmDialog({
         title: isOff ? '确认下架这件商品？' : '确认重新上架？',
         message: isOff ? '下架后买家搜索不到，你自己仍然可见。' : '重新上架后买家可以再次购买。',

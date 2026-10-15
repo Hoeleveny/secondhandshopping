@@ -287,6 +287,8 @@ class Order(db.Model):
     finished_at = db.Column(db.DateTime)
     # 功能④：买家是否已删除这条订单记录（仅买家侧隐藏，卖家与统计不受影响）
     buyer_deleted = db.Column(db.Boolean, nullable=False, default=False)
+    # 需求⑥：卖家侧的「删除记录」也只对卖家隐藏，与 buyer_deleted 对称
+    seller_deleted = db.Column(db.Boolean, nullable=False, default=False)
 
     product = db.relationship("Product")
     buyer = db.relationship("User", foreign_keys=[buyer_id])

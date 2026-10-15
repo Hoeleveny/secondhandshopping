@@ -203,6 +203,7 @@ CREATE TABLE `orders` (
   `created_at`       DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `finished_at`      DATETIME        NULL COMMENT '完成时间',
   `buyer_deleted`    TINYINT(1)      NOT NULL DEFAULT 0 COMMENT '买家是否已删除该订单记录（仅买家侧隐藏，功能④）',
+  `seller_deleted`   TINYINT(1)      NOT NULL DEFAULT 0 COMMENT '卖家是否已删除该订单记录（仅卖家侧隐藏，需求⑥，迁移 010）',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_orders_order_no` (`order_no`),
   KEY `idx_orders_buyer` (`buyer_id`, `status`),

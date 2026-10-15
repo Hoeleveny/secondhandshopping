@@ -155,6 +155,22 @@ def my_products():
     total = q.count()
     items = q.order_by(Product.created_at.desc()).offset((page - 1) * size).limit(size).all()
 
+    # 需求⑥：已售商品要能在「我的商品」里直接收尾交易，所以把对应订单一并带出去
+    # （只针对已售商品查，列表不大；不做进 to_dict 是为了避免所有商品列表都跟着 N+1）
+    payload = []
+    for product in items:
+        data = product.to_dict()
+        if product.status == PRODUCT_SOLD:
+            order = (Order.query.filter_by(product_id=product.id)
+                     .order_by(Order.created_at.desc()).first())
+            if order is not None:
+                data["order_id"] = order.id
+                data["order_no"] = order.order_no
+                data["order_status"] = order.status
+                data["order_status_text"] = order.STATUS_TEXT.get(order.status, order.status)
+                data["order_seller_deleted"] = bool(order.seller_deleted)
+        payload.append(data)
+
     counts = {
         "all": Product.query.filter(Product.seller_id == user.id,
                                     Product.status != PRODUCT_DELETED).count(),
@@ -163,7 +179,7 @@ def my_products():
         PRODUCT_OFF_SHELF: Product.query.filter_by(seller_id=user.id, status=PRODUCT_OFF_SHELF).count(),
         PRODUCT_DELETED: Product.query.filter_by(seller_id=user.id, status=PRODUCT_DELETED).count(),
     }
-    return ok({"list": [p.to_dict() for p in items], "total": total,
+    return ok({"list": payload, "total": total,
                "page": page, "page_size": size, "counts": counts})
 
 

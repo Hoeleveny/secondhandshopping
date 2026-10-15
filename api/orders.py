@@ -155,17 +155,19 @@ def sold_orders():
     if status not in ("all",) + STATUSES:
         return fail("状态取值不合法")
 
-    q = Order.query.filter(Order.seller_id == user.id)
+    # 需求⑥：卖家侧删掉的记录也不再显示（只影响卖家侧，买家与管理员照常可见）
+    visible = (Order.seller_id == user.id, Order.seller_deleted.is_(False))
+    q = Order.query.filter(*visible)
     if status != "all":
         q = q.filter(Order.status == status)
     total = q.count()
     items = q.order_by(Order.created_at.desc()).offset((page - 1) * size).limit(size).all()
 
     counts = {
-        "all": Order.query.filter_by(seller_id=user.id).count(),
-        ORDER_PENDING: Order.query.filter_by(seller_id=user.id, status=ORDER_PENDING).count(),
-        ORDER_DONE: Order.query.filter_by(seller_id=user.id, status=ORDER_DONE).count(),
-        ORDER_CANCELED: Order.query.filter_by(seller_id=user.id, status=ORDER_CANCELED).count(),
+        "all": Order.query.filter(*visible).count(),
+        ORDER_PENDING: Order.query.filter(*visible, Order.status == ORDER_PENDING).count(),
+        ORDER_DONE: Order.query.filter(*visible, Order.status == ORDER_DONE).count(),
+        ORDER_CANCELED: Order.query.filter(*visible, Order.status == ORDER_CANCELED).count(),
     }
     return ok({"list": [o.to_dict(user.id) for o in items], "total": total,
                "page": page, "page_size": size, "counts": counts})
@@ -195,8 +197,8 @@ def complete_order(oid: int):
         return fail(error, 403 if "无权" in error else 404)
 
     user = current_user()
-    if order.buyer_id != user.id and user.role != ROLE_ADMIN:
-        return fail("只有买家可以确认完成", 403)
+    if order.buyer_id != user.id and order.seller_id != user.id and user.role != ROLE_ADMIN:
+        return fail("只有交易双方可以确认完成", 403)
     if order.status != ORDER_PENDING:
         return fail("只有「待完成」的订单可以确认完成", 409)
 
@@ -262,19 +264,25 @@ def delete_order_record(oid: int):
         return fail(error, 403 if "无权" in error else 404)
 
     user = current_user()
-    if order.buyer_id != user.id and user.role != ROLE_ADMIN:
-        return fail("只有买家可以删除自己的订单记录", 403)
+    if order.buyer_id != user.id and order.seller_id != user.id and user.role != ROLE_ADMIN:
+        return fail("只有交易双方可以删除自己的订单记录", 403)
     if order.status == ORDER_PENDING:
         return fail("「待完成」的订单不能删除记录，请先确认完成或取消订单", 409)
-    if order.buyer_deleted:
-        return fail("这条订单记录已经删除过了", 409)
-
-    order.buyer_deleted = True
+    # 需求⑥：买卖双方各自「只对自己隐藏」，互不影响
+    if user.id == order.seller_id:
+        if order.seller_deleted:
+            return fail("这条卖出记录已经删除过了", 409)
+        order.seller_deleted = True
+    else:
+        if order.buyer_deleted:
+            return fail("这条订单记录已经删除过了", 409)
+        order.buyer_deleted = True
     import audit
 
     audit.record("order_record_delete", "order", order.id,
                  f"删除订单记录 {order.order_no}"
-                 f"「{order.product.name if order.product else '商品已删除'}」（只对买家自己隐藏）")
+                 f"「{order.product.name if order.product else '商品已删除'}」"
+                 f"（只对{'卖家' if user.id == order.seller_id else '买家'}自己隐藏）")
     db.session.commit()
     return ok(msg="订单记录已删除（卖家侧记录不受影响）")
 
