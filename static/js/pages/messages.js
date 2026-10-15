@@ -4,14 +4,18 @@
    ========================================================================== */
 import { api } from '../api.js';
 import { store } from '../store.js';
-import { avatarHtml, emptyHtml, esc, fmtTime, loadingHtml, toast } from '../ui.js';
+import { avatarHtml, emptyHtml, esc, fmtTime, loadingHtml, ratingBadgeHtml, toast } from '../ui.js';
 
 let conversationsCache = [];
 let unreadTimer = null;
 
 async function renderMessages(root, ctx) {
   const startTo = ctx.query.to ? Number(ctx.query.to) : null;
+  // productId：「这条消息针对哪件商品」，发出去就清空（原有语义）
   let productId = ctx.query.product ? Number(ctx.query.product) : null;
+  // originProductId：需求④「返回原商品」用——买家是从哪个商品详情页点进来的。
+  // 从会话列表主动切到别的会话时清掉，避免对着不相干的会话显示"返回原商品"。
+  let originProductId = productId;
 
   let currentUid = null;
   let currentUser = null;
@@ -61,7 +65,11 @@ async function renderMessages(root, ctx) {
         </div>`;
     }).join('');
     convBox.querySelectorAll('[data-uid]').forEach(el =>
-      el.addEventListener('click', () => openChat(Number(el.dataset.uid))));
+      el.addEventListener('click', () => {
+        // 主动切会话：不再算「从某个商品详情页点进来的」
+        originProductId = null;
+        openChat(Number(el.dataset.uid));
+      }));
   }
 
   /* ---------------- 聊天窗口 ---------------- */
@@ -77,7 +85,9 @@ async function renderMessages(root, ctx) {
     currentUser = data.user;
     messages = data.list || [];
     productId = productId && messages.length === 0 ? productId : null;
-    history.replaceState(null, '', `#/messages?to=${uid}`);
+    // 地址里保留 product，刷新/回退后「返回原商品」还在
+    history.replaceState(null, '', `#/messages?to=${uid}`
+      + (originProductId ? `&product=${originProductId}` : ''));
     paintChat();
     paintConversations();
     refreshTopbarUnread();
@@ -90,8 +100,11 @@ async function renderMessages(root, ctx) {
           <div class="row" style="gap:10px">
             ${avatarHtml(currentUser, 32)}
             <b>${esc(currentUser?.nickname || '')}</b>
-            <span class="muted small">信用分 ${esc(String(currentUser?.credit ?? '-'))}</span>
-            <button class="btn btn-ghost btn-sm" data-go-product="${currentUser?.id || ''}"></button>
+            ${ratingBadgeHtml(currentUser?.rating)}
+            <button class="btn btn-ghost btn-sm" data-go-seller="${currentUser?.id || ''}">查看 TA 的商品</button>
+            ${originProductId
+              ? `<button class="btn btn-ghost btn-sm" data-go-origin="${originProductId}">返回原商品</button>`
+              : ''}
           </div>
           ${productId ? `<div class="hint">正在咨询商品 #${productId}</div>` : ''}
         </div>
@@ -124,10 +137,18 @@ async function renderMessages(root, ctx) {
         send();
       }
     });
-    const goProduct = chatBox.querySelector('[data-go-product]');
-    if (goProduct) {
-      goProduct.textContent = '查看 TA 的商品';
-      goProduct.addEventListener('click', () => { location.hash = '#/search'; });
+    // 需求④：「查看 TA 的商品」→ 卖家商品主页；「返回原商品」→ 买家原来浏览的那件商品
+    const goSeller = chatBox.querySelector('[data-go-seller]');
+    if (goSeller) {
+      goSeller.addEventListener('click', () => {
+        location.hash = `#/seller/${goSeller.dataset.goSeller}`;
+      });
+    }
+    const goOrigin = chatBox.querySelector('[data-go-origin]');
+    if (goOrigin) {
+      goOrigin.addEventListener('click', () => {
+        location.hash = `#/product/${goOrigin.dataset.goOrigin}`;
+      });
     }
   }
 

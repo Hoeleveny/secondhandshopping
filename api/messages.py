@@ -10,6 +10,7 @@ from sqlalchemy import and_, or_
 from api.common import current_user, fail, json_body, login_required, ok
 from extensions import db
 from models import Message, Product, User
+from rating import seller_rating
 
 bp = Blueprint("messages", __name__, url_prefix="/api")
 
@@ -123,7 +124,10 @@ def with_user(uid: int):
         .limit(300)
         .all()
     )
-    return ok({"user": other.to_dict(), "list": [m.to_dict() for m in rows]})
+    # 需求③：聊天窗口头部显示对方的好评率（取代原来的信用分展示）
+    other_data = other.to_dict()
+    other_data["rating"] = seller_rating(other.id)
+    return ok({"user": other_data, "list": [m.to_dict() for m in rows]})
 
 
 @bp.get("/messages/unread")

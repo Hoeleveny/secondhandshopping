@@ -1364,6 +1364,15 @@ def main() -> int:
           final_seller.get("level_text") == expected,
           f"好评率 {rate}% -> {final_seller.get('level_text')}（应为 {expected}）")
 
+    # ---------------- 需求④：私信页的按钮与来源商品 ----------------
+    section("需求④ 私信页按钮与来源商品")
+
+    _st, r = call("GET", f"/api/messages/with/{sid}", token=buyer1)
+    peer = (r.get("data") or {}).get("user") or {}
+    check("私信接口带出对方的好评率（聊天头部显示用，不再显示信用分）",
+          "rating" in peer and "level_text" in (peer.get("rating") or {}),
+          str(peer.get("rating"))[:150])
+
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 

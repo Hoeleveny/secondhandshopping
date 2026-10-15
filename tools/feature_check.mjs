@@ -1531,6 +1531,83 @@ async function feature13(cdp) {
   await cdp.shot(path.join(SHOT_DIR, 'f13-rating-after.png'));
 }
 
+/* ================================================================ 功能⑭ 私信页两个按钮（需求④） */
+async function feature14(cdp) {
+  console.log('\n===== 功能⑭ 私信页「查看 TA 的商品 / 返回原商品」（需求④）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const sample = (await api('GET', '/api/products/mine?status=on_sale&page_size=1',
+    { token: sellerToken })).data.list[0];
+
+  // 先造一条消息，保证左侧会话列表里有这一条可点（内容带前缀，结束时清理）
+  await api('POST', '/api/messages', {
+    token: buyerToken,
+    body: { receiver_id: sample.seller_id, content: '自动化测试：私信页按钮' },
+  });
+
+  // ---- 1. 从商品详情页点「私信卖家」进来 ----
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go(`/product/${sample.id}`);
+  await waitFor(cdp, `!!document.querySelector('[data-act="msg"]')`);
+  await cdp.eval(`document.querySelector('[data-act="msg"]').click()`);
+  await waitFor(cdp, `location.hash.startsWith('#/messages')`);
+  await waitFor(cdp, `!!document.querySelector('[data-go-seller]')`);
+  const entry = await cdp.eval(`
+    (() => ({
+      hash: location.hash,
+      hasSellerBtn: !!document.querySelector('[data-go-seller]'),
+      hasOriginBtn: !!document.querySelector('[data-go-origin]'),
+      sellerBtnText: document.querySelector('[data-go-seller]')?.innerText.trim() || '',
+      originBtnText: document.querySelector('[data-go-origin]')?.innerText.trim() || '',
+      badge: document.querySelector('.chat-head .rating-badge')?.innerText.trim() || '',
+      hasCreditText: /信用分/.test(document.body.innerText),
+    }))()`);
+  check('从商品详情页私信卖家后，聊天头部出现「查看 TA 的商品」',
+    entry.hasSellerBtn && entry.sellerBtnText === '查看 TA 的商品', JSON.stringify(entry));
+  check('因为是从商品页进来的，所以同时出现「返回原商品」',
+    entry.hasOriginBtn && entry.originBtnText === '返回原商品', JSON.stringify(entry));
+  check('聊天头部显示对方好评率徽标，不再显示「信用分」',
+    entry.badge.length > 0 && !entry.hasCreditText, JSON.stringify(entry));
+  await cdp.shot(path.join(SHOT_DIR, 'f14-chat-buttons.png'));
+
+  // ---- 2. 「查看 TA 的商品」→ 卖家商品主页（过去是跳搜索页）----
+  await cdp.eval(`document.querySelector('[data-go-seller]').click()`);
+  await waitFor(cdp, `location.hash.startsWith('#/seller/')`);
+  const sellerHash = await cdp.eval(`location.hash`);
+  check('「查看 TA 的商品」跳到卖家商品主页（不再是搜索页）',
+    sellerHash === `#/seller/${sample.seller_id}`, sellerHash);
+
+  // ---- 3. 「返回原商品」→ 回到买家原来浏览的那件商品 ----
+  await cdp.go(`/messages?to=${sample.seller_id}&product=${sample.id}`);
+  await waitFor(cdp, `!!document.querySelector('[data-go-origin]')`);
+  await cdp.eval(`document.querySelector('[data-go-origin]').click()`);
+  await waitFor(cdp, `location.hash.startsWith('#/product/')`);
+  const backHash = await cdp.eval(`location.hash`);
+  check('「返回原商品」回到买家原来浏览的那件商品详情页（不是首页/搜索页）',
+    backHash.startsWith(`#/product/${sample.id}`), backHash);
+
+  // ---- 4. 不是从商品页进来的会话：不该出现「返回原商品」----
+  await cdp.go(`/messages?to=${sample.seller_id}`);
+  await waitFor(cdp, `!!document.querySelector('[data-go-seller]')`);
+  const noOrigin = await cdp.eval(`
+    (() => ({
+      hasOriginBtn: !!document.querySelector('[data-go-origin]'),
+      convItems: document.querySelectorAll('#conv-list [data-uid]').length,
+    }))()`);
+  check('直接进消息页（没有来源商品）时不显示「返回原商品」',
+    !noOrigin.hasOriginBtn, JSON.stringify(noOrigin));
+
+  // ---- 5. 从会话列表点别的会话后，来源商品也应清掉 ----
+  if (noOrigin.convItems > 0) {
+    await cdp.go(`/messages?to=${sample.seller_id}&product=${sample.id}`);
+    await waitFor(cdp, `!!document.querySelector('[data-go-origin]')`);
+    await cdp.eval(`document.querySelector('#conv-list [data-uid]').click()`);
+    await waitFor(cdp, `!document.querySelector('[data-go-origin]')`);
+    check('从会话列表主动切会话后，「返回原商品」消失（不再算从商品页进来）', true, '');
+  }
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -1546,6 +1623,7 @@ const GROUPS = {
   11: { title: '管理员交易监管（需求①）', fn: feature11 },
   12: { title: '卖家商品主页（需求②）', fn: feature12 },
   13: { title: '商家好评率（需求③）', fn: feature13 },
+  14: { title: '私信页两个按钮（需求④）', fn: feature14 },
 };
 
 async function main() {
