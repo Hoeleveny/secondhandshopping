@@ -61,6 +61,9 @@ STEPS: list[tuple[str, str]] = [
     ("测试账号的「我想要」",
      "DELETE FROM product_wants WHERE user_id IN "
      "(SELECT id FROM users WHERE username IN ('smoke_buyer','acc_buyer'))"),
+    ("操作日志（测试账号产生的，否则会刷屏管理后台的动态监控）",
+     "DELETE FROM operation_logs WHERE username LIKE 'smoke%' "
+     "OR username LIKE 'acc%' OR summary LIKE '冒烟%' OR summary LIKE '自动化测试%'"),
     ("测试账号",
      "DELETE FROM users WHERE username IN ('smoke_buyer','acc_buyer')"),
     ("清理临时表",

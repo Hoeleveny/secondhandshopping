@@ -1,6 +1,6 @@
 /* ==========================================================================
    M10 管理后台
-   四个页签：商品管理 / 举报审核 / 基础数据 / 数据管理（备份·恢复·重置）
+   五个页签：商品管理 / 交易管理 / 举报审核 / 基础数据 / 数据管理（备份·恢复·重置）
    ========================================================================== */
 import { api, qs } from '../api.js';
 import { ensureCategories, ensureMeta, ensurePlaces, invalidateCatalog } from '../data.js';
@@ -11,10 +11,21 @@ import {
 
 const TABS = [
   { key: 'products', label: '商品管理', icon: '📦' },
+  { key: 'trades', label: '交易管理', icon: '🧾' },
   { key: 'reports', label: '举报审核', icon: '🚩' },
   { key: 'base', label: '基础数据', icon: '🗂️' },
   { key: 'data', label: '数据管理', icon: '💾' },
 ];
+
+/* 交易管理的自动刷新定时器：切入其它页签或离开本页时必须停掉，否则会一直打接口 */
+let tradesTimer = null;
+
+function stopTradesTimer() {
+  if (tradesTimer) {
+    clearInterval(tradesTimer);
+    tradesTimer = null;
+  }
+}
 
 export default {
   async render(root, ctx) {
@@ -42,7 +53,9 @@ export default {
       }));
 
     function renderTab() {
+      stopTradesTimer();   // 切页签先停掉上一个页面的自动刷新
       if (tab === 'products') return renderProducts(panel);
+      if (tab === 'trades') return renderTrades(panel);
       if (tab === 'reports') return renderReports(panel);
       if (tab === 'base') return renderBaseData(panel);
       return renderDataManager(panel);
@@ -194,6 +207,265 @@ async function renderProducts(panel) {
   });
 
   await load();
+}
+
+/* ================================================================ 交易管理（需求①）
+   实时监管「多项交易并发」：进行中的交易按「挂得最久」排前面，每 5 秒自动刷新；
+   管理员可强制取消 / 标记完成（复用订单接口，动作会记进操作日志）。
+   下方「动态监控」是操作日志时间线——只靠 products.updated_at 看不出
+   "改了什么、是不是多人在同时改"，所以关键动作都留了痕。                */
+async function renderTrades(panel) {
+  let status = 'pending';
+  let keyword = '';
+  let page = 1;
+  let logAction = 'all';
+  let logPage = 1;
+
+  panel.innerHTML = `
+    <div class="grid grid-4 mb-16" id="td-stats">${loadingHtml()}</div>
+    <div class="card">
+      <div class="form-grid">
+        <div class="form-row">
+          <label>交易状态</label>
+          <select class="select" id="td-status">
+            <option value="pending">进行中（待完成）</option>
+            <option value="all">全部</option>
+            <option value="done">已完成</option>
+            <option value="canceled">已取消</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>关键词</label>
+          <input class="input" id="td-keyword" placeholder="订单号 / 商品名 / 编号 / 买卖家">
+        </div>
+        <div class="form-row">
+          <label>&nbsp;</label>
+          <button class="btn btn-primary btn-block" id="td-search">查询</button>
+        </div>
+      </div>
+      <div class="hint">进行中的交易按「挂得最久」排在最前；本页每 5 秒自动刷新一次</div>
+    </div>
+
+    <div class="card mt-16" id="td-list">${loadingHtml()}</div>
+    <div class="pagination" id="td-pager"></div>
+
+    <div class="card mt-16">
+      <div class="row-between mb-8">
+        <h3 style="margin:0">动态监控</h3>
+        <select class="select" id="lg-action" style="width:auto">
+          <option value="all">全部动作</option>
+        </select>
+      </div>
+      <div id="lg-list">${loadingHtml()}</div>
+      <div class="pagination" id="lg-pager"></div>
+    </div>`;
+
+  const statCard = (label, value, icon) => `
+    <div class="stat-card">
+      <span class="sc-icon">${icon}</span>
+      <div class="sc-label">${esc(label)}</div>
+      <div class="sc-value">${value ?? 0}</div>
+    </div>`;
+
+  const STATUS_BADGE = {
+    pending: ['badge badge-warn', '进行中'],
+    done: ['badge', '已完成'],
+    canceled: ['badge badge-gray', '已取消'],
+  };
+
+  function elapsedText(minutes) {
+    if (minutes == null) return '—';
+    if (minutes < 60) return `${minutes} 分钟`;
+    if (minutes < 60 * 24) return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
+    return `${Math.floor(minutes / 1440)} 天 ${Math.floor((minutes % 1440) / 60)} 小时`;
+  }
+
+  /* ---------------- 交易列表 ---------------- */
+  async function loadTrades(silent = false) {
+    const box = panel.querySelector('#td-list');
+    if (!box) return;
+    if (!silent) box.innerHTML = loadingHtml();
+    let data;
+    try {
+      data = await api.get(`/api/admin/orders${qs({ status, keyword, page, page_size: 15 })}`);
+    } catch (err) {
+      box.innerHTML = emptyHtml(`加载失败：${err.message}`, '😵');
+      return;
+    }
+
+    const stats = data.stats || {};
+    panel.querySelector('#td-stats').innerHTML = [
+      statCard('进行中交易', stats.pending, '⏳'),
+      statCard('涉及商家', stats.sellers_in_trade, '🏪'),
+      statCard('最长挂单', elapsedText(stats.longest_pending_minutes), '⏰'),
+      statCard('今日新增订单', stats.today_orders, '🆕'),
+    ].join('');
+
+    if (!data.list.length) {
+      box.innerHTML = emptyHtml(
+        status === 'pending' ? '当前没有进行中的交易' : '没有符合条件的交易', '🧾');
+      renderPagination(panel.querySelector('#td-pager'), { page: 1, pages: 1, total: 0, onGo: () => {} });
+      return;
+    }
+
+    box.innerHTML = `
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr><th>订单号</th><th>商品</th><th>买家</th><th>卖家</th>
+                <th class="text-right">金额</th><th>自提点</th><th>状态</th>
+                <th>已进行</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            ${data.list.map(o => {
+              const [cls, text] = STATUS_BADGE[o.status] || ['badge', o.status_text || o.status];
+              return `
+              <tr>
+                <td class="muted small">${esc(o.order_no)}</td>
+                <td>
+                  <span class="strong" data-open="${o.product_id}" style="cursor:pointer">${esc(o.product_name || '（商品已删除）')}</span>
+                  ${o.product_code ? `<div class="muted small" style="letter-spacing:.04em">${esc(o.product_code)}</div>` : ''}
+                </td>
+                <td>${esc(o.buyer_nickname || '')}</td>
+                <td>${esc(o.seller_nickname || '')}</td>
+                <td class="text-right price">${fmtPrice(o.price)}</td>
+                <td class="small">${esc(o.meet_place?.name || '未指定')}</td>
+                <td><span class="${cls}">${esc(text)}</span></td>
+                <td class="small">${o.status === 'pending' ? elapsedText(o.elapsed_minutes) : esc(fmtTime(o.finished_at || o.created_at))}</td>
+                <td>
+                  <div class="ops">
+                    ${o.status === 'pending' ? `
+                      <button class="btn btn-sm" data-finish="${o.id}">标记完成</button>
+                      <button class="btn btn-danger btn-sm" data-cancel="${o.id}">强制取消</button>` : '—'}
+                  </div>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>`;
+
+    renderPagination(panel.querySelector('#td-pager'), {
+      page: data.page,
+      pages: Math.max(1, Math.ceil(data.total / data.page_size)),
+      total: data.total,
+      onGo: (p) => { page = p; loadTrades(); },
+    });
+
+    box.querySelectorAll('[data-open]').forEach(el =>
+      el.addEventListener('click', () => { location.hash = `#/product/${el.dataset.open}`; }));
+
+    box.querySelectorAll('[data-finish]').forEach(btn =>
+      btn.addEventListener('click', async () => {
+        const sure = await confirmDialog({
+          title: '确认把这笔交易标记为已完成？', okText: '标记完成',
+          message: '用于买卖双方忘记点「确认完成」的情况。标记后商品保持已售，双方仍可评价。',
+        });
+        if (!sure) return;
+        try {
+          await api.patch(`/api/orders/${btn.dataset.finish}/complete`);
+          toast('已标记交易完成');
+          await loadTrades(true);
+          await loadLogs(true);
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      }));
+
+    box.querySelectorAll('[data-cancel]').forEach(btn =>
+      btn.addEventListener('click', async () => {
+        const sure = await confirmDialog({
+          title: '确认强制取消这笔交易？', danger: true, okText: '强制取消',
+          message: '取消后商品会恢复在售，买卖双方都会看到订单已取消。请先确认双方已协商一致。',
+        });
+        if (!sure) return;
+        try {
+          await api.patch(`/api/orders/${btn.dataset.cancel}/cancel`);
+          toast('已强制取消，商品恢复在售');
+          await loadTrades(true);
+          await loadLogs(true);
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      }));
+  }
+
+  /* ---------------- 动态监控（操作日志时间线）---------------- */
+  async function loadLogs(silent = false) {
+    const box = panel.querySelector('#lg-list');
+    if (!box) return;
+    if (!silent) box.innerHTML = loadingHtml();
+    let data;
+    try {
+      data = await api.get(`/api/admin/logs${qs({ action: logAction, page: logPage, page_size: 20 })}`);
+    } catch (err) {
+      box.innerHTML = emptyHtml(`加载失败：${err.message}`, '😵');
+      return;
+    }
+
+    const sel = panel.querySelector('#lg-action');
+    if (data.actions && sel.options.length - 1 !== data.actions.length) {
+      const current = sel.value;
+      sel.innerHTML = `<option value="all">全部动作</option>`
+        + data.actions.map(a => `<option value="${esc(a.action)}">${esc(a.text)}</option>`).join('');
+      sel.value = current;
+    }
+
+    if (!data.list.length) {
+      box.innerHTML = emptyHtml('还没有操作记录', '📋');
+      renderPagination(panel.querySelector('#lg-pager'), { page: 1, pages: 1, total: 0, onGo: () => {} });
+      return;
+    }
+
+    box.innerHTML = `
+      <div class="timeline">
+        ${data.list.map(log => `
+          <div class="tl-item">
+            <span class="tl-time muted small">${esc(fmtTime(log.created_at))}</span>
+            <span class="tl-who">${esc(log.nickname || log.username || '系统')}</span>
+            <span class="tl-action">${esc(log.action_text)}</span>
+            <span class="tl-summary muted">${esc(log.summary)}</span>
+          </div>`).join('')}
+      </div>`;
+
+    renderPagination(panel.querySelector('#lg-pager'), {
+      page: data.page,
+      pages: Math.max(1, Math.ceil(data.total / data.page_size)),
+      total: data.total,
+      onGo: (p) => { logPage = p; loadLogs(); },
+    });
+  }
+
+  /* ---------------- 交互绑定 ---------------- */
+  panel.querySelector('#td-status').addEventListener('change', (e) => {
+    status = e.target.value;
+    page = 1;
+    loadTrades();
+  });
+  panel.querySelector('#td-search').addEventListener('click', () => {
+    keyword = panel.querySelector('#td-keyword').value.trim();
+    page = 1;
+    loadTrades();
+  });
+  panel.querySelector('#td-keyword').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') panel.querySelector('#td-search').click();
+  });
+  panel.querySelector('#lg-action').addEventListener('change', (e) => {
+    logAction = e.target.value;
+    logPage = 1;
+    loadLogs();
+  });
+
+  await loadTrades();
+  await loadLogs();
+
+  // 每 5 秒刷新一次；离开本页（面板被卸载）就自动停掉
+  stopTradesTimer();
+  tradesTimer = setInterval(() => {
+    if (!panel.isConnected) { stopTradesTimer(); return; }
+    loadTrades(true);
+    loadLogs(true);
+  }, 5000);
 }
 
 /* ================================================================ 举报审核 */

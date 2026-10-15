@@ -57,6 +57,10 @@ def create_review():
         rating=rating, content=content or None,
     )
     db.session.add(review)
+    import audit
+
+    audit.record("review_create", "review", None,
+                 f"给订单 {order.order_no} 打了 {rating} 星评价")
     db.session.commit()
     return ok(review.to_dict(user.id), msg="评价已提交")
 

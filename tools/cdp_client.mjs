@@ -12,6 +12,28 @@ export const CHROME = process.env.CHROME_PATH
 
 export const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+/**
+ * 轮询等待页面条件成立，成立就立刻返回（比 `sleep(固定毫秒)` 稳得多）。
+ *
+ * 踩过的坑：管理后台是懒加载模块，首次进入要现取 admin.js，
+ * 固定等 1.6 秒时页面还没渲染，于是「页签不存在」「统计卡 0 张」全是假失败。
+ * 用法： await waitFor(cdp, `document.querySelectorAll('.x').length === 3`)
+ */
+export async function waitFor(cdp, expr, { timeout = 10000, step = 250 } = {}) {
+  const deadline = Date.now() + timeout;
+  let last;
+  while (Date.now() < deadline) {
+    try {
+      last = await cdp.eval(expr);
+    } catch {
+      last = undefined;
+    }
+    if (last) return last;
+    await sleep(step);
+  }
+  return last;
+}
+
 /* ------------------------------------------------------------------ 接口 */
 export async function api(method, url, { token, body, view } = {}) {
   const headers = {};

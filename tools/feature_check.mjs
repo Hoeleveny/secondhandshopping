@@ -14,7 +14,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import {
-  BASE, api, login, launchBrowser, createRecorder, sleep,
+  BASE, api, login, launchBrowser, createRecorder, sleep, waitFor,
 } from './cdp_client.mjs';
 
 const WORK = path.resolve('_build_tmp');
@@ -1190,6 +1190,113 @@ async function feature10(cdp) {
   check('测试商品已彻底清理', stillThere.code !== 0, `接口 code=${stillThere.code}`);
 }
 
+/* ================================================================ 功能⑪ 管理员交易监管（需求①） */
+async function feature11(cdp) {
+  console.log('\n===== 功能⑪ 管理员交易监管（需求①）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const adminToken = await login('admin', '123456', 'admin');
+
+  // 自己造一笔可取消的测试交易（名字带「自动化测试」前缀，结束时由清理脚本连同订单一起删掉），
+  // 这样验证「管理员干预」全程不碰用户自己的交易数据。
+  const created = await api('POST', '/api/products', {
+    token: sellerToken,
+    body: { name: '自动化测试：交易监管', price: 21, category_id: 1, subcategory_id: 1,
+            condition: '九成新', description: '管理员交易监管测试用', default_place_id: 2, images: [] },
+  });
+  const prod = created.data || {};
+  const order = (await api('POST', '/api/orders', {
+    token: buyerToken, body: { product_id: prod.id, meet_place_id: 2 },
+  })).data || {};
+  check('测试交易已就绪（商品已售 + 待完成订单）',
+    order.status === 'pending' && !!order.id, JSON.stringify({ id: order.id, status: order.status }));
+
+  // ---- 1. 页签与页面结构 ----
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=trades');
+  // 管理后台是懒加载模块，首次进入要现取 admin.js，别死等固定毫秒
+  await waitFor(cdp, `document.querySelectorAll('#td-stats .stat-card').length === 4`);
+  await waitFor(cdp, `document.querySelectorAll('#lg-list .tl-item').length > 0`);
+  const ui = await cdp.eval(`
+    (() => ({
+      hasTab: [...document.querySelectorAll('#tabs .tab')].some(t => t.innerText.includes('交易管理')),
+      stats: [...document.querySelectorAll('#td-stats .stat-card')].map(c => c.innerText.replace(/\\n/g, ' ').trim()),
+      rows: document.querySelectorAll('#td-list tbody tr').length,
+      text: document.querySelector('#td-list')?.innerText || '',
+      logItems: document.querySelectorAll('#lg-list .tl-item').length,
+    }))()`);
+  check('管理后台出现「交易管理」页签', ui.hasTab, JSON.stringify(ui.stats));
+  check('交易管理页顶部有 4 张总览卡（进行中/涉及商家/最长挂单/今日新增）',
+    ui.stats.length === 4, JSON.stringify(ui.stats));
+  check('进行中的交易列表能列出交易，且带商品编号',
+    ui.rows > 0 && /[A-Z0-9]{2}\d{2}-\d{4}-\d{6}-\d{5}/.test(ui.text), `rows=${ui.rows}`);
+  check('同页的「动态监控」时间线有内容', ui.logItems > 0, `共 ${ui.logItems} 条`);
+
+  await cdp.shot(path.join(SHOT_DIR, 'f11-admin-trades.png'));
+
+  // ---- 2. 自动刷新后仍然正常 ----
+  await sleep(6500);
+  const refreshed = await cdp.eval(`
+    (() => ({
+      rows: document.querySelectorAll('#td-list tbody tr').length,
+      logs: document.querySelectorAll('#lg-list .tl-item').length,
+    }))()`);
+  check('自动刷新（5 秒一轮）后页面仍正常渲染，没有刷没或报错',
+    refreshed.rows > 0 && refreshed.logs > 0, JSON.stringify(refreshed));
+
+  // ---- 3. 点「强制取消」先弹确认框；取消确认时数据不变 ----
+  const clickCancel = () => cdp.eval(`
+    (() => {
+      const row = [...document.querySelectorAll('#td-list tbody tr')]
+        .find(r => r.innerText.includes('自动化测试：交易监管'));
+      if (!row) return { ok: false };
+      row.querySelector('[data-cancel]').click();
+      return { ok: true };
+    })()`);
+  const c1 = await clickCancel();
+  const dlgReady = await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  const dlg = await cdp.eval(`
+    (() => {
+      const m = document.querySelector('.modal-mask');
+      return { shown: !!m, title: m?.querySelector('.modal-head')?.innerText || '' };
+    })()`);
+  check('点「强制取消」会先弹确认框', c1.ok && dlgReady && /强制取消/.test(dlg.title),
+    JSON.stringify(dlg));
+
+  // 确认框的取消按钮是 [data-cancel]（[data-close] 是表单弹窗 openModal 的属性，别混）
+  await cdp.eval(`document.querySelector('.modal-mask [data-cancel]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  const untouched = await api('GET', `/api/products/${prod.id}`, { token: sellerToken });
+  check('取消确认时交易数据不变（商品仍为已售）',
+    untouched.data?.status === 'sold', `商品状态=${untouched.data?.status}`);
+
+  // ---- 4. 确认后真的取消，并且留痕 ----
+  await clickCancel();
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  await waitFor(cdp, `/管理员强制取消交易/.test(document.querySelector('#lg-list')?.innerText || '')`);
+  await sleep(600);
+
+  const afterApi = await api('GET', `/api/products/${prod.id}`, { token: sellerToken });
+  check('确认后管理员强制取消生效，商品恢复在售',
+    afterApi.data?.status === 'on_sale', `商品状态=${afterApi.data?.status}`);
+
+  const logged = await cdp.eval(`
+    (() => {
+      const t = document.querySelector('#lg-list')?.innerText || '';
+      return { hasForce: /管理员强制取消交易/.test(t), head: t.slice(0, 140).replace(/\\n/g, ' | ') };
+    })()`);
+  check('动态监控里立刻出现「管理员强制取消交易」留痕', logged.hasForce, logged.head);
+
+  // ---- 5. 收尾核对：这笔交易不再算「进行中」（商品与订单由清理脚本删掉） ----
+  const stillPending = await api('GET', '/api/admin/orders?status=pending', { token: adminToken });
+  check('取消后该笔交易不再出现在「进行中」里',
+    !(stillPending.data?.list || []).some(o => o.id === order.id),
+    `仍有 ${stillPending.data?.total} 笔进行中`);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -1202,6 +1309,7 @@ const GROUPS = {
   8: { title: '站名回首页 / 菜单去掉首页', fn: feature8 },
   9: { title: '消息与资料移入用户小框', fn: feature9 },
   10: { title: '商品编号 product_code', fn: feature10 },
+  11: { title: '管理员交易监管（需求①）', fn: feature11 },
 };
 
 async function main() {

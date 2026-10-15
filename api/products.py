@@ -6,6 +6,7 @@ from datetime import datetime
 from flask import Blueprint, current_app, request
 from sqlalchemy import or_
 
+import audit
 import product_code
 from api.common import (
     arg_float, arg_int, arg_str, current_user, fail, json_body, login_required,
@@ -325,6 +326,8 @@ def create_product():
     db.session.add(product)
     db.session.flush()
     _replace_images(product, images)
+    audit.record("product_create", "product", product.id,
+                 f"发布商品「{product.name}」（{product.product_code}，¥{product.price}）")
     db.session.commit()
     return ok(product.to_dict(detail=True), msg="发布成功")
 
@@ -352,6 +355,8 @@ def update_product(pid: int):
     for key, value in data.items():
         setattr(product, key, value)
     _replace_images(product, images)
+    audit.record("product_update", "product", product.id,
+                 f"编辑商品「{product.name}」（{product.product_code}，¥{product.price}）")
     db.session.commit()
     return ok(product.to_dict(detail=True), msg="保存成功")
 
@@ -375,6 +380,8 @@ def change_product_status(pid: int):
         return fail("该商品已售出，不能重新上架；如有需要请重新发布")
 
     product.status = target
+    audit.record(f"product_{'on' if target == PRODUCT_ON_SALE else 'off'}", "product", product.id,
+                 f"{'上架' if target == PRODUCT_ON_SALE else '下架'}商品「{product.name}」")
     db.session.commit()
     return ok(product.to_dict(), msg="已重新上架" if target == PRODUCT_ON_SALE else "已下架")
 
@@ -395,6 +402,8 @@ def delete_product(pid: int):
     # 商品已删除，相关收藏与「我想要」一并清掉
     Favorite.query.filter_by(product_id=product.id).delete()
     ProductWant.query.filter_by(product_id=product.id).delete()
+    audit.record("product_delete", "product", product.id,
+                 f"删除商品「{product.name}」（{product.product_code}）")
     db.session.commit()
     return ok(msg="商品已删除")
 
@@ -432,6 +441,8 @@ def delete_product_record(pid: int):
     Report.query.filter_by(product_id=product.id).delete()
     Review.query.filter_by(product_id=product.id).delete()
     db.session.delete(product)
+    audit.record("product_purge", "product", pid,
+                 f"彻底删除商品记录「{product.name}」（{product.product_code}）")
     db.session.commit()
     return ok(msg="商品记录已彻底删除")
 

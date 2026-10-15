@@ -599,6 +599,62 @@ class Message(db.Model):
         }
 
 
+# ---------------------------------------------------------------- 18. 操作日志（需求①）
+class OperationLog(db.Model):
+    """记录「谁 · 何时 · 对哪个对象 · 做了什么」，供管理后台「动态监控」时间线使用。
+
+    只靠 products.updated_at 反推不出"改了什么、是不是多人在同时改"，
+    所以关键动作都要在这里留一条痕。
+    """
+
+    __tablename__ = "operation_logs"
+
+    # 动作码 -> 中文说明（前端时间线按这个分组/着色）
+    ACTIONS = {
+        "product_create": "发布商品",
+        "product_update": "编辑商品",
+        "product_on": "上架商品",
+        "product_off": "下架商品",
+        "product_delete": "删除商品",
+        "product_purge": "彻底删除商品",
+        "order_create": "下单",
+        "order_complete": "完成交易",
+        "order_cancel": "取消交易",
+        "order_record_delete": "删除订单记录",
+        "review_create": "发表评价",
+        "report_create": "提交举报",
+        "admin_order_cancel": "管理员强制取消交易",
+        "admin_order_complete": "管理员标记交易完成",
+    }
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete="SET NULL"))
+    username = db.Column(db.String(50), nullable=False, default="")
+    role = db.Column(db.String(20), nullable=False, default="")
+    action = db.Column(db.String(30), nullable=False)
+    target_type = db.Column(db.String(20), nullable=False, default="")
+    target_id = db.Column(db.BigInteger)
+    summary = db.Column(db.String(255), nullable=False, default="")
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
+
+    user = db.relationship("User")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "username": self.username,
+            "nickname": self.user.nickname if self.user else self.username,
+            "role": self.role,
+            "action": self.action,
+            "action_text": self.ACTIONS.get(self.action, self.action),
+            "target_type": self.target_type,
+            "target_id": self.target_id,
+            "summary": self.summary,
+            "created_at": _dt(self.created_at),
+        }
+
+
 # ---------------------------------------------------------------- 工具函数
 def _dt(value: datetime | None) -> str | None:
     return value.strftime("%Y-%m-%d %H:%M:%S") if value else None

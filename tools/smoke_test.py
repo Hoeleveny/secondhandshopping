@@ -1095,6 +1095,109 @@ def main() -> int:
         _st, r = call("DELETE", f"/api/admin/categories/{new_cat['id']}", token=admin_token)
         check("测试用分类已清理（否则会污染分类数量）", r.get("code") == 0, str(r)[:150])
 
+    # ---------------- 需求①：管理员交易监管 + 操作日志 ----------------
+    section("需求① 管理员交易监管与动态监控")
+
+    def _logs(**params):
+        q = "&".join(f"{k}={v}" for k, v in params.items())
+        _s, rr = call("GET", f"/api/admin/logs?{q}", token=admin_token)
+        return rr.get("data") or {}
+
+    def _has_log(action, needle):
+        data = _logs(action=action, page_size=50)
+        return any(needle in (item.get("summary") or "") for item in data.get("list") or [])
+
+    # 发布 → 编辑 → 都应有日志
+    _st, r = call("POST", "/api/products", token=seller_token,
+                  body={"name": "冒烟-交易监管商品", "price": 30.0, "category_id": 1,
+                        "subcategory_id": 1, "condition": "九成新",
+                        "description": "交易监管测试用", "default_place_id": 2, "images": []})
+    tp = r.get("data") or {}
+    check("发布商品后日志里出现「发布商品」且带上商品编号",
+          _has_log("product_create", tp.get("product_code") or "×"),
+          f"商品编号={tp.get('product_code')}")
+
+    _st, r = call("PUT", f"/api/products/{tp['id']}", token=seller_token,
+                  body={"name": "冒烟-交易监管商品", "price": 28.0, "category_id": 1,
+                        "subcategory_id": 1, "condition": "九成新",
+                        "description": "改了价格", "default_place_id": 2, "images": []})
+    check("编辑商品后日志里出现「编辑商品」",
+          _has_log("product_update", tp.get("product_code") or "×"), str(r)[:120])
+
+    _st, r = call("PATCH", f"/api/products/{tp['id']}/status", token=seller_token,
+                  body={"status": "off_shelf"})
+    check("下架商品后日志里出现「下架商品」",
+          _has_log("product_off", tp.get("name") or "×"), str(r)[:120])
+    call("PATCH", f"/api/products/{tp['id']}/status", token=seller_token, body={"status": "on_sale"})
+
+    # 下单 → 进行中的交易
+    _st, r = call("POST", "/api/orders", token=token,
+                  body={"product_id": tp["id"], "meet_place_id": 2})
+    order_a = (r.get("data") or {}).get("id")
+    check("下单后日志里出现「下单」", _has_log("order_create", tp.get("product_code") or "×"),
+          str(r)[:120])
+
+    _st, r = call("GET", "/api/admin/orders", token=admin_token)
+    data = r.get("data") or {}
+    ids = [o["id"] for o in data.get("list") or []]
+    stats = data.get("stats") or {}
+    check("管理员默认能看到「进行中」的交易列表",
+          r.get("code") == 0 and order_a in ids, f"total={data.get('total')}, ids={ids[:5]}")
+    row = next((o for o in data.get("list") or [] if o["id"] == order_a), {})
+    check("交易行带上商品名称、商品编号与已进行时长",
+          row.get("product_name") and row.get("product_code") == tp.get("product_code")
+          and isinstance(row.get("elapsed_minutes"), int),
+          str(row)[:200])
+    check("交易总览含进行中/涉及商家/最长挂单/今日新增",
+          all(k in stats for k in
+              ("pending", "sellers_in_trade", "longest_pending_minutes", "today_orders")),
+          str(stats))
+
+    _st, r = call("GET", f"/api/admin/orders?keyword={tp['product_code']}", token=admin_token)
+    hit = [o["id"] for o in (r.get("data") or {}).get("list") or []]
+    check("管理员可按商品编号搜到这笔交易", order_a in hit, f"命中 {hit[:5]}")
+
+    _st, r = call("GET", "/api/admin/orders?status=不存在的状态", token=admin_token)
+    check("非法交易状态取值被拒", r.get("code") != 0, str(r)[:120])
+    _st, r = call("GET", "/api/admin/orders", token=buyer1)
+    check("普通用户看不到交易监管接口（403）", r.get("code") != 0, str(r)[:120])
+    _st, r = call("GET", "/api/admin/logs", token=buyer1)
+    check("普通用户看不到操作日志接口（403）", r.get("code") != 0, str(r)[:120])
+
+    # 管理员强制取消
+    _st, r = call("PATCH", f"/api/orders/{order_a}/cancel", token=admin_token)
+    check("管理员可强制取消进行中的交易", r.get("code") == 0, str(r)[:150])
+    _st, r = call("GET", f"/api/products/{tp['id']}")
+    check("强制取消后商品恢复在售", (r.get("data") or {}).get("status") == "on_sale",
+          str(r)[:150])
+    check("强制取消留下了可区分的日志（admin_order_cancel）",
+          _has_log("admin_order_cancel", "管理员强制取消"), "")
+
+    # 管理员标记完成
+    _st, r = call("POST", "/api/orders", token=token,
+                  body={"product_id": tp["id"], "meet_place_id": 2})
+    order_b = (r.get("data") or {}).get("id")
+    _st, r = call("PATCH", f"/api/orders/{order_b}/complete", token=admin_token)
+    check("管理员可标记交易完成", r.get("code") == 0, str(r)[:150])
+    _st, r = call("GET", f"/api/products/{tp['id']}")
+    check("标记完成后商品保持已售（不会回到在售）",
+          (r.get("data") or {}).get("status") == "sold", str(r)[:150])
+    check("标记完成留下了可区分的日志（admin_order_complete）",
+          _has_log("admin_order_complete", "管理员标记完成"), "")
+
+    # 时间线顺序与筛选
+    logs = _logs(page_size=20).get("list") or []
+    check("动态监控按时间倒序（最新一条排在最前）",
+          len(logs) >= 2 and logs[0]["created_at"] >= logs[1]["created_at"],
+          f"{logs[0]['created_at'] if logs else '?'} vs {logs[1]['created_at'] if len(logs) > 1 else '?'}")
+    only = _logs(action="product_create", page_size=50).get("list") or []
+    check("动态监控可按动作筛选（筛 product_create 只剩该动作）",
+          bool(only) and all(item["action"] == "product_create" for item in only),
+          f"共 {len(only)} 条，动作集合={ {i['action'] for i in only} }")
+    check("日志带「动作中文名 + 操作人」便于阅读",
+          all(item.get("action_text") and item.get("nickname") is not None for item in only[:3]),
+          str(only[:1])[:200])
+
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 

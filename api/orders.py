@@ -109,6 +109,10 @@ def create_order():
     db.session.add(order)
     db.session.flush()
     order.order_no = f"CM{datetime.now():%Y%m%d%H%M%S}{order.id:06d}"
+    import audit
+
+    audit.record("order_create", "order", order.id,
+                 f"下单「{product.name}」（{product.product_code}，¥{order.price}）")
     db.session.commit()
 
     return ok(order.to_dict(user.id), msg="下单成功，请与卖家约定时间自提")
@@ -198,6 +202,16 @@ def complete_order(oid: int):
 
     order.status = ORDER_DONE
     order.finished_at = datetime.now()
+    import audit
+
+    product = Product.query.get(order.product_id)
+    audit.record(
+        "admin_order_complete" if user.role == ROLE_ADMIN else "order_complete",
+        "order", order.id,
+        f"{'管理员标记' if user.role == ROLE_ADMIN else ''}完成交易 {order.order_no}"
+        f"「{product.name if product else '商品已删除'}」",
+        role=user.role,
+    )
     db.session.commit()
     return ok(order.to_dict(user.id), msg="交易已完成，别忘了评价对方")
 
@@ -221,6 +235,16 @@ def cancel_order(oid: int):
     db.session.query(Product).filter(
         Product.id == order.product_id, Product.status == PRODUCT_SOLD
     ).update({Product.status: PRODUCT_ON_SALE}, synchronize_session=False)
+    import audit
+
+    product = Product.query.get(order.product_id)
+    audit.record(
+        "admin_order_cancel" if user.role == ROLE_ADMIN else "order_cancel",
+        "order", order.id,
+        f"{'管理员强制' if user.role == ROLE_ADMIN else ''}取消交易 {order.order_no}"
+        f"「{product.name if product else '商品已删除'}」，商品已恢复在售",
+        role=user.role,
+    )
     db.session.commit()
     return ok(order.to_dict(user.id), msg="订单已取消，商品已恢复在售")
 
@@ -246,6 +270,10 @@ def delete_order_record(oid: int):
         return fail("这条订单记录已经删除过了", 409)
 
     order.buyer_deleted = True
+    import audit
+
+    audit.record("order_record_delete", "order", order.id,
+                 f"删除订单记录 {order.order_no}（只对买家自己隐藏）")
     db.session.commit()
     return ok(msg="订单记录已删除（卖家侧记录不受影响）")
 

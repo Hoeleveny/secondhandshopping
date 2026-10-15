@@ -20,7 +20,8 @@ from api.common import (
 from config import Config
 from extensions import db
 from models import (
-    CampusPlace, Category, Order, Post, Product, Report, Subcategory, User,
+    CampusPlace, Category, Message, OperationLog, Order, Post, Product, Report,
+    Subcategory, User,
     ORDER_CANCELED, ORDER_DONE, ORDER_PENDING,
     PRODUCT_DELETED, PRODUCT_OFF_SHELF, PRODUCT_ON_SALE, PRODUCT_SOLD,
 )
@@ -57,6 +58,103 @@ def all_products():
     items = q.order_by(Product.created_at.desc()).offset((page - 1) * size).limit(size).all()
     return ok({"list": [p.to_dict() for p in items], "total": total,
                "page": page, "page_size": size})
+
+
+# ================================================================ 交易监管（需求①）
+@bp.get("/orders")
+@admin_required
+def admin_orders():
+    """交易列表：默认只看「进行中」（待完成），也支持查全部/已完成/已取消。
+
+    每行带上商品名称与**商品编号**、买卖双方昵称、进行时长（前端按 created_at 算），
+    供管理员实时监管「多项交易并发」。
+    """
+    page, size = paginate_args(20)
+    status = arg_str("status") or ORDER_PENDING
+    keyword = arg_str("keyword")
+    seller_id = arg_int("seller_id")
+
+    q = Order.query
+    if status != "all":
+        if status not in (ORDER_PENDING, ORDER_DONE, ORDER_CANCELED):
+            return fail("状态取值不合法")
+        q = q.filter(Order.status == status)
+    if seller_id:
+        q = q.filter(Order.seller_id == seller_id)
+
+    if keyword:
+        like = f"%{keyword}%"
+        # 订单号 / 商品名 / 商品编号 / 买卖双方昵称 / 用户名 都能搜
+        q = q.join(User, User.id == Order.buyer_id).join(Product, Product.id == Order.product_id)
+        q = q.filter(or_(
+            Order.order_no.like(like),
+            Product.name.like(like),
+            Product.product_code.like(like),
+            User.nickname.like(like),
+            User.username.like(like),
+        ))
+
+    total = q.count()
+    # 进行中的交易按「最早下单的排前面」——挂得越久越需要关注
+    order_by = Order.created_at.asc() if status == ORDER_PENDING else Order.created_at.desc()
+    rows = q.order_by(order_by).offset((page - 1) * size).limit(size).all()
+
+    now = datetime.now()
+    items = []
+    for o in rows:
+        data = o.to_dict()
+        product = Product.query.get(o.product_id)
+        data["product_name"] = product.name if product else None
+        data["product_code"] = product.product_code if product else None
+        data["elapsed_minutes"] = int((now - o.created_at).total_seconds() // 60)
+        items.append(data)
+
+    # 顺带给出「进行中交易总览」，让管理员一眼看到并发规模
+    pending = Order.query.filter(Order.status == ORDER_PENDING)
+    oldest = pending.order_by(Order.created_at.asc()).first()
+    stats = {
+        "pending": pending.count(),
+        "done": Order.query.filter(Order.status == ORDER_DONE).count(),
+        "canceled": Order.query.filter(Order.status == ORDER_CANCELED).count(),
+        "sellers_in_trade": db.session.query(func.count(func.distinct(Order.seller_id)))
+                                    .filter(Order.status == ORDER_PENDING).scalar() or 0,
+        "longest_pending_minutes": (
+            int((now - oldest.created_at).total_seconds() // 60) if oldest else 0
+        ),
+        "today_orders": Order.query.filter(Order.created_at >= now.replace(
+            hour=0, minute=0, second=0, microsecond=0)).count(),
+    }
+    return ok({"list": items, "total": total, "page": page, "page_size": size, "stats": stats})
+
+
+@bp.get("/logs")
+@admin_required
+def admin_logs():
+    """操作日志时间线（「动态监控」）：默认按时间倒序，可按动作/关键词筛。"""
+    page, size = paginate_args(30)
+    action = arg_str("action")
+    keyword = arg_str("keyword")
+
+    q = OperationLog.query
+    if action and action != "all":
+        q = q.filter(OperationLog.action == action)
+    if keyword:
+        like = f"%{keyword}%"
+        q = q.filter(or_(OperationLog.summary.like(like),
+                         OperationLog.username.like(like),
+                         OperationLog.action.like(like)))
+
+    total = q.count()
+    rows = (q.order_by(OperationLog.created_at.desc(), OperationLog.id.desc())
+            .offset((page - 1) * size).limit(size).all())
+
+    # 供前端筛选下拉用：当前库里出现过的动作
+    used = [a for (a,) in db.session.query(OperationLog.action).distinct().all()]
+    actions = [{"action": a, "text": OperationLog.ACTIONS.get(a, a)} for a in used]
+    actions.sort(key=lambda x: x["action"])
+
+    return ok({"list": [r.to_dict() for r in rows], "total": total,
+               "page": page, "page_size": size, "actions": actions})
 
 
 @bp.patch("/products/<int:pid>/status")
