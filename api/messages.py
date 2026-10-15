@@ -9,10 +9,19 @@ from sqlalchemy import and_, or_
 
 from api.common import current_user, fail, json_body, login_required, ok
 from extensions import db
-from models import Message, Product, User
+from models import Message, MessageClear, Product, User
 from rating import seller_rating
 
 bp = Blueprint("messages", __name__, url_prefix="/api")
+
+
+def _clear_marks(me: int) -> dict[int, int]:
+    """我在各会话里清空到哪条消息为止：{peer_id: last_message_id}。
+
+    需求⑤「删除对话」只对我隐藏，靠这份下限实现：id <= 下限的消息对我不可见。
+    """
+    return {c.peer_id: c.last_message_id or 0
+            for c in MessageClear.query.filter_by(user_id=me).all()}
 
 MAX_CONTENT = Message.MAX_LENGTH
 
@@ -65,8 +74,13 @@ def send_message():
 @bp.get("/messages/conversations")
 @login_required
 def conversations():
-    """会话列表：按聊天对象分组，给出最新一条与未读数，按最新时间倒序。"""
+    """会话列表：按聊天对象分组，给出最新一条与未读数，按最新时间倒序。
+
+    需求⑤：我曾「删除对话」的那些会话，下限之前的消息对我不可见；
+    如果对方之后又发了新消息，它会以新消息重新出现在列表里。
+    """
     me = current_user().id
+    marks = _clear_marks(me)
     rows = (
         Message.query
         .filter(or_(Message.sender_id == me, Message.receiver_id == me))
@@ -78,6 +92,8 @@ def conversations():
     groups: dict[int, dict] = {}
     for message in rows:
         other = message.receiver_id if message.sender_id == me else message.sender_id
+        if message.id <= marks.get(other, 0):
+            continue  # 这段对话我清空到更后面了，这条对我不可见
         if other not in groups:
             groups[other] = {"other_id": other, "last": message, "unread": 0}
         if message.receiver_id == me and not message.is_read:
@@ -108,9 +124,11 @@ def with_user(uid: int):
     if other is None:
         return fail("对方不存在", 404)
 
+    floor = _clear_marks(me).get(uid, 0)  # 需求⑤：我删过的话，这个 id 之前的对我不可见
     # 先标记已读，再取列表，这样返回的就是最新状态
     Message.query.filter(
-        Message.sender_id == uid, Message.receiver_id == me, Message.is_read.is_(False)
+        Message.sender_id == uid, Message.receiver_id == me, Message.is_read.is_(False),
+        Message.id > floor,
     ).update({Message.is_read: True}, synchronize_session=False)
     db.session.commit()
 
@@ -119,7 +137,7 @@ def with_user(uid: int):
         .filter(or_(
             and_(Message.sender_id == me, Message.receiver_id == uid),
             and_(Message.sender_id == uid, Message.receiver_id == me),
-        ))
+        ), Message.id > floor)
         .order_by(Message.created_at.asc(), Message.id.asc())
         .limit(300)
         .all()
@@ -134,5 +152,45 @@ def with_user(uid: int):
 @login_required
 def unread_count():
     me = current_user().id
-    count = Message.query.filter_by(receiver_id=me, is_read=False).count()
-    return ok({"count": count})
+    marks = _clear_marks(me)
+    q = Message.query.filter_by(receiver_id=me, is_read=False)
+    if marks:
+        # 被清空过的会话，只统计「下限之后」的未读；没清空过的会话照常统计
+        conds = [and_(Message.sender_id == peer, Message.id > mark)
+                 for peer, mark in marks.items()]
+        q = q.filter(or_(Message.sender_id.notin_(list(marks)), *conds))
+    return ok({"count": q.count()})
+
+
+@bp.delete("/messages/conversations/<int:uid>")
+@login_required
+def clear_conversation(uid: int):
+    """删除对话（需求⑤）：**只对我隐藏**，对方完全不受影响。
+
+    - 我从会话列表移除它、我这边的历史从此刻重新计（下限记到当前最后一条消息 id）；
+    - 对方那边一切照旧，仍能看到全部聊天；
+    - 对方之后再发新消息，会话会重新出现在我的列表里。
+    """
+    me = current_user().id
+    if uid == me:
+        return fail("不能和自己聊天", 400)
+    if User.query.get(uid) is None:
+        return fail("对方不存在", 404)
+
+    last_id = (
+        db.session.query(db.func.max(Message.id))
+        .filter(or_(
+            and_(Message.sender_id == me, Message.receiver_id == uid),
+            and_(Message.sender_id == uid, Message.receiver_id == me),
+        ))
+        .scalar()
+    ) or 0
+
+    mark = MessageClear.query.filter_by(user_id=me, peer_id=uid).first()
+    if mark is None:
+        db.session.add(MessageClear(user_id=me, peer_id=uid, last_message_id=last_id))
+    else:
+        # 再次删除：下限只增不减，避免把更早的消息又露出来
+        mark.last_message_id = max(mark.last_message_id or 0, last_id)
+    db.session.commit()
+    return ok(msg="对话已从你的列表移除（对方不受影响）")

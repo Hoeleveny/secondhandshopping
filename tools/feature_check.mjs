@@ -1608,6 +1608,101 @@ async function feature14(cdp) {
   }
 }
 
+/* ================================================================ 功能⑮ 私信删除会话（需求⑤） */
+async function feature15(cdp) {
+  console.log('\n===== 功能⑮ 私信删除会话（需求⑤）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const sellerId = (await api('GET', '/api/auth/me', { token: sellerToken })).data.user.id;
+
+  // 全程用测试账号 acc_buyer（在清理名单里，删掉它时会话清除标记会一起级联消失），
+  // 因此**不会碰演示账号的真实聊天记录**。
+  let accToken;
+  try {
+    accToken = await login('acc_buyer', '1234', 'buyer');
+  } catch {
+    await api('POST', '/api/auth/register',
+      { body: { username: 'acc_buyer', password: '1234', role: 'buyer' } });
+    accToken = await login('acc_buyer', '1234', 'buyer');
+  }
+  const accId = (await api('GET', '/api/auth/me', { token: accToken })).data.user.id;
+
+  await api('POST', '/api/messages', {
+    token: accToken,
+    body: { receiver_id: sellerId, content: '自动化测试：删除会话用' },
+  });
+  await api('POST', '/api/messages', {
+    token: sellerToken,
+    body: { receiver_id: accId, content: '自动化测试：对方的回复' },
+  });
+  const convCount = async (token) =>
+    (await api('GET', '/api/messages/conversations', { token })).data.length;
+  check('测试账号与卖家之间已有会话', await convCount(accToken) > 0, '');
+
+  // ---- 按钮与确认框 ----
+  await cdp.loginAs('acc_buyer', '1234', 'buyer');
+  await cdp.go(`/messages?to=${sellerId}`);
+  await waitFor(cdp, `!!document.querySelector('[data-del-conv]')`);
+  const btn = await cdp.eval(`
+    (() => {
+      const b = document.querySelector('[data-del-conv]');
+      return { exists: !!b, text: b?.innerText.trim() || '',
+               hasCredit: /信用分/.test(document.body.innerText) };
+    })()`);
+  check('聊天头部有「删除对话」按钮', btn.exists && /删除对话/.test(btn.text), JSON.stringify(btn));
+
+  await cdp.eval(`document.querySelector('[data-del-conv]').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  const dlg = await cdp.eval(`
+    (() => {
+      const m = document.querySelector('.modal-mask');
+      return { title: m?.querySelector('.modal-head')?.innerText || '', body: m?.innerText || '' };
+    })()`);
+  check('删除前会弹确认框，并说清「只对你隐藏、对方不受影响」',
+    /删除/.test(dlg.title) && /对方/.test(dlg.body), JSON.stringify(dlg));
+  await cdp.shot(path.join(SHOT_DIR, 'f15-delete-confirm.png'));
+
+  // ---- 取消确认：数据不变 ----
+  await cdp.eval(`document.querySelector('.modal-mask [data-cancel]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  check('取消确认时会话仍在（数据不变）', await convCount(accToken) > 0, '');
+
+  // ---- 确认删除 ----
+  await cdp.eval(`document.querySelector('[data-del-conv]').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
+  await waitFor(cdp, `document.querySelectorAll('#conv-list [data-uid]').length === 0`);
+  await sleep(500);
+  const afterDel = await cdp.eval(`
+    (() => ({
+      convItems: document.querySelectorAll('#conv-list [data-uid]').length,
+      chatEmpty: /从左侧选择一个会话/.test(document.querySelector('#chat-area')?.innerText || ''),
+    }))()`);
+  check('确认删除后会话从列表消失、聊天区回到空态',
+    afterDel.convItems === 0 && afterDel.chatEmpty, JSON.stringify(afterDel));
+
+  await cdp.go('/messages');
+  await waitFor(cdp, `!!document.querySelector('#conv-list')`);
+  await sleep(700);
+  const afterReload = await cdp.eval(`document.querySelectorAll('#conv-list [data-uid]').length`);
+  check('刷新后仍是已删除状态（后端记住了，不是只改前端）', afterReload === 0, `列表 ${afterReload} 项`);
+
+  // ---- 对方完全不受影响 ----
+  const peerSeen = (await api('GET', `/api/messages/with/${accId}`, { token: sellerToken }))
+    .data.list.length;
+  check('对方那边完全不受影响，仍能看到全部聊天', peerSeen > 0, `对方可见 ${peerSeen} 条`);
+
+  // ---- 对方再发消息 → 会话重新出现 ----
+  await api('POST', '/api/messages', {
+    token: sellerToken,
+    body: { receiver_id: accId, content: '自动化测试：删除后对方又说话' },
+  });
+  await cdp.go('/messages');
+  await waitFor(cdp, `document.querySelectorAll('#conv-list [data-uid]').length > 0`);
+  const revived = await cdp.eval(`document.querySelectorAll('#conv-list [data-uid]').length`);
+  check('对方再发消息后会话重新出现在我的列表', revived > 0, `列表 ${revived} 项`);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -1624,6 +1719,7 @@ const GROUPS = {
   12: { title: '卖家商品主页（需求②）', fn: feature12 },
   13: { title: '商家好评率（需求③）', fn: feature13 },
   14: { title: '私信页两个按钮（需求④）', fn: feature14 },
+  15: { title: '私信删除会话（需求⑤）', fn: feature15 },
 };
 
 async function main() {

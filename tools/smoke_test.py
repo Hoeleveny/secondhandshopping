@@ -1373,6 +1373,54 @@ def main() -> int:
           "rating" in peer and "level_text" in (peer.get("rating") or {}),
           str(peer.get("rating"))[:150])
 
+    # ---------------- 需求⑤：私信删除会话（只对我隐藏） ----------------
+    section("需求⑤ 私信删除会话")
+
+    # 用测试账号（smoke_buyer）与卖家造一段对话；测试账号结束会被删掉，
+    # 会话清除标记随外键级联消失，不会动到真实聊天。
+    smoke_uid = _sb["id"]
+    call("POST", "/api/messages", token=token,
+         body={"receiver_id": sid, "content": "冒烟测试：删除会话前的消息"})
+    _st, r = call("GET", "/api/messages/conversations", token=token)
+    convs = {c["user"]["id"] for c in (r.get("data") or [])}
+    check("会话列表里能看到与卖家的会话", sid in convs, f"会话对象={sorted(convs)}")
+
+    _st, r = call("DELETE", f"/api/messages/conversations/{sid}", token=token)
+    check("可以删除对话", r.get("code") == 0, str(r)[:150])
+
+    _st, r = call("GET", "/api/messages/conversations", token=token)
+    convs2 = {c["user"]["id"] for c in (r.get("data") or [])}
+    check("删除后会话从我的列表消失", sid not in convs2, f"会话对象={sorted(convs2)}")
+
+    _st, r = call("GET", f"/api/messages/with/{sid}", token=token)
+    left = (r.get("data") or {}).get("list") or []
+    check("删除后我这边的历史清空（从此刻重新计）", left == [], f"还剩 {len(left)} 条")
+
+    _st, r = call("GET", f"/api/messages/with/{smoke_uid}", token=seller_token)
+    peer_seen = (r.get("data") or {}).get("list") or []
+    check("对方仍能看到全部聊天（只对我隐藏）", len(peer_seen) > 0,
+          f"对方可见 {len(peer_seen)} 条")
+
+    # 对方再发一条 → 未读只算新消息、会话重新出现、且只显示新消息
+    call("POST", "/api/messages", token=seller_token,
+         body={"receiver_id": smoke_uid, "content": "冒烟测试：删除后对方又说话了"})
+    _st, r = call("GET", "/api/messages/unread", token=token)
+    check("未读数只统计清空之后的新消息",
+          (r.get("data") or {}).get("count") == 1, str(r.get("data")))
+
+    _st, r = call("GET", "/api/messages/conversations", token=token)
+    convs3 = {c["user"]["id"] for c in (r.get("data") or [])}
+    check("对方再发消息后会话重新出现在我的列表", sid in convs3, f"会话对象={sorted(convs3)}")
+
+    _st, r = call("GET", f"/api/messages/with/{sid}", token=token)
+    again = (r.get("data") or {}).get("list") or []
+    check("重新出现的会话只显示删除之后的新消息",
+          len(again) == 1 and "删除后对方又说话" in (again[0].get("content") or ""),
+          f"{len(again)} 条：{[m.get('content') for m in again][:3]}")
+
+    _st, r = call("DELETE", f"/api/messages/conversations/{smoke_uid}", token=token)
+    check("不能删除与自己的对话", r.get("code") != 0, str(r)[:120])
+
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 

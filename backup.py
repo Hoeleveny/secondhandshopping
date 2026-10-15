@@ -13,7 +13,8 @@ from sqlalchemy import DateTime, Numeric
 
 from extensions import db
 from models import (
-    CampusPlace, Category, Favorite, Message, OperationLog, Order, Post, PostComment, PostImage,
+    CampusPlace, Category, Favorite, Message, MessageClear, OperationLog, Order, Post,
+    PostComment, PostImage,
     PostLike, Product, ProductImage, ProductWant, Report, Review, Subcategory,
     SwapOffer, User,
 )
@@ -38,6 +39,7 @@ INSERT_ORDER = [
     ("product_wants", ProductWant),
     ("post_images", PostImage),
     ("operation_logs", OperationLog),
+    ("message_clears", MessageClear),
 ]
 
 BACKUP_VERSION = 1

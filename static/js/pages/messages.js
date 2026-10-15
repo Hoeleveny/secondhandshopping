@@ -4,7 +4,7 @@
    ========================================================================== */
 import { api } from '../api.js';
 import { store } from '../store.js';
-import { avatarHtml, emptyHtml, esc, fmtTime, loadingHtml, ratingBadgeHtml, toast } from '../ui.js';
+import { avatarHtml, confirmDialog, emptyHtml, esc, fmtTime, loadingHtml, ratingBadgeHtml, toast } from '../ui.js';
 
 let conversationsCache = [];
 let unreadTimer = null;
@@ -105,6 +105,7 @@ async function renderMessages(root, ctx) {
             ${originProductId
               ? `<button class="btn btn-ghost btn-sm" data-go-origin="${originProductId}">返回原商品</button>`
               : ''}
+            <button class="btn btn-ghost btn-sm" data-del-conv="${currentUser?.id || ''}">🗑 删除对话</button>
           </div>
           ${productId ? `<div class="hint">正在咨询商品 #${productId}</div>` : ''}
         </div>
@@ -148,6 +149,33 @@ async function renderMessages(root, ctx) {
     if (goOrigin) {
       goOrigin.addEventListener('click', () => {
         location.hash = `#/product/${goOrigin.dataset.goOrigin}`;
+      });
+    }
+    // 需求⑤：删除对话——只对我隐藏，对方那边不受影响
+    const delConv = chatBox.querySelector('[data-del-conv]');
+    if (delConv) {
+      delConv.addEventListener('click', async () => {
+        const sure = await confirmDialog({
+          title: '删除这个对话？', danger: true, okText: '删除对话', cancelText: '再想想',
+          message: '只从你的列表移除，对方那边完全不受影响；'
+            + '对方之后再发消息，这个对话会重新出现在你的列表里。',
+        });
+        if (!sure) return;
+        try {
+          await api.del(`/api/messages/conversations/${currentUid}`);
+          toast('对话已删除');
+          currentUid = null;
+          currentUser = null;
+          messages = [];
+          productId = null;
+          originProductId = null;
+          chatBox.innerHTML = emptyHtml('从左侧选择一个会话开始聊天', '✉️');
+          history.replaceState(null, '', '#/messages');
+          await loadConversations();
+          refreshTopbarUnread();
+        } catch (err) {
+          toast(err.message, 'error');
+        }
       });
     }
   }

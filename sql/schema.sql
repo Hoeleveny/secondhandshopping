@@ -382,4 +382,23 @@ CREATE TABLE `operation_logs` (
   CONSTRAINT `fk_oplogs_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='操作日志（管理后台动态监控用）';
 
+-- -------------------------------------------------------------
+-- 表 19：message_clears（会话清除标记）—— 需求⑤，新增于迁移 009
+-- 「删除对话」只对我隐藏：id <= last_message_id 的消息对 user_id 隐藏
+-- -------------------------------------------------------------
+DROP TABLE IF EXISTS `message_clears`;
+CREATE TABLE `message_clears` (
+  `id`              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`         BIGINT UNSIGNED NOT NULL COMMENT '谁清空了这段对话',
+  `peer_id`         BIGINT UNSIGNED NOT NULL COMMENT '跟谁的对话',
+  `last_message_id` BIGINT UNSIGNED NOT NULL COMMENT '清空到这条为止：id <= 它的消息对 user_id 隐藏',
+  `created_at`      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_message_clears_pair` (`user_id`, `peer_id`),
+  KEY `idx_message_clears_peer` (`peer_id`),
+  CONSTRAINT `fk_message_clears_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_message_clears_peer` FOREIGN KEY (`peer_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='会话清除标记（只对清空者自己隐藏）';
+
 SET FOREIGN_KEY_CHECKS = 1;

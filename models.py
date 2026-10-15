@@ -659,6 +659,39 @@ class OperationLog(db.Model):
         }
 
 
+# ---------------------------------------------------------------- 19. 会话清除标记（需求⑤）
+class MessageClear(db.Model):
+    """「删除对话」只对我隐藏：记下我清空到哪条消息为止。
+
+    用最后一条消息的 id（单调递增）而不是时间戳，避免「对方的新消息恰好与
+    删除同一秒而被一起隐藏」的边界问题。
+    """
+
+    __tablename__ = "message_clears"
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete="CASCADE"),
+                        nullable=False)
+    peer_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete="CASCADE"),
+                        nullable=False)
+    last_message_id = db.Column(db.BigInteger, nullable=False, default=0)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.now,
+                           onupdate=datetime.now)
+
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "peer_id", name="uk_message_clears_pair"),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "peer_id": self.peer_id,
+            "last_message_id": self.last_message_id,
+        }
+
+
 # ---------------------------------------------------------------- 工具函数
 def _dt(value: datetime | None) -> str | None:
     return value.strftime("%Y-%m-%d %H:%M:%S") if value else None
