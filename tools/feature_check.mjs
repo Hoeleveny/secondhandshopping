@@ -1792,6 +1792,79 @@ async function feature16(cdp) {
   }
 }
 
+/* ================================================================ 功能⑰ 动态监控条目详情（需求②） */
+async function feature17(cdp) {
+  console.log('\n===== 功能⑰ 动态监控条目详情（需求②）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+
+  // 先造一条「与交易相关」的日志，保证时间线首条就是可点且有交易信息的
+  const product = (await api('POST', '/api/products', {
+    token: sellerToken,
+    body: { name: '自动化测试：日志条目详情', price: 11, category_id: 1, subcategory_id: 1,
+            condition: '九成新', description: '日志条目详情用', default_place_id: 2, images: [] },
+  })).data;
+  const order = (await api('POST', '/api/orders', {
+    token: buyerToken, body: { product_id: product.id, meet_place_id: 2 },
+  })).data;
+  await api('PATCH', `/api/orders/${order.id}/complete`, { token: buyerToken });
+  await api('POST', '/api/reviews', {
+    token: buyerToken,
+    body: { order_id: order.id, rating: 4, content: '自动化测试：日志详情' },
+  });
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=trades');
+  await waitFor(cdp, `document.querySelectorAll('#lg-list .tl-item').length > 0`);
+
+  const item = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#lg-list .tl-item');
+      return { clickable: el.classList.contains('clickable'), logId: el.dataset.log || '',
+               hint: el.getAttribute('title') || '' };
+    })()`);
+  check('动态监控的条目标记为可点，并带「查看详情」提示',
+    item.clickable && !!item.logId && /详细/.test(item.hint), JSON.stringify(item));
+
+  await cdp.eval(`document.querySelector('#lg-list .tl-item').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask .detail-h')`);
+  await sleep(450);
+  const modal = await cdp.eval(`
+    (() => {
+      const m = document.querySelector('.modal-mask');
+      const t = m.innerText || '';
+      return { title: m.querySelector('.modal-head')?.innerText.trim() || '', text: t,
+               kvs: m.querySelectorAll('.kv').length, links: m.querySelectorAll('[data-goto]').length };
+    })()`);
+  check('点条目弹出详情，含「行为 / 发起人 / 精确时间」区块',
+    /行为/.test(modal.text) && /发起人/.test(modal.text) && /精确时间/.test(modal.text)
+    && modal.kvs >= 4, JSON.stringify({ title: modal.title, kvs: modal.kvs }));
+  check('详情里给出了精确到秒的操作时间',
+    /\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(modal.text), modal.text.slice(0, 90));
+  check('与交易相关的条目会带出「相关交易」：买卖双方、金额、自提点',
+    /相关交易/.test(modal.text) && /买家/.test(modal.text) && /卖家/.test(modal.text)
+    && /成交金额/.test(modal.text) && /自提点/.test(modal.text), modal.text.slice(0, 220));
+  check('详情底部有可跳转的按钮', modal.links > 0, `links=${modal.links}`);
+  await cdp.shot(path.join(SHOT_DIR, 'f17-log-detail.png'));
+
+  const target = await cdp.eval(`
+    (() => {
+      const b = document.querySelector('.modal-mask [data-goto]');
+      if (!b) return null;
+      const t = b.dataset.goto;
+      b.click();
+      return t;
+    })()`);
+  if (target) {
+    await waitFor(cdp, `location.hash === ${JSON.stringify(target)}`);
+    check('点详情里的按钮能跳到对应对象，并自动关闭弹窗',
+      !(await cdp.eval(`!!document.querySelector('.modal-mask')`)), `target=${target}`);
+  } else {
+    check('点详情里的按钮能跳到对应对象，并自动关闭弹窗', false, '没有可点的跳转按钮');
+  }
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -1810,6 +1883,7 @@ const GROUPS = {
   14: { title: '私信页两个按钮（需求④）', fn: feature14 },
   15: { title: '私信删除会话（需求⑤）', fn: feature15 },
   16: { title: '交易管理状态卡下钻（需求①）', fn: feature16 },
+  17: { title: '动态监控条目详情（需求②）', fn: feature17 },
 };
 
 async function main() {

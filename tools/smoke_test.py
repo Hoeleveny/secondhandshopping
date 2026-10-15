@@ -1233,6 +1233,53 @@ def main() -> int:
     _st, r = call("GET", "/api/admin/orders/detail?type=pending", token=buyer1)
     check("状态卡下钻：普通用户看不到（403）", r.get("code") != 0, str(r)[:120])
 
+    # 需求②-新：单条日志的详情（发起人 / 精确时间 / 相关订单与商品）
+    def _log_id(action):
+        data = _logs(action=action, page_size=50)
+        items = data.get("list") or []
+        return items[0]["id"] if items else None
+
+    _pid_log = _log_id("product_create")
+    _st, r = call("GET", f"/api/admin/logs/{_pid_log}", token=admin_token)
+    d = r.get("data") or {}
+    check("日志详情：发布商品能带出相关商品与跳转链接",
+          r.get("code") == 0 and d.get("product") and d.get("links"),
+          f"product={(d.get('product') or {}).get('name')} links={len(d.get('links') or [])}")
+    check("日志详情带出发起人、精确时间与「多久前」",
+          (d.get("actor") or {}).get("nickname")
+          and (d.get("log") or {}).get("created_at") and (d.get("log") or {}).get("ago_text"),
+          str(d.get("actor"))[:120])
+
+    _oid_log = _log_id("order_create")
+    _st, r = call("GET", f"/api/admin/logs/{_oid_log}", token=admin_token)
+    d = r.get("data") or {}
+    order = d.get("order") or {}
+    check("日志详情：下单能带出交易双方、金额与自提点",
+          bool(order) and order.get("buyer", {}).get("nickname")
+          and order.get("seller", {}).get("nickname") and "price" in order
+          and "meet_place" in order, str(order)[:220])
+
+    _rid_log = _log_id("review_create")
+    _st, r = call("GET", f"/api/admin/logs/{_rid_log}", token=admin_token)
+    d = r.get("data") or {}
+    check("日志详情：评价能带出星级与内容，并反查到订单/商品",
+          (d.get("extra") or {}).get("kind") == "review" and (d.get("extra") or {}).get("rating")
+          and d.get("order") is not None,
+          str(d.get("extra"))[:150])
+
+    _rpid_log = _log_id("report_create")
+    _st, r = call("GET", f"/api/admin/logs/{_rpid_log}", token=admin_token)
+    d = r.get("data") or {}
+    check("日志详情：举报能带出理由、举报人与处理状态",
+          (d.get("extra") or {}).get("kind") == "report"
+          and (d.get("extra") or {}).get("reason") is not None,
+          str(d.get("extra"))[:150])
+
+    _st, r = call("GET", "/api/admin/logs/99999999", token=admin_token)
+    check("日志详情：不存在的日志返回 404", r.get("code") != 0, str(r)[:120])
+    _st, r = call("GET", f"/api/admin/logs/{_pid_log}", token=buyer1)
+    check("日志详情：普通用户看不到（403）", r.get("code") != 0, str(r)[:120])
+
     # ---------------- 需求②：卖家商品主页 + 商家简介 ----------------
     section("需求② 卖家商品主页与商家简介")
 

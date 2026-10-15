@@ -57,6 +57,7 @@ def create_review():
         rating=rating, content=content or None,
     )
     db.session.add(review)
+    db.session.flush()  # 先落库拿到 review.id，否则日志里的 target_id 会是 None
     import audit
 
     audit.record("review_create", "review", review.id,

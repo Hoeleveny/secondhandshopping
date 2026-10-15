@@ -267,6 +267,113 @@ async function renderTrades(panel) {
       <div class="sc-value">${value ?? 0}</div>
     </div>`;
 
+  /* ---------------- 动态监控：单条日志详情（需求②）---------------- */
+  const ROLE_TEXT = { buyer: '买家', seller: '卖家', admin: '管理员', '': '—' };
+
+  function kvLines(pairs) {
+    return `<div class="kv-list">${pairs.filter(Boolean).map(([k, v]) =>
+      `<div class="kv"><span class="kv-k">${esc(k)}</span><span class="kv-v">${v}</span></div>`).join('')}</div>`;
+  }
+
+  function logDetailBody(d) {
+    const log = d.log || {};
+    const actor = d.actor || {};
+    const order = d.order;
+    const product = d.product;
+    const extra = d.extra;
+
+    const blocks = [];
+
+    blocks.push(`<h4 class="detail-h">行为</h4>` + kvLines([
+      ['动作', `<b>${esc(log.action_text || log.action)}</b>　<span class="muted small">${esc(log.action)}</span>`],
+      ['发起人', `${esc(actor.nickname || '')}`
+        + (actor.username ? `　<span class="muted small">@${esc(actor.username)}</span>` : '')
+        + `　<span class="badge badge-gray">${esc(ROLE_TEXT[actor.role] ?? actor.role ?? '—')}</span>`],
+      ['精确时间', `<b>${esc(log.created_at)}</b>`
+        + (log.ago_text ? `　<span class="muted small">${esc(log.ago_text)}</span>` : '')],
+      ['摘要', esc(log.summary || '—')],
+    ]));
+
+    if (order) {
+      blocks.push(`<h4 class="detail-h">相关交易</h4>` + kvLines([
+        ['订单号', esc(order.order_no)],
+        ['状态', `<span class="badge ${order.status === 'pending' ? 'badge-warn' : 'badge-gray'}">${esc(order.status_text)}</span>`],
+        ['买家', esc(order.buyer?.nickname || '')],
+        ['卖家', `${esc(order.seller?.nickname || '')}`
+          + (order.seller?.seller_code ? `　<span class="muted small">卖家编号 ${esc(order.seller.seller_code)}</span>` : '')],
+        ['成交金额', fmtPrice(order.price)],
+        ['自提点', esc(order.meet_place || '未指定')],
+        ['下单时间', `${esc(order.created_at)}　<span class="muted small">${esc(order.ago_text || '')}</span>`],
+        order.finished_at ? ['完成/取消时间', esc(order.finished_at)] : null,
+        order.trade_note ? ['交易说明', esc(order.trade_note)] : null,
+      ]));
+    }
+
+    if (product) {
+      blocks.push(`<h4 class="detail-h">相关商品</h4>` + kvLines([
+        ['商品', `<b>${esc(product.name)}</b>`
+          + (product.product_code ? `　<span class="muted small">${esc(product.product_code)}</span>` : '')],
+        ['价格', fmtPrice(product.price)],
+        ['状态', esc(product.status_text)],
+        ['成色 / 分类', `${esc(product.condition || '—')}　·　${esc(product.category_name || '—')}`],
+        ['卖家', esc(product.seller_nickname || '')],
+        ['浏览量', `👁 ${product.views ?? 0}`],
+      ]));
+    }
+
+    if (extra && extra.kind === 'review') {
+      blocks.push(`<h4 class="detail-h">评价内容</h4>` + kvLines([
+        ['评分', `${'★'.repeat(extra.rating || 0)}${'☆'.repeat(Math.max(0, 5 - (extra.rating || 0)))}（${extra.rating} 星）`],
+        ['评价人', esc(extra.reviewer || '')],
+        ['被评人', esc(extra.reviewee || '')],
+        ['内容', esc(extra.content || '（未填写）')],
+      ]));
+    }
+
+    if (extra && extra.kind === 'report') {
+      blocks.push(`<h4 class="detail-h">举报内容</h4>` + kvLines([
+        ['举报对象', esc(extra.target)],
+        ['举报人', esc(extra.reporter || '')],
+        ['处理状态', esc(extra.status)],
+        ['举报理由', esc(extra.reason || '—')],
+      ]));
+    }
+
+    if (extra && extra.kind === 'missing') {
+      blocks.push(`<p class="muted small">${esc(extra.message)}</p>`);
+    }
+
+    if (d.links && d.links.length) {
+      blocks.push(`<div class="row mt-16" style="gap:8px;justify-content:flex-end">`
+        + d.links.map(l => `<button class="btn btn-sm" data-goto="${esc(l.hash)}">${esc(l.label)}</button>`).join('')
+        + `</div>`);
+    }
+
+    return blocks.join('');
+  }
+
+  async function openLogDetail(logId) {
+    let d;
+    try {
+      d = await api.get(`/api/admin/logs/${logId}`);
+    } catch (err) {
+      toast(`加载日志详情失败：${err.message}`, 'error');
+      return;
+    }
+    openModal({
+      title: d.log?.action_text || '操作日志',
+      body: logDetailBody(d),
+      footer: '<button class="btn" data-close>关闭</button>',
+      onMount(modal, close) {
+        modal.querySelectorAll('[data-goto]').forEach(el =>
+          el.addEventListener('click', () => {
+            close();
+            location.hash = el.dataset.goto;
+          }));
+      },
+    });
+  }
+
   /* ---------------- 状态卡下钻（需求①-新）---------------- */
   const CARD_DEFS = [
     { kind: 'pending', label: '进行中交易', icon: '⏳', value: (s) => s.pending },
@@ -549,13 +656,25 @@ async function renderTrades(panel) {
     box.innerHTML = `
       <div class="timeline">
         ${data.list.map(log => `
-          <div class="tl-item">
+          <div class="tl-item clickable" data-log="${log.id}" role="button" tabindex="0"
+               title="点击查看这条动作的详细交易信息">
             <span class="tl-time muted small">${esc(fmtTime(log.created_at))}</span>
             <span class="tl-who">${esc(log.nickname || log.username || '系统')}</span>
             <span class="tl-action">${esc(log.action_text)}</span>
             <span class="tl-summary muted">${esc(log.summary)}</span>
           </div>`).join('')}
       </div>`;
+
+    // 需求②：点条目看详情（发起人、精确时间、相关订单与商品）
+    box.querySelectorAll('[data-log]').forEach(el => {
+      el.addEventListener('click', () => openLogDetail(el.dataset.log));
+      el.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openLogDetail(el.dataset.log);
+        }
+      });
+    });
 
     renderPagination(panel.querySelector('#lg-pager'), {
       page: data.page,

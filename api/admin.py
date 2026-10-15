@@ -21,7 +21,7 @@ from config import Config
 from extensions import db
 from models import (
     CampusPlace, Category, Message, OperationLog, Order, Post, Product, Report,
-    Subcategory, User,
+    Review, Subcategory, User, _dt,
     ORDER_CANCELED, ORDER_DONE, ORDER_PENDING,
     PRODUCT_DELETED, PRODUCT_OFF_SHELF, PRODUCT_ON_SALE, PRODUCT_SOLD,
 )
@@ -208,6 +208,129 @@ def admin_orders_detail():
                    "subtitle": "已进行 %d 分钟" % data["elapsed_minutes"], "order": data})
 
     return fail("未知的下钻类型")
+
+
+def _ago_text(when) -> str:
+    """把时间说成人话：刚刚 / N 分钟前 / N 小时前 / N 天前。"""
+    if when is None:
+        return ""
+    seconds = int((datetime.now() - when).total_seconds())
+    if seconds < 60:
+        return "刚刚"
+    if seconds < 3600:
+        return f"{seconds // 60} 分钟前"
+    if seconds < 86400:
+        return f"{seconds // 3600} 小时前"
+    return f"{seconds // 86400} 天前"
+
+
+@bp.get("/logs/<int:log_id>")
+@admin_required
+def admin_log_detail(log_id: int):
+    """「动态监控」单条日志的详情（需求②）。
+
+    不只给日志本身，还把**涉及的对象**一并查出来：发起人、精确时间、
+    相关订单（交易双方、金额、状态、自提点、下单/完成时间）、相关商品（名称/编号/价格/状态）、
+    以及评价或举报的具体内容。对象已被彻底删除时如实说明。
+    """
+    log = OperationLog.query.get(log_id)
+    if log is None:
+        return fail("日志不存在", 404)
+
+    data = log.to_dict()
+    data["ago_text"] = _ago_text(log.created_at)
+
+    actor = User.query.get(log.user_id) if log.user_id else None
+    result = {
+        "log": data,
+        "actor": {
+            "id": actor.id if actor else None,
+            "nickname": actor.nickname if actor else (log.username or "系统"),
+            "username": actor.username if actor else log.username,
+            "role": log.role or (actor.role if actor else ""),
+            "bio": (actor.bio or None) if actor else None,
+        },
+        "order": None,
+        "product": None,
+        "extra": None,
+        "links": [],
+    }
+
+    order = None
+    product = None
+    if log.target_type == "order" and log.target_id:
+        order = Order.query.get(log.target_id)
+    elif log.target_type == "product" and log.target_id:
+        product = Product.query.get(log.target_id)
+    elif log.target_type == "review" and log.target_id:
+        review = Review.query.get(log.target_id)
+        if review:
+            order = Order.query.get(review.order_id) if review.order_id else None
+            result["extra"] = {
+                "kind": "review",
+                "rating": review.rating,
+                "content": review.content,
+                "reviewer": review.reviewer.nickname if review.reviewer else None,
+                "reviewee": review.reviewee.nickname if review.reviewee else None,
+            }
+    elif log.target_type == "report" and log.target_id:
+        report = Report.query.get(log.target_id)
+        if report:
+            result["extra"] = {
+                "kind": "report",
+                "reason": report.reason,
+                "status": report.status,
+                "reporter": report.reporter.nickname if report.reporter else None,
+                "target": "商品" if report.product_id else "帖子",
+            }
+
+    if order:
+        buyer = User.query.get(order.buyer_id)
+        seller = User.query.get(order.seller_id)
+        product = product or (Product.query.get(order.product_id) if order.product_id else None)
+        result["order"] = {
+            "id": order.id,
+            "order_no": order.order_no,
+            "status": order.status,
+            "status_text": order.STATUS_TEXT.get(order.status, order.status),
+            "price": float(order.price),
+            "created_at": _dt(order.created_at),
+            "finished_at": _dt(order.finished_at),
+            "ago_text": _ago_text(order.created_at),
+            "trade_note": order.trade_note or "",
+            "meet_place": order.meet_place.name if order.meet_place else None,
+            "buyer": {"id": order.buyer_id, "nickname": buyer.nickname if buyer else None},
+            "seller": {
+                "id": order.seller_id,
+                "nickname": seller.nickname if seller else None,
+                "seller_code": f"{seller.seller_seq:04d}" if seller and seller.seller_seq else None,
+            },
+        }
+        result["links"].append({"label": "查看该订单的商品", "hash": f"#/product/{order.product_id}"})
+
+    if product:
+        result["product"] = {
+            "id": product.id,
+            "name": product.name,
+            "product_code": product.product_code,
+            "price": float(product.price),
+            "status": product.status,
+            "status_text": (product.to_dict().get("status_text") or product.status),
+            "condition": product.condition,
+            "category_name": product.category.name if product.category else None,
+            "seller_id": product.seller_id,
+            "seller_nickname": product.seller.nickname if product.seller else None,
+            "views": product.views,
+        }
+        result["links"].append({"label": "查看商品详情", "hash": f"#/product/{product.id}"})
+        if product.seller_id:
+            result["links"].append(
+                {"label": "查看卖家主页", "hash": f"#/seller/{product.seller_id}"})
+
+    if log.target_type == "product" and log.target_id and product is None:
+        result["extra"] = {"kind": "missing", "message": "这件商品已被彻底删除，只能从日志回溯"}
+
+    return ok(result)
 
 
 @bp.get("/logs")

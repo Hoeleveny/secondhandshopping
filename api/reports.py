@@ -57,9 +57,10 @@ def create_report():
     report = Report(reporter_id=user.id, reason=full_reason,
                     status="pending", **target_field)
     db.session.add(report)
+    db.session.flush()  # 先落库拿到 report.id，否则日志里的 target_id 会是 None
     import audit
 
-    audit.record("report_create", "report", None,
+    audit.record("report_create", "report", report.id,
                  f"举报{'商品' if target_field.get('product_id') else '帖子'}：{full_reason[:60]}")
     db.session.commit()
     return ok(report.to_dict(), msg="举报已提交，管理员会尽快处理")
