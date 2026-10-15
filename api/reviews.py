@@ -59,8 +59,9 @@ def create_review():
     db.session.add(review)
     import audit
 
-    audit.record("review_create", "review", None,
-                 f"给订单 {order.order_no} 打了 {rating} 星评价")
+    audit.record("review_create", "review", review.id,
+                 f"给「{order.product.name if order.product else '商品已删除'}」"
+                 f"（订单 {order.order_no}）打了 {rating} 星评价")
     db.session.commit()
     return ok(review.to_dict(user.id), msg="评价已提交")
 

@@ -273,7 +273,8 @@ def delete_order_record(oid: int):
     import audit
 
     audit.record("order_record_delete", "order", order.id,
-                 f"删除订单记录 {order.order_no}（只对买家自己隐藏）")
+                 f"删除订单记录 {order.order_no}"
+                 f"「{order.product.name if order.product else '商品已删除'}」（只对买家自己隐藏）")
     db.session.commit()
     return ok(msg="订单记录已删除（卖家侧记录不受影响）")
 
