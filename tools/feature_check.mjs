@@ -1928,8 +1928,17 @@ async function feature18(cdp) {
   check('按商品编号筛选后只剩与该商品相关的日志（条数变少且不再是全部）',
     byProduct.items > 0 && byProduct.items < before, JSON.stringify(byProduct));
 
+  // 用**浏览器本地日期**，不要用 toISOString()——那是 UTC，
+  // 本地 00:00~08:00 之间会算成昨天，于是「筛今天」筛到昨天、一条也查不到。
+  const localDate = (offsetDays = 0) => cdp.eval(`
+    (() => {
+      const d = new Date(Date.now() + ${offsetDays} * 86400000);
+      return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'),
+              String(d.getDate()).padStart(2, '0')].join('-');
+    })()`);
+  const today = await localDate(0);
+
   // 叠加时间筛选（今天）
-  const today = new Date().toISOString().slice(0, 10);
   await cdp.eval(`
     (() => {
       document.querySelector('#lg-from').value = ${JSON.stringify(today)};
@@ -1938,14 +1947,14 @@ async function feature18(cdp) {
     })()`);
   await sleep(1200);
   const withDate = await cdp.eval(`document.querySelectorAll('#lg-list .tl-item').length`);
-  check('叠加「动作时间（今天）」后仍能查到记录', withDate > 0, `items=${withDate}`);
+  check('叠加「动作时间（今天）」后仍能查到记录', withDate > 0, `items=${withDate}（今天=${today}）`);
 
   // 起始时间设成明天 → 空态
+  const tomorrow = await localDate(1);
   await cdp.eval(`
     (() => {
-      const d = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
-      document.querySelector('#lg-from').value = d;
-      document.querySelector('#lg-to').value = d;
+      document.querySelector('#lg-from').value = ${JSON.stringify(tomorrow)};
+      document.querySelector('#lg-to').value = ${JSON.stringify(tomorrow)};
       document.querySelector('#lg-search').click();
     })()`);
   await waitFor(cdp, `!!document.querySelector('#lg-list .empty')`);
@@ -2099,6 +2108,92 @@ async function feature19(cdp) {
   check('被驳回的帖子不受影响', kept.code === 0, `code=${kept.code}`);
 }
 
+/* ================================================================ 功能⑳ 从举报审核进详情后能返回（需求⑤） */
+async function feature20(cdp) {
+  console.log('\n===== 功能⑳ 举报审核 → 详情 → 返回举报审核（需求⑤）=====');
+
+  async function ensureAccount(username, password, role) {
+    try {
+      return await login(username, password, role);
+    } catch {
+      await api('POST', '/api/auth/register', { body: { username, password, role } });
+      return login(username, password, role);
+    }
+  }
+  const authorToken = await ensureAccount('smoke_buyer', '1234', 'buyer');
+  const reporterToken = await ensureAccount('acc_buyer', '1234', 'buyer');
+  const sellerToken = await login('seller1', '123456', 'seller');
+
+  // 备两条待处理举报：一条针对帖子、一条针对商品
+  const post = (await api('POST', '/api/posts', {
+    token: authorToken,
+    body: { title: '自动化测试：举报页返回', content: '自动化测试用', tag: '闲聊' },
+  })).data;
+  await api('POST', '/api/reports', {
+    token: reporterToken,
+    body: { target_type: 'post', post_id: post.id, reason: '虚假信息' },
+  });
+
+  const myProduct = (await api('GET', '/api/products/mine?status=on_sale&page_size=1',
+    { token: sellerToken })).data.list[0];
+  await api('POST', '/api/reports', {
+    token: reporterToken,
+    body: { target_type: 'product', product_id: myProduct.id, reason: '虚假信息' },
+  });
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=reports');
+  await waitFor(cdp, `document.querySelectorAll('#rp-list [data-target]').length > 0`);
+
+  // ---- 1. 帖子：从举报审核进详情，返回应回举报审核 ----
+  await cdp.eval(`
+    (() => {
+      const el = [...document.querySelectorAll('#rp-list [data-target]')]
+        .find(x => x.dataset.target.startsWith('post:'));
+      el.click();
+    })()`);
+  await waitFor(cdp, `location.hash.startsWith('#/post/')`);
+  await waitFor(cdp, `!!document.querySelector('#btn-back')`);
+  const postBack = await cdp.eval(`
+    (() => ({ hash: location.hash, label: document.querySelector('#btn-back').innerText.trim() }))()`);
+  check('从举报审核点进帖子详情，按钮显示「返回举报审核」',
+    /返回举报审核/.test(postBack.label) && postBack.hash.includes('from=admin'),
+    JSON.stringify(postBack));
+
+  await cdp.eval(`document.querySelector('#btn-back').click()`);
+  await waitFor(cdp, `location.hash.startsWith('#/admin')`);
+  const backHash = await cdp.eval(`location.hash`);
+  check('点返回确实回到「举报审核」页（不是交流广场）',
+    backHash === '#/admin?tab=reports', backHash);
+
+  // ---- 2. 商品：同样能回到举报审核 ----
+  await waitFor(cdp, `document.querySelectorAll('#rp-list [data-target]').length > 0`);
+  await cdp.eval(`
+    (() => {
+      const el = [...document.querySelectorAll('#rp-list [data-target]')]
+        .find(x => x.dataset.target.startsWith('product:'));
+      el.click();
+    })()`);
+  await waitFor(cdp, `location.hash.startsWith('#/product/')`);
+  await waitFor(cdp, `!!document.querySelector('#btn-back')`);
+  const prodBack = await cdp.eval(`document.querySelector('#btn-back').innerText.trim()`);
+  check('从举报审核点进商品详情，按钮也显示「返回举报审核」',
+    /返回举报审核/.test(prodBack), prodBack);
+  await cdp.eval(`document.querySelector('#btn-back').click()`);
+  await waitFor(cdp, `location.hash.startsWith('#/admin')`);
+  check('商品详情返回同样回到举报审核', (await cdp.eval(`location.hash`)) === '#/admin?tab=reports', '');
+
+  // ---- 3. 普通入口不受影响：交流广场进帖子详情仍回广场 ----
+  await cdp.logout();
+  await cdp.go(`/post/${post.id}`);
+  await waitFor(cdp, `!!document.querySelector('#btn-back')`);
+  const normalBack = await cdp.eval(`document.querySelector('#btn-back').innerText.trim()`);
+  check('从交流广场点进帖子详情，按钮仍是「返回广场」', /返回广场/.test(normalBack), normalBack);
+  await cdp.eval(`document.querySelector('#btn-back').click()`);
+  await waitFor(cdp, `location.hash === '#/posts'`);
+  check('普通入口的返回目标仍是交流广场', true, '');
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -2120,6 +2215,7 @@ const GROUPS = {
   17: { title: '动态监控条目详情（需求②）', fn: feature17 },
   18: { title: '动态监控多条件筛选（需求③）', fn: feature18 },
   19: { title: '举报填写理由 + 私信反馈（需求④）', fn: feature19 },
+  20: { title: '举报审核进详情后原路返回（需求⑤）', fn: feature20 },
 };
 
 async function main() {

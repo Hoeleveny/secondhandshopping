@@ -61,9 +61,50 @@ STEPS: list[tuple[str, str]] = [
     ("测试消息",
      "DELETE FROM messages WHERE content LIKE '冒烟测试%' "
      "OR content LIKE '自动化测试%'"),
+    # 需求④之后，处理测试举报会给「帖子作者/卖家」发平台通知；测试里的对象属演示账号时，
+    # 这些通知会留在演示账号收件箱里（还会顶掉「未读数」相关断言），所以按内容里的测试对象名清掉。
+    ("平台通知私信（内容是测试对象触发的）",
+     "DELETE FROM messages WHERE content LIKE '【平台通知】%' "
+     "AND (content LIKE '%冒烟%' OR content LIKE '%自动化测试%' OR content LIKE '%验收%')"),
     ("测试账号的「我想要」",
      "DELETE FROM product_wants WHERE user_id IN "
      "(SELECT id FROM users WHERE username IN ('smoke_buyer','acc_buyer'))"),
+    # 下面这一组是「让测试账号真的删得掉」：users 被这些外键引用，
+    # 只要还剩一行，DELETE FROM users 就会失败（而且失败是静默的，账号会一直残留）。
+    # 我因此踩过：acc_buyer 留着一条举报，账号删不掉，它的平台通知私信与会话也跟着留下，
+    # 把「删除会话后列表应为空」这类断言顶掉了。
+    ("测试账号发的举报（含其处理过的）",
+     "DELETE FROM reports WHERE reporter_id IN "
+     "(SELECT id FROM users WHERE username IN ('smoke_buyer','acc_buyer')) "
+     "OR handled_by IN (SELECT id FROM users WHERE username IN ('smoke_buyer','acc_buyer'))"),
+    ("测试账号的评价（作为评价人或被评人）",
+     "DELETE FROM reviews WHERE reviewer_id IN "
+     "(SELECT id FROM users WHERE username IN ('smoke_buyer','acc_buyer')) "
+     "OR reviewee_id IN (SELECT id FROM users WHERE username IN ('smoke_buyer','acc_buyer'))"),
+    ("测试账号的换物",
+     "DELETE FROM swap_offers WHERE user_id IN "
+     "(SELECT id FROM users WHERE username IN ('smoke_buyer','acc_buyer'))"),
+    ("测试账号的收藏",
+     "DELETE FROM favorites WHERE user_id IN "
+     "(SELECT id FROM users WHERE username IN ('smoke_buyer','acc_buyer'))"),
+    ("测试账号的帖子（评论/点赞/配图随外键级联删除）",
+     "DELETE FROM posts WHERE author_id IN "
+     "(SELECT id FROM users WHERE username IN ('smoke_buyer','acc_buyer'))"),
+    ("测试账号的订单",
+     "DELETE FROM orders WHERE buyer_id IN "
+     "(SELECT id FROM users WHERE username IN ('smoke_buyer','acc_buyer')) "
+     "OR seller_id IN (SELECT id FROM users WHERE username IN ('smoke_buyer','acc_buyer'))"),
+    ("测试账号发布的商品（图片/收藏/想要等已在前面清掉）",
+     "DELETE FROM products WHERE seller_id IN "
+     "(SELECT id FROM users WHERE username IN ('smoke_buyer','acc_buyer'))"),
+    ("测试账号的会话清除标记",
+     "DELETE FROM message_clears WHERE user_id IN "
+     "(SELECT id FROM users WHERE username IN ('smoke_buyer','acc_buyer')) "
+     "OR peer_id IN (SELECT id FROM users WHERE username IN ('smoke_buyer','acc_buyer'))"),
+    ("测试账号的私信（含平台通知；账号删不掉时它们会残留）",
+     "DELETE FROM messages WHERE sender_id IN "
+     "(SELECT id FROM users WHERE username IN ('smoke_buyer','acc_buyer')) "
+     "OR receiver_id IN (SELECT id FROM users WHERE username IN ('smoke_buyer','acc_buyer'))"),
     ("操作日志（测试账号 + 摘要里提到测试对象；否则会刷屏管理后台的动态监控）",
      "DELETE FROM operation_logs WHERE username LIKE 'smoke%' "
      "OR username LIKE 'acc%' "

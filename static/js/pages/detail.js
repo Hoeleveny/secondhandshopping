@@ -13,6 +13,8 @@ import {
 export default {
   async render(root, ctx) {
     const id = ctx.params.id;
+    // 需求⑤：管理员从「举报审核」点进来的商品/帖子，返回时要回举报审核
+    const fromAdmin = (ctx.query.from || '').toLowerCase() === 'admin';
     let product;
     try {
       product = await api.get(`/api/products/${id}`);
@@ -26,7 +28,7 @@ export default {
 
     root.innerHTML = `
       <div class="page-head">
-        <button class="btn btn-ghost btn-sm" id="btn-back">‹ 返回</button>
+        <button class="btn btn-ghost btn-sm" id="btn-back">${fromAdmin ? '‹ 返回举报审核' : '‹ 返回'}</button>
         <span class="muted small">本页每打开一次，浏览量 +1（当前 ${product.views}）</span>
       </div>
 
@@ -78,7 +80,10 @@ export default {
         </div>
       </div>`;
 
-    root.querySelector('#btn-back').addEventListener('click', () => history.back());
+    root.querySelector('#btn-back').addEventListener('click', () => {
+      if (fromAdmin) { location.hash = '#/admin?tab=reports'; return; }
+      history.back();
+    });
 
     // 图片切换
     const thumbs = root.querySelector('#thumbs');

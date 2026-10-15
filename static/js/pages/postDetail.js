@@ -16,11 +16,16 @@ async function renderPost(root, ctx) {
   }
 
   const canDelete = store.isLoggedIn && (post.author_id === store.user?.id || store.isAdmin);
+  // 需求⑤：从「举报审核」点进来的，返回时要回举报审核，而不是交流广场
+  const fromAdmin = (ctx.query.from || '').toLowerCase() === 'admin';
+  const back = fromAdmin
+    ? { hash: '#/admin?tab=reports', label: '‹ 返回举报审核' }
+    : { hash: '#/posts', label: '‹ 返回广场' };
   const comments = post.comments || [];
 
   root.innerHTML = `
     <div class="page-head">
-      <button class="btn btn-ghost btn-sm" id="btn-back">‹ 返回广场</button>
+      <button class="btn btn-ghost btn-sm" id="btn-back">${back.label}</button>
       ${canDelete ? '<button class="btn btn-danger btn-sm" id="btn-del">🗑️ 删除帖子</button>' : ''}
     </div>
 
@@ -66,7 +71,7 @@ async function renderPost(root, ctx) {
       </div>
     </div>`;
 
-  root.querySelector('#btn-back').addEventListener('click', () => { location.hash = '#/posts'; });
+  root.querySelector('#btn-back').addEventListener('click', () => { location.hash = back.hash; });
 
   // 功能⑥：点配图放大看原图
   const gallery = root.querySelector('#post-gallery');
@@ -94,7 +99,7 @@ async function renderPost(root, ctx) {
       try {
         await api.del(`/api/posts/${id}`);
         toast('帖子已删除');
-        location.hash = '#/posts';
+        location.hash = back.hash;   // 管理员从举报审核来的，删完回举报审核
       } catch (err) { toast(err.message, 'error'); }
     });
   }

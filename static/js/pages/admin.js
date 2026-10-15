@@ -883,7 +883,10 @@ async function renderReports(panel) {
     listBox.querySelectorAll('[data-target]').forEach(el =>
       el.addEventListener('click', () => {
         const [type, id] = el.dataset.target.split(':');
-        location.hash = type === 'product' ? `#/product/${id}` : `#/post/${id}`;
+        // 需求⑤：带上来源，帖子详情页的「返回」才会回到举报审核而不是交流广场
+        location.hash = type === 'product'
+          ? `#/product/${id}?from=admin`
+          : `#/post/${id}?from=admin`;
       }));
 
     // 需求④：处理举报时可填「大致原因 + 详细说明」，处理结果会以私信反馈给对方
