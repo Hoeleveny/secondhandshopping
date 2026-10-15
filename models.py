@@ -627,6 +627,8 @@ class OperationLog(db.Model):
         "order_record_delete": "删除订单记录",
         "review_create": "发表评价",
         "report_create": "提交举报",
+        "report_handle": "处理举报",
+        "report_dismiss": "驳回举报",
         "admin_order_cancel": "管理员强制取消交易",
         "admin_order_complete": "管理员标记交易完成",
     }

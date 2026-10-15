@@ -52,6 +52,9 @@ STEPS: list[tuple[str, str]] = [
     ("测试分类（要先删干净它名下的商品，否则删不掉）",
      "DELETE FROM categories WHERE name LIKE '冒烟%' "
      "OR name LIKE '验收%' OR name LIKE '自动化测试%'"),
+    ("举报（指向测试帖子）—— 必须先删，否则帖子被外键挡住删不掉",
+     "DELETE FROM reports WHERE post_id IN (SELECT id FROM posts WHERE title LIKE '冒烟%' "
+     "OR title LIKE '验收%' OR title LIKE '自动化测试%')"),
     ("测试帖子（评论/点赞随外键级联删除）",
      "DELETE FROM posts WHERE title LIKE '冒烟%' "
      "OR title LIKE '验收%' OR title LIKE '自动化测试%'"),

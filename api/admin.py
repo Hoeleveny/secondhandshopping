@@ -14,6 +14,7 @@ from pathlib import Path
 from flask import Blueprint, current_app, send_from_directory
 from sqlalchemy import and_, case, func, or_
 
+import audit
 from api.common import (
     admin_required, arg_int, arg_str, current_user, fail, json_body, ok, paginate_args,
 )
@@ -482,43 +483,95 @@ def report_list():
         "dismissed": Report.query.filter_by(status="dismissed").count(),
     }
     return ok({"list": [r.to_dict() for r in items], "total": total,
-               "page": page, "page_size": size, "counts": counts})
+               "page": page, "page_size": size, "counts": counts,
+               # 需求④：前端弹窗的「大致原因」下拉直接用这份清单，避免前后端各写一套
+               "reason_options": REPORT_REASONS})
+
+
+# 处理举报时可选的「大致原因」（需求④）：删帖/下架通知发布者、驳回通知举报者
+REPORT_REASONS = {
+    "handle": ["违规内容", "虚假信息", "广告刷屏", "人身攻击", "涉及隐私", "其他"],
+    "dismiss": ["证据不足", "内容不违规", "重复举报", "已处理过", "其他"],
+}
 
 
 @bp.patch("/reports/<int:rid>")
 @admin_required
 def handle_report(rid: int):
-    """action=handle → 下架商品 / 删除帖子；action=dismiss → 驳回。"""
+    """action=handle → 下架商品 / 删除帖子；action=dismiss → 驳回。
+
+    需求④：处理时可以填「大致原因（预设）+ 详细说明」，处理结果会**以私信反馈**：
+    删帖/下架 → 通知帖子/商品的发布者；驳回 → 通知举报者。
+    """
     user = current_user()
+    body = json_body()
     report = Report.query.get(rid)
     if report is None:
         return fail("举报不存在", 404)
     if report.status != "pending":
         return fail("该举报已经处理过了", 409)
 
-    action = (json_body().get("action") or "").strip().lower()
+    action = (body.get("action") or "").strip().lower()
     if action not in ("handle", "dismiss"):
         return fail("处理动作只能是 handle（处理）或 dismiss（驳回）")
 
+    reasons = REPORT_REASONS[action]
+    reason_code = (body.get("reason_code") or "").strip()
+    if reason_code and reason_code not in reasons:
+        return fail("原因不在可选项里：" + "、".join(reasons))
+    reason_code = reason_code or "其他"      # 不传时给个中性值，消息依然读得通
+    reason_text = (body.get("reason_text") or "").strip()[:200]
+
     message = ""
+    notice = ""
+    notify_id = None
     if action == "handle":
         if report.product_id:
             product = Product.query.get(report.product_id)
             if product and product.status != PRODUCT_DELETED:
                 product.status = PRODUCT_OFF_SHELF
+            title = product.name if product else "（商品已删除）"
+            notify_id = product.seller_id if product else None
             message = "已下架被举报的商品"
+            notice = f"【平台通知】你发布的商品《{title}》因【{reason_code}】已被下架。"
         elif report.post_id:
             post = Post.query.get(report.post_id)
             if post and post.status == "normal":
                 post.status = "deleted"
+            title = post.title if post else "（帖子已删除）"
+            notify_id = post.author_id if post else None
             message = "已删除被举报的帖子"
+            notice = f"【平台通知】你发布的帖子《{title}》因【{reason_code}】已被删除。"
         report.status = "handled"
     else:
+        if report.post_id and report.post:
+            title = report.post.title
+        elif report.product_id and report.product:
+            title = report.product.name
+        else:
+            title = "（对象已删除）"
+        notify_id = report.reporter_id
         report.status = "dismissed"
         message = "已驳回该举报"
+        notice = f"【平台通知】你对《{title}》的举报，经核实因【{reason_code}】未予处理（已驳回）。"
+
+    if reason_text:
+        notice += f"补充说明：{reason_text}"
+    if notify_id:
+        notice += "（本条为平台通知，无需回复）"
 
     report.handled_by = user.id
     report.handled_at = datetime.now()
+
+    # 需求④：以私信把处理结果反馈给相关的人
+    if notify_id and notify_id != user.id:
+        db.session.add(Message(sender_id=user.id, receiver_id=notify_id,
+                               content=notice[:Message.MAX_LENGTH]))
+    audit.record("report_handle" if action == "handle" else "report_dismiss",
+                 "report", report.id,
+                 f"{'处理' if action == 'handle' else '驳回'}举报（原因：{reason_code}"
+                 + (f"，说明：{reason_text}" if reason_text else "")
+                 + f"）：{notice}")
     db.session.commit()
     return ok(report.to_dict(), msg=message)
 

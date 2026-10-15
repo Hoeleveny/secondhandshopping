@@ -886,31 +886,48 @@ async function renderReports(panel) {
         location.hash = type === 'product' ? `#/product/${id}` : `#/post/${id}`;
       }));
 
+    // 需求④：处理举报时可填「大致原因 + 详细说明」，处理结果会以私信反馈给对方
+    const reasonOptions = data.reason_options || { handle: ['其他'], dismiss: ['其他'] };
+
     listBox.querySelectorAll('[data-handle]').forEach(el =>
-      el.addEventListener('click', async () => {
+      el.addEventListener('click', () => {
         const isProduct = el.dataset.type === 'product';
-        const sure = await confirmDialog({
-          title: isProduct ? '确认下架该商品？' : '确认删除该帖子？',
-          danger: true, okText: isProduct ? '下架商品' : '删除帖子',
-          message: '核实无误后执行，该举报会标记为「已处理」。',
+        openFormModal({
+          title: isProduct ? '下架被举报的商品' : '删除被举报的帖子',
+          submitText: isProduct ? '下架并通知卖家' : '删帖并通知作者',
+          successMsg: isProduct
+            ? '已下架商品，并私信告知卖家'
+            : '已删除帖子，并私信告知作者',
+          fields: [
+            { key: 'reason_code', label: '大致原因', type: 'select', required: true,
+              options: (reasonOptions.handle || [])
+                .map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('') },
+            { key: 'reason_text', label: '详细说明（可选，会一并私信）', type: 'textarea',
+              maxlength: 200, placeholder: '例如：帖子含外部广告链接，已多次提醒' },
+          ],
+          submit: (values) => api.patch(`/api/admin/reports/${el.dataset.handle}`,
+                                        { action: 'handle', ...values }),
+          done: load,
         });
-        if (!sure) return;
-        try {
-          await api.patch(`/api/admin/reports/${el.dataset.handle}`, { action: 'handle' });
-          toast(isProduct ? '已下架被举报商品' : '已删除被举报帖子');
-          load();
-        } catch (err) { toast(err.message, 'error'); }
       }));
 
     listBox.querySelectorAll('[data-dismiss]').forEach(el =>
-      el.addEventListener('click', async () => {
-        const sure = await confirmDialog({ title: '驳回该举报？', okText: '驳回', message: '驳回后不会对商品或帖子做任何改动。' });
-        if (!sure) return;
-        try {
-          await api.patch(`/api/admin/reports/${el.dataset.dismiss}`, { action: 'dismiss' });
-          toast('已驳回该举报');
-          load();
-        } catch (err) { toast(err.message, 'error'); }
+      el.addEventListener('click', () => {
+        openFormModal({
+          title: '驳回该举报',
+          submitText: '驳回并通知举报者',
+          successMsg: '已驳回，并私信告知举报者',
+          fields: [
+            { key: 'reason_code', label: '驳回原因', type: 'select', required: true,
+              options: (reasonOptions.dismiss || [])
+                .map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('') },
+            { key: 'reason_text', label: '详细说明（可选，会一并私信）', type: 'textarea',
+              maxlength: 200, placeholder: '例如：经核实内容属实，未违反社区规范' },
+          ],
+          submit: (values) => api.patch(`/api/admin/reports/${el.dataset.dismiss}`,
+                                        { action: 'dismiss', ...values }),
+          done: load,
+        });
       }));
 
     renderPagination(pager, {
@@ -1234,7 +1251,7 @@ async function renderDataManager(panel) {
 }
 
 /* ================================================================ 通用表单弹窗 */
-function openFormModal({ title, fields, submit, done }) {
+function openFormModal({ title, fields, submit, done, successMsg = '保存成功', submitText = '保存' }) {
   openModal({
     title,
     body: fields.map(field => {
@@ -1245,6 +1262,15 @@ function openFormModal({ title, fields, submit, done }) {
             <select class="select" data-field="${field.key}">${field.options}</select>
           </div>`;
       }
+      if (field.type === 'textarea') {
+        return `
+          <div class="form-row">
+            <label>${esc(field.label)}${field.required ? '<span class="req">*</span>' : ''}</label>
+            <textarea class="textarea" data-field="${field.key}"
+                      maxlength="${field.maxlength || 200}"
+                      placeholder="${esc(field.placeholder || '')}">${esc(field.value ?? '')}</textarea>
+          </div>`;
+      }
       return `
         <div class="form-row">
           <label>${esc(field.label)}${field.required ? '<span class="req">*</span>' : ''}</label>
@@ -1253,7 +1279,7 @@ function openFormModal({ title, fields, submit, done }) {
         </div>`;
     }).join(''),
     footer: `<button class="btn" data-close>取消</button>
-             <button class="btn btn-primary" id="fm-submit">保存</button>`,
+             <button class="btn btn-primary" id="fm-submit">${esc(submitText)}</button>`,
     onMount(modal, close) {
       modal.querySelector('#fm-submit').addEventListener('click', async (event) => {
         const button = event.currentTarget;
@@ -1272,7 +1298,7 @@ function openFormModal({ title, fields, submit, done }) {
         try {
           await submit(values);
           close();
-          toast('保存成功');
+          toast(successMsg);
           if (done) done();
         } catch (err) {
           toast(err.message, 'error');

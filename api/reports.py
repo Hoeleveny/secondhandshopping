@@ -17,7 +17,11 @@ def create_report():
     user = current_user()
     body = json_body()
 
-    target_type = (body.get("target_type") or "product").strip().lower()
+    target_type = (body.get("target_type") or "").strip().lower()
+    if not target_type:
+        # 没显式指定时按「传了哪个 id」推断：只传 post_id 却默认成 product，
+        # 会静默地去举报同 id 的商品（或报「商品不存在」），这个坑踩过。
+        target_type = "post" if (body.get("post_id") and not body.get("product_id")) else "product"
     reason = (body.get("reason") or "").strip()
     detail = (body.get("detail") or "").strip()
     target_id = body.get("target_id") or body.get("product_id") or body.get("post_id")

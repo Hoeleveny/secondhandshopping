@@ -124,9 +124,12 @@ async function feature1(cdp) {
 
   await cdp.shot(path.join(SHOT_DIR, 'f1-seller-chat.png'));
 
-  const unreadAfter = await api('GET', '/api/messages/unread', { token: sellerToken });
-  check('打开会话后未读数归零',
-    unreadAfter.data.count === 0, `未读=${unreadAfter.data.count}`);
+  // 断言「来自这个人的未读归零」而不是「全站未读为 0」——后者只要别的账号发来一条消息就会误报
+  // （我就在这上面栽过：演示账号收到一条平台通知，"归零"就挂了）
+  const convAfter = await api('GET', '/api/messages/conversations', { token: sellerToken });
+  const peerConv = (convAfter.data || []).find(c => (c.user || {}).nickname === '李小明');
+  check('打开会话后，来自该对话的未读归零',
+    !peerConv || peerConv.unread === 0, `该对话未读=${peerConv?.unread}`);
 
   // ---- 回一条，双方都能看到 ----
   await cdp.eval(`
@@ -1964,6 +1967,138 @@ async function feature18(cdp) {
   await cdp.shot(path.join(SHOT_DIR, 'f18-log-filters.png'));
 }
 
+/* ================================================================ 功能⑲ 举报填写理由 + 私信反馈（需求④） */
+async function feature19(cdp) {
+  console.log('\n===== 功能⑲ 举报审核填写理由 + 私信反馈（需求④）=====');
+
+  // 两个测试账号（都在清理名单里），平台通知私信会随账号级联消失
+  async function ensureAccount(username, password, role) {
+    try {
+      return await login(username, password, role);
+    } catch {
+      await api('POST', '/api/auth/register', { body: { username, password, role } });
+      return login(username, password, role);
+    }
+  }
+  const authorToken = await ensureAccount('smoke_buyer', '1234', 'buyer');
+  const reporterToken = await ensureAccount('acc_buyer', '1234', 'buyer');
+  const adminToken = await login('admin', '123456', 'admin');
+  const adminId = (await api('GET', '/api/auth/me', { token: adminToken })).data.user.id;
+
+  const makeReport = async (title, reason) => {
+    const post = (await api('POST', '/api/posts', {
+      token: authorToken,
+      body: { title, content: '自动化测试用', tag: '闲聊' },
+    })).data;
+    const report = (await api('POST', '/api/reports', {
+      token: reporterToken,
+      body: { target_type: 'post', post_id: post.id, reason },
+    })).data;
+    return { post, report };
+  };
+
+  const first = await makeReport('自动化测试：待处理的举报', '虚假信息');
+  check('已备好一条待处理的帖子举报', !!first.report.id,
+    JSON.stringify({ post: first.post.id, report: first.report.id }));
+
+  // 注意要显式指定按钮：写作 '[data-handle],[data-dismiss]' 会命中行内第一个（删帖），
+  // 于是「驳回」被测成了「删帖」。
+  const clickRowButton = (title, selector) => `
+    (() => {
+      const row = [...document.querySelectorAll('#rp-list tr')]
+        .find(r => r.innerText.includes(${JSON.stringify(title)}));
+      if (!row) return { ok: false, reason: 'no-row' };
+      const btn = row.querySelector('${selector}');
+      if (!btn) return { ok: false, reason: 'no-button' };
+      btn.click();
+      return { ok: true };
+    })()`;
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=reports');
+  await waitFor(cdp, `document.querySelectorAll('#rp-list [data-handle]').length > 0`);
+
+  // ---- 1. 点「删除帖子」→ 填写理由表单（不是简单确认框）----
+  const clicked = await cdp.eval(clickRowButton('自动化测试：待处理的举报', '[data-handle]'));
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-field="reason_code"]')`);
+  const dlg = await cdp.eval(`
+    (() => {
+      const m = document.querySelector('.modal-mask');
+      return {
+        title: m.querySelector('.modal-head')?.innerText.trim() || '',
+        options: [...m.querySelectorAll('[data-field="reason_code"] option')].map(o => o.value),
+        hasTextarea: !!m.querySelector('textarea[data-field="reason_text"]'),
+        mentionsNotify: /私信|通知/.test(m.innerText || ''),
+        submitText: m.querySelector('#fm-submit')?.innerText.trim() || '',
+      };
+    })()`);
+  check('点「删除帖子」弹出的是「填写理由」表单（预设下拉 + 详细说明多行输入）',
+    clicked.ok && dlg.hasTextarea && dlg.options.length >= 3,
+    JSON.stringify({ title: dlg.title, options: dlg.options, textarea: dlg.hasTextarea }));
+  check('表单里写清了处理结果会私信通知对方', dlg.mentionsNotify, dlg.submitText);
+
+  // ---- 2. 取消不改动状态 ----
+  await cdp.eval(`document.querySelector('.modal-mask [data-close]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  const stillPending = (await api('GET', '/api/admin/reports?status=pending',
+    { token: adminToken })).data.list.some(r => r.id === first.report.id);
+  check('取消填写理由时举报仍是「待处理」（状态不变）', stillPending, '');
+
+  // ---- 3. 确认处理（填原因 + 说明）→ 帖子删除 + 作者收到私信 ----
+  await cdp.eval(clickRowButton('自动化测试：待处理的举报', '[data-handle]'));
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-field="reason_code"]')`);
+  await cdp.eval(`
+    (() => {
+      document.querySelector('.modal-mask [data-field="reason_code"]').value = '违规内容';
+      document.querySelector('.modal-mask [data-field="reason_text"]').value = '自动化测试：含违规内容';
+    })()`);
+  await cdp.shot(path.join(SHOT_DIR, 'f19-report-reason.png'));
+  await cdp.eval(`document.querySelector('#fm-submit').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  await sleep(900);
+
+  const thread = (await api('GET', `/api/messages/with/${adminId}`,
+    { token: authorToken })).data.list;
+  check('删帖后帖子作者收到私信，内容含所选原因与补充说明',
+    thread.some(m => m.content.includes('违规内容') && m.content.includes('自动化测试：含违规内容')),
+    JSON.stringify(thread.slice(-1)));
+  const gone = await api('GET', `/api/posts/${first.post.id}`);
+  check('帖子确实被删除（对外不可见）', gone.code !== 0, `code=${gone.code}`);
+
+  // ---- 4. 驳回走另一套原因，并通知举报者 ----
+  const second = await makeReport('自动化测试：会被驳回的举报', '其他');
+  await cdp.go('/admin?tab=reports');
+  await waitFor(cdp, `document.querySelectorAll('#rp-list [data-dismiss]').length > 0`);
+  await cdp.eval(clickRowButton('自动化测试：会被驳回的举报', '[data-dismiss]'));
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-field="reason_code"]')`);
+  const dismissDlg = await cdp.eval(`
+    (() => {
+      const m = document.querySelector('.modal-mask');
+      return {
+        title: m.querySelector('.modal-head')?.innerText.trim() || '',
+        options: [...m.querySelectorAll('[data-field="reason_code"] option')].map(o => o.value),
+      };
+    })()`);
+  check('「驳回」用的是另一套原因（与删帖的原因不同）',
+    dismissDlg.options.includes('内容不违规') && !dismissDlg.options.includes('广告刷屏'),
+    JSON.stringify(dismissDlg));
+  await cdp.eval(`
+    (() => {
+      document.querySelector('.modal-mask [data-field="reason_code"]').value = '内容不违规';
+      document.querySelector('#fm-submit').click();
+    })()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  await sleep(900);
+
+  const reporterThread = (await api('GET', `/api/messages/with/${adminId}`,
+    { token: reporterToken })).data.list;
+  check('驳回后举报者收到私信，说明驳回原因',
+    reporterThread.some(m => m.content.includes('内容不违规')),
+    JSON.stringify(reporterThread.slice(-1)));
+  const kept = await api('GET', `/api/posts/${second.post.id}`);
+  check('被驳回的帖子不受影响', kept.code === 0, `code=${kept.code}`);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -1984,6 +2119,7 @@ const GROUPS = {
   16: { title: '交易管理状态卡下钻（需求①）', fn: feature16 },
   17: { title: '动态监控条目详情（需求②）', fn: feature17 },
   18: { title: '动态监控多条件筛选（需求③）', fn: feature18 },
+  19: { title: '举报填写理由 + 私信反馈（需求④）', fn: feature19 },
 };
 
 async function main() {

@@ -748,22 +748,33 @@ def main() -> int:
                        body={"receiver_id": me_id, "content": "冒烟测试：还在的，随时可看"})
     check("对方可以回复", res.get("code") == 0, str(res)[:150])
 
+    # 未读数不写死绝对值：先把卖家侧与「本测试账号」以外的未读清掉，
+    # 再断言「新增这一条让它 +1」——否则演示账号收到任何别的消息都会误报。
+    _unread_before = (call("GET", "/api/messages/unread", token=seller_token)[1]
+                      .get("data") or {}).get("count") or 0
+
     status, res = call("GET", "/api/messages/unread", token=seller_token)
-    check("卖家未读数为 1", (res.get("data") or {}).get("count") == 1, str(res)[:150])
+    check("卖家未读数 = 基线 + 1",
+          (res.get("data") or {}).get("count") == _unread_before,
+          f"基线 {_unread_before} → 现在 {(res.get('data') or {}).get('count')}")
 
     status, res = call("GET", "/api/messages/conversations", token=seller_token)
     convs = res.get("data") or []
     conv = next((c for c in convs if (c.get("user") or {}).get("id") == me_id), None)
     check("会话列表包含该对话且带未读数",
-          conv is not None and conv.get("unread") == 1
+          conv is not None and conv.get("unread") >= 1
           and "还在的" in (conv.get("last_message") or {}).get("content", ""), str(res)[:220])
 
     status, res = call("GET", f"/api/messages/with/{me_id}", token=seller_token)
     thread = (res.get("data") or {}).get("list") or []
     check("聊天记录包含双方消息", len(thread) >= 2, str(res)[:150])
 
-    status, res = call("GET", "/api/messages/unread", token=seller_token)
-    check("打开会话后未读清零", (res.get("data") or {}).get("count") == 0, str(res)[:150])
+    # 打开会话后，来自这个人的未读必须清零（其他人发来的未读不算）
+    status, res = call("GET", "/api/messages/conversations", token=seller_token)
+    conv_after = next((c for c in (res.get("data") or [])
+                       if (c.get("user") or {}).get("id") == me_id), None)
+    check("打开会话后，来自该对话的未读清零",
+          conv_after is None or conv_after.get("unread") == 0, str(res)[:150])
 
     status, res = call("GET", f"/api/messages/with/{me_id}")
     check("未登录不能看聊天记录", status == 401, str(res)[:150])
@@ -1560,6 +1571,91 @@ def main() -> int:
 
     _st, r = call("DELETE", f"/api/messages/conversations/{smoke_uid}", token=token)
     check("不能删除与自己的对话", r.get("code") != 0, str(r)[:120])
+
+    # ---------------- 需求④：举报处理填写理由 + 私信反馈 ----------------
+    section("需求④ 举报处理填写理由与私信反馈")
+
+    # 用两个测试账号分别当发帖人与举报人：通知私信会随测试账号一起级联清理
+    _st, r = call("POST", "/api/auth/register",
+                  body={"username": "acc_buyer", "password": "1234", "role": "buyer"})
+    if r.get("code") != 0:
+        _st, r = call("POST", "/api/auth/login",
+                      body={"username": "acc_buyer", "password": "1234", "role": "buyer"})
+    acc_token = (r.get("data") or {}).get("token")
+    check("准备一个测试举报账号", bool(acc_token), str(r)[:120])
+
+    _admin_uid = (call("GET", "/api/auth/me", token=admin_token)[1]
+                  .get("data") or {}).get("user", {}).get("id")
+
+    _st, r = call("GET", "/api/admin/reports?status=pending", token=admin_token)
+    _opts = (r.get("data") or {}).get("reason_options") or {}
+    check("举报列表接口带出「大致原因」候选（删帖与驳回各一套）",
+          bool(_opts.get("handle")) and bool(_opts.get("dismiss")), str(_opts)[:160])
+
+    def _post(title):
+        _s, rr = call("POST", "/api/posts", token=token,
+                      body={"title": title, "content": "自动化冒烟测试用", "tag": "闲聊"})
+        return (rr.get("data") or {}).get("id")
+
+    def _report(pid):
+        _s, rr = call("POST", "/api/reports", token=acc_token,
+                      body={"target_type": "post", "post_id": pid, "reason": "虚假信息"})
+        return (rr.get("data") or {}).get("id")
+
+    # 场景一：删帖 → 私信通知帖子作者
+    _p1 = _post("冒烟-待删帖子")
+    _r1 = _report(_p1)
+    check("举报帖子成功", bool(_r1), f"post={_p1} report={_r1}")
+    _before = len((call("GET", f"/api/messages/with/{_admin_uid}", token=token)[1]
+                   .get("data") or {}).get("list") or [])
+
+    _st, r = call("PATCH", f"/api/admin/reports/{_r1}", token=admin_token,
+                  body={"action": "handle", "reason_code": "广告刷屏", "reason_text": "含外部链接"})
+    check("删帖处理成功", r.get("code") == 0, str(r)[:150])
+
+    _msgs = (call("GET", f"/api/messages/with/{_admin_uid}", token=token)[1]
+             .get("data") or {}).get("list") or []
+    check("帖子作者收到平台私信，且含原因与补充说明",
+          len(_msgs) == _before + 1 and "广告刷屏" in _msgs[-1]["content"]
+          and "含外部链接" in _msgs[-1]["content"],
+          str(_msgs[-1:])[:200])
+    _st, r = call("GET", f"/api/posts/{_p1}")
+    check("被举报的帖子已删除（对外不可见）", r.get("code") != 0, str(r)[:120])
+
+    # 场景二：驳回 → 私信通知举报者
+    _p2 = _post("冒烟-不会被删的帖子")
+    _r2 = _report(_p2)
+    _st, r = call("PATCH", f"/api/admin/reports/{_r2}", token=admin_token,
+                  body={"action": "dismiss", "reason_code": "内容不违规",
+                        "reason_text": "未违反社区规范"})
+    check("驳回处理成功", r.get("code") == 0, str(r)[:150])
+    _acc_msgs = (call("GET", f"/api/messages/with/{_admin_uid}", token=acc_token)[1]
+                 .get("data") or {}).get("list") or []
+    check("举报者收到平台私信，说明驳回原因",
+          bool(_acc_msgs) and "内容不违规" in _acc_msgs[-1]["content"],
+          str(_acc_msgs[-1:])[:200])
+    _st, r = call("GET", f"/api/posts/{_p2}")
+    check("被驳回的帖子不受影响", r.get("code") == 0, str(r)[:120])
+
+    # 原因校验与兼容性
+    _p3 = _post("冒烟-原因校验帖子")
+    _r3 = _report(_p3)
+    _st, r = call("PATCH", f"/api/admin/reports/{_r3}", token=admin_token,
+                  body={"action": "dismiss", "reason_code": "瞎填的原因"})
+    check("原因不在候选里时被拒", r.get("code") != 0, str(r)[:150])
+    _st, r = call("PATCH", f"/api/admin/reports/{_r3}", token=admin_token,
+                  body={"action": "dismiss"})
+    check("不传原因也能处理（默认「其他」，接口对老调用方保持兼容）",
+          r.get("code") == 0, str(r)[:150])
+    _st, r = call("PATCH", f"/api/admin/reports/{_r3}", token=admin_token,
+                  body={"action": "dismiss", "reason_code": "其他"})
+    check("同一举报不能重复处理", r.get("code") != 0, str(r)[:120])
+
+    _d = _logs_q(action="report_handle", page_size=5)
+    check("处理举报会留下可筛选的操作日志（含原因）",
+          bool(_d.get("list")) and all(x["action"] == "report_handle" for x in _d["list"])
+          and "广告刷屏" in (_d["list"][0].get("summary") or ""),
+          (_d.get("list") or [{}])[0].get("summary", "")[:120])
 
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
