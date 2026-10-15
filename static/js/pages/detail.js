@@ -53,7 +53,7 @@ export default {
             <dl class="info-list mt-16">
               <dt>成色</dt><dd>${esc(product.condition)}</dd>
               <dt>分类</dt><dd>${esc(product.category_icon || '')} ${esc(product.category_name || '')}${product.subcategory_name ? ` / ${esc(product.subcategory_name)}` : ''}</dd>
-              <dt>卖家</dt><dd>${esc(product.seller_nickname || '')}</dd>
+              <dt>卖家</dt><dd><button class="link-btn" data-seller="${product.seller_id}">${esc(product.seller_nickname || '')}</button></dd>
               <dt>默认自提点</dt><dd>${esc(product.default_place?.name || '未指定')}</dd>
               <dt>发布时间</dt><dd>${esc(fmtTime(product.created_at))}</dd>
               <dt>浏览量</dt><dd>👁 ${product.views}</dd>
@@ -131,6 +131,11 @@ async function renderActions(root, product, id) {
   }
 
   bar.innerHTML = buttons.join('');
+
+  // 需求②：卖家昵称（信息区与下方「卖家：xxx」两处）都可点进卖家主页。
+  // 直接绑元素而不是绑 root——root 是常驻容器，绑它会在翻页时不断累积监听器。
+  root.querySelectorAll('[data-seller]').forEach(el =>
+    el.addEventListener('click', () => go(`#/seller/${el.dataset.seller}`)));
 
   bar.addEventListener('click', async (event) => {
     const btn = event.target.closest('[data-act]');
@@ -233,7 +238,7 @@ async function openBuyModal(product) {
         <div style="flex:1">
           <div class="strong">${esc(product.name)}</div>
           <div class="price mt-8">${fmtPrice(product.price)}</div>
-          <div class="muted small">卖家：${esc(product.seller_nickname || '')}</div>
+          <div class="muted small">卖家：<button class="link-btn" data-seller="${product.seller_id}">${esc(product.seller_nickname || '')}</button></div>
         </div>
       </div>
       <div class="divider"></div>

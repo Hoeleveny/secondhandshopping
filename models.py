@@ -31,6 +31,8 @@ class User(db.Model):
     avatar = db.Column(db.String(255))
     # 商品编号的「卖家码」来源：首次发布商品时惰性分配，不透出真实 id
     seller_seq = db.Column(db.Integer, unique=True)
+    # 需求②：商家简介（卖家在个人资料页自填，展示在卖家商品主页顶部）
+    bio = db.Column(db.String(100))
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
     # ---- 业务方法 ----
@@ -52,6 +54,8 @@ class User(db.Model):
             "role": self.role,
             # 功能⑦：头像文件名（相对 uploads/），没设置就是 None
             "avatar": self.avatar or None,
+            # 需求②：商家简介（可空）
+            "bio": self.bio or None,
         }
         if with_credit:
             data["credit"] = float(self.credit or 0)

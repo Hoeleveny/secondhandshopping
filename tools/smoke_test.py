@@ -1198,6 +1198,82 @@ def main() -> int:
           all(item.get("action_text") and item.get("nickname") is not None for item in only[:3]),
           str(only[:1])[:200])
 
+    # ---------------- 需求②：卖家商品主页 + 商家简介 ----------------
+    section("需求② 卖家商品主页与商家简介")
+
+    _me = (call("GET", "/api/auth/me", token=seller_token)[1].get("data") or {}).get("user") or {}
+    sid = _me.get("id")
+
+    _st, r = call("GET", f"/api/sellers/{sid}")
+    page_data = r.get("data") or {}
+    info = page_data.get("seller") or {}
+    check("卖家主页返回公开信息（昵称 / 卖家编号 / 加入时间）",
+          r.get("code") == 0 and info.get("nickname") and info.get("seller_code")
+          and info.get("joined_at"), str(info)[:200])
+    check("卖家主页不泄露登录名 username 与信用分 credit",
+          "username" not in info and "credit" not in info, str(list(info))[:150])
+    check("默认只给在售商品，总数与「在售件数」一致",
+          page_data.get("total") == (page_data.get("counts") or {}).get("on_sale")
+          and all(p["status"] == "on_sale" for p in page_data.get("list") or []),
+          f"total={page_data.get('total')} counts={page_data.get('counts')}")
+
+    _st, r = call("GET", f"/api/sellers/{sid}?status=sold")
+    sold_data = r.get("data") or {}
+    check("可以切到「已售」视图看成交记录",
+          r.get("code") == 0
+          and sold_data.get("total") == (sold_data.get("counts") or {}).get("sold")
+          and all(p["status"] == "sold" for p in sold_data.get("list") or []),
+          f"已售 {sold_data.get('total')} 件")
+
+    _st, r = call("GET", f"/api/sellers/{sid}?status=deleted")
+    check("只允许看在售 / 已售，其它状态被拒", r.get("code") != 0, str(r)[:120])
+    _st, r = call("GET", "/api/sellers/999999")
+    check("不存在的卖家返回 404", r.get("code") != 0, str(r)[:120])
+    _st, r = call("GET", "/api/sellers/1")
+    check("管理员没有卖家主页（404）", r.get("code") != 0, str(r)[:120])
+
+    # 下架 / 删除的商品不得出现在卖家主页
+    _st, r = call("POST", "/api/products", token=seller_token,
+                  body={"name": "冒烟-卖家主页隐藏商品", "price": 33.0, "category_id": 1,
+                        "subcategory_id": 1, "condition": "九成新",
+                        "description": "验证下架与删除后不再展示", "default_place_id": 2,
+                        "images": []})
+    hidden_pid = (r.get("data") or {}).get("id")
+    call("PATCH", f"/api/products/{hidden_pid}/status", token=seller_token,
+         body={"status": "off_shelf"})
+    ids_on_sale = [p["id"] for p in
+                   (call("GET", f"/api/sellers/{sid}?page_size=50")[1].get("data") or {}).get("list") or []]
+    check("已下架的商品不出现在卖家主页（在售视图）", hidden_pid not in ids_on_sale,
+          f"共 {len(ids_on_sale)} 件")
+    call("DELETE", f"/api/products/{hidden_pid}", token=seller_token)
+    ids_on_sale = [p["id"] for p in
+                   (call("GET", f"/api/sellers/{sid}?page_size=50")[1].get("data") or {}).get("list") or []]
+    check("已删除的商品也不出现在卖家主页", hidden_pid not in ids_on_sale, "")
+
+    _st, r = call("GET", f"/api/sellers/{sid}?keyword=" + quote("耳机"))
+    kw_total = (r.get("data") or {}).get("total")
+    _st, r = call("GET", f"/api/sellers/{sid}?category_id=3")
+    cat_total = (r.get("data") or {}).get("total")
+    check("卖家主页支持按关键词与分类筛选",
+          kw_total is not None and cat_total is not None, f"关键词 {kw_total} 件 / 分类 {cat_total} 件")
+
+    # 商家简介：能保存、能展示、超长被拒、能清空
+    original_bio = _me.get("bio") or ""
+    _st, r = call("PUT", "/api/auth/profile", token=seller_token,
+                  body={"bio": "冒烟测试用的商家简介"})
+    check("保存商家简介成功", r.get("code") == 0 and (r.get("data") or {}).get("bio")
+          == "冒烟测试用的商家简介", str(r)[:150])
+    _st, r = call("GET", f"/api/sellers/{sid}")
+    check("商家简介展示在卖家主页",
+          ((r.get("data") or {}).get("seller") or {}).get("bio") == "冒烟测试用的商家简介", "")
+    _st, r = call("PUT", "/api/auth/profile", token=seller_token, body={"bio": "长" * 101})
+    check("商家简介超过 100 字被拒", r.get("code") != 0, str(r)[:120])
+    call("PUT", "/api/auth/profile", token=seller_token, body={"bio": original_bio})
+    _st, r = call("GET", f"/api/sellers/{sid}")
+    check("商家简介已还原成测试前的值",
+          ((r.get("data") or {}).get("seller") or {}).get("bio") == (original_bio or None),
+          f"当前={((r.get('data') or {}).get('seller') or {}).get('bio')!r}")
+
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 

@@ -16,7 +16,7 @@ from config import Config
 from extensions import db
 from models import (
     Category, Favorite, Order, Product, ProductImage, ProductWant, Report, Review,
-    Subcategory, SwapOffer,
+    Subcategory, SwapOffer, User,
     PRODUCT_DELETED, PRODUCT_OFF_SHELF, PRODUCT_ON_SALE, PRODUCT_SOLD, ROLE_ADMIN,
 )
 
@@ -199,6 +199,57 @@ def product_detail(pid: int):
         round(sum(r.rating for r in reviews) / len(reviews), 1) if reviews else None
     )
     return ok(data)
+
+
+@bp.get("/sellers/<int:uid>")
+def seller_profile(uid: int):
+    """需求②：卖家商品主页的数据。
+
+    - 卖家公开信息：昵称、头像、商家简介、加入时间、卖家编号（脱敏序号）；
+      刻意**不返回** username / credit —— 前者是登录名，后者按约定不参与规则。
+    - 商品列表：默认「在售」，可切「已售」（当作成交记录看）；
+      已下架与已删除的商品不展示。支持关键词与分类筛选。
+    """
+    seller = User.query.get(uid)
+    if seller is None or seller.role == ROLE_ADMIN:
+        return fail("卖家不存在", 404)
+
+    status = arg_str("status") or PRODUCT_ON_SALE
+    if status not in (PRODUCT_ON_SALE, PRODUCT_SOLD):
+        return fail("只能查看「在售」或「已售」的商品")
+
+    q = Product.query.filter(Product.seller_id == uid, Product.status == status)
+    keyword = arg_str("keyword")
+    if keyword:
+        like = f"%{keyword}%"
+        q = q.filter(or_(Product.name.like(like), Product.description.like(like)))
+    category_id = arg_int("category_id")
+    if category_id:
+        q = q.filter(Product.category_id == category_id)
+
+    page, size = paginate_args(12)
+    total = q.count()
+    items = (q.order_by(Product.created_at.desc())
+             .offset((page - 1) * size).limit(size).all())
+
+    counts = {
+        "on_sale": Product.query.filter_by(seller_id=uid, status=PRODUCT_ON_SALE).count(),
+        "sold": Product.query.filter_by(seller_id=uid, status=PRODUCT_SOLD).count(),
+    }
+    return ok({
+        "seller": {
+            "id": seller.id,
+            "nickname": seller.nickname,
+            "avatar": seller.avatar or None,
+            "bio": seller.bio or None,
+            "seller_code": f"{seller.seller_seq:04d}" if seller.seller_seq else None,
+            "joined_at": (seller.created_at.strftime("%Y-%m-%d")
+                          if seller.created_at else None),
+        },
+        "counts": counts,
+        "list": [p.to_dict() for p in items],
+        "total": total, "page": page, "page_size": size,
+    })
 
 
 @bp.get("/products/<int:pid>/reviews")

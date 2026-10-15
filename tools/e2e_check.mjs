@@ -27,13 +27,13 @@ const USERS = {
 };
 
 const PLAN = [
-  { as: 'guest', routes: ['/home', '/search', '/compare', '/posts', '/post/1', '/product/1', '/login'] },
+  { as: 'guest', routes: ['/home', '/search', '/compare', '/posts', '/post/1', '/product/1', '/seller/4', '/login'] },
   { as: 'buyer', routes: ['/home', '/orders', '/favorites', '/swaps', '/order/2/map'] },
   { as: 'seller', routes: ['/my-products', '/publish', '/sold'] },
-  { as: 'admin', routes: ['/admin?tab=products', '/admin?tab=reports', '/admin?tab=base', '/admin?tab=data', '/dashboard'] },
+  { as: 'admin', routes: ['/admin?tab=products', '/admin?tab=trades', '/admin?tab=reports', '/admin?tab=base', '/admin?tab=data', '/dashboard'] },
 ];
 
-const SHOTS = ['/home', '/search', '/product/1', '/dashboard', '/admin?tab=products', '/login'];
+const SHOTS = ['/home', '/search', '/product/1', '/seller/4', '/dashboard', '/admin?tab=products', '/admin?tab=trades', '/login'];
 
 const problems = [];
 let checks = 0;

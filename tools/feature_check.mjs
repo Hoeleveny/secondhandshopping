@@ -1297,6 +1297,127 @@ async function feature11(cdp) {
     `仍有 ${stillPending.data?.total} 笔进行中`);
 }
 
+/* ================================================================ 功能⑫ 卖家商品主页（需求②） */
+async function feature12(cdp) {
+  console.log('\n===== 功能⑫ 卖家商品主页（需求②）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const me = (await api('GET', '/api/auth/me', { token: sellerToken })).data.user;
+  const originalBio = me.bio || '';
+  const mine = await api('GET', '/api/products/mine?status=on_sale&page_size=1', { token: sellerToken });
+  const sample = (mine.data?.list || [])[0];
+
+  // ---- 1. 详情页卖家昵称是可点入口 ----
+  await cdp.logout();
+  await cdp.go(`/product/${sample.id}`);
+  await waitFor(cdp, `!!document.querySelector('[data-seller]')`);
+  const link = await cdp.eval(`
+    (() => {
+      const b = document.querySelector('[data-seller]');
+      return { text: b?.innerText.trim() || '', sellerId: b?.dataset.seller || '' };
+    })()`);
+  check('商品详情页的卖家昵称是可点的入口', link.sellerId === String(me.id), JSON.stringify(link));
+
+  await cdp.eval(`document.querySelector('[data-seller]').click()`);
+  await waitFor(cdp, `location.hash.startsWith('#/seller/')`);
+  const hash = await cdp.eval(`location.hash`);
+  check('点卖家昵称跳到 TA 的卖家主页', hash === `#/seller/${me.id}`, hash);
+
+  // ---- 2. 主页顶部信息与商品流 ----
+  await waitFor(cdp, `!!document.querySelector('.seller-head')`);
+  await waitFor(cdp, `document.querySelectorAll('.product-card').length > 0`);
+  const head = await cdp.eval(`
+    (() => ({
+      name: document.querySelector('.seller-name')?.innerText.trim() || '',
+      hasBio: !!document.querySelector('.seller-bio'),
+      stats: document.querySelector('.seller-stats')?.innerText.replace(/\\n/g, ' ') || '',
+      avatar: !!document.querySelector('.seller-avatar'),
+      cards: document.querySelectorAll('.product-card').length,
+      firstCard: document.querySelector('.product-card')?.innerText.replace(/\\n/g, ' ') || '',
+      hasCover: !!document.querySelector('.product-card .pc-cover'),
+    }))()`);
+  check('卖家主页顶部显示头像与昵称',
+    head.avatar && head.name === me.nickname, JSON.stringify({ name: head.name }));
+  check('顶部有商家简介区（未填时给占位提示）', head.hasBio, '');
+  check('顶部显示在售件数、加入时间、卖家编号',
+    /在售/.test(head.stats) && /加入时间/.test(head.stats) && /卖家编号/.test(head.stats),
+    head.stats);
+  check('商品流用与主页一致的商品卡（含图片位 / 名称 / 价格）',
+    head.cards > 0 && head.hasCover && /¥/.test(head.firstCard), head.firstCard.slice(0, 80));
+  await cdp.shot(path.join(SHOT_DIR, 'f12-seller-page.png'));
+
+  // ---- 3. 在售/已售切换 + 关键词筛选 ----
+  const soldClick = await cdp.eval(`
+    (() => {
+      const b = [...document.querySelectorAll('#sk-status [data-status]')]
+        .find(x => x.dataset.status === 'sold');
+      if (!b) return false;
+      b.click();
+      return true;
+    })()`);
+  await sleep(1500);
+  const soldState = await cdp.eval(`
+    (() => ({
+      activeSold: !!document.querySelector('#sk-status [data-status="sold"].btn-primary'),
+      cards: document.querySelectorAll('.product-card').length,
+      empty: !!document.querySelector('.empty'),
+    }))()`);
+  check('能切到「已售」视图（无成交时给出空态提示）',
+    soldClick && soldState.activeSold && (soldState.cards > 0 || soldState.empty),
+    JSON.stringify(soldState));
+
+  await cdp.eval(`
+    (() => {
+      const b = [...document.querySelectorAll('#sk-status [data-status]')]
+        .find(x => x.dataset.status === 'on_sale');
+      b.click();
+    })()`);
+  await sleep(1400);
+  await cdp.eval(`
+    (() => {
+      document.querySelector('#sk-keyword').value = '绝对不存在的商品名xyz';
+      document.querySelector('#sk-search').click();
+    })()`);
+  await waitFor(cdp, `!!document.querySelector('.empty')`);
+  check('卖家主页的关键词筛选生效（查不到时给空态）', true, '');
+
+  // ---- 4. 个人资料页填商家简介 → 主页可见 ----
+  await cdp.loginAs('seller1', '123456', 'seller');
+  await cdp.go('/profile');
+  await waitFor(cdp, `!!document.querySelector('#pf-bio')`);
+  const bioField = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#pf-bio');
+      return { exists: !!el, maxlength: el?.getAttribute('maxlength'),
+               hint: el?.parentElement?.innerText || '' };
+    })()`);
+  check('个人资料页有「商家简介」输入框（限 100 字，且提示会展示在卖家主页）',
+    bioField.exists && bioField.maxlength === '100' && /卖家主页/.test(bioField.hint),
+    JSON.stringify(bioField));
+
+  const NEW_BIO = '自动化测试：常年在校，出闲置教材';
+  await cdp.eval(`
+    (() => {
+      document.querySelector('#pf-bio').value = ${JSON.stringify(NEW_BIO)};
+      document.querySelector('#btn-save').click();
+    })()`);
+  await sleep(1800);
+  const saved = await api('GET', '/api/auth/me', { token: sellerToken });
+  check('保存商家简介成功', saved.data?.user?.bio === NEW_BIO, `当前=${saved.data?.user?.bio}`);
+
+  await cdp.logout();
+  await cdp.go(`/seller/${me.id}`);
+  await waitFor(cdp, `!!document.querySelector('.seller-bio')`);
+  const shownBio = await cdp.eval(`document.querySelector('.seller-bio')?.innerText.trim() || ''`);
+  check('商家简介确实显示在卖家主页顶部', shownBio === NEW_BIO, `页面显示「${shownBio}」`);
+
+  // 收尾：还原成测试前的值
+  await api('PUT', '/api/auth/profile', { token: sellerToken, body: { bio: originalBio } });
+  const restored = await api('GET', `/api/sellers/${me.id}`);
+  check('商家简介已还原成测试前的值',
+    (restored.data?.seller?.bio || '') === originalBio, `当前=${restored.data?.seller?.bio}`);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -1310,6 +1431,7 @@ const GROUPS = {
   9: { title: '消息与资料移入用户小框', fn: feature9 },
   10: { title: '商品编号 product_code', fn: feature10 },
   11: { title: '管理员交易监管（需求①）', fn: feature11 },
+  12: { title: '卖家商品主页（需求②）', fn: feature12 },
 };
 
 async function main() {

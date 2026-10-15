@@ -49,6 +49,16 @@ export default {
             <div class="hint">最多 20 个字符，不能为空</div>
           </div>
           <div class="form-row">
+            <label>商家简介</label>
+            <input class="input" id="pf-bio" maxlength="100" value="${esc(user.bio || '')}"
+                   placeholder="例如：常年在校，出闲置教材，可小刀">
+            <div class="hint">
+              最多 100 字，会显示在你的
+              ${user.role === 'admin' ? '主页' : `<button class="link-btn" id="pf-preview">卖家主页</button>`}
+              顶部；留空则不展示
+            </div>
+          </div>
+          <div class="form-row">
             <label>用户名（不可修改）</label>
             <input class="input" value="${esc(user.username)}" disabled>
           </div>
@@ -77,9 +87,16 @@ export default {
 
     const $ = (id) => root.querySelector(id);
     const nicknameInput = $('#pf-nickname');
+    const bioInput = $('#pf-bio');
     const preview = $('#avatar-preview');
     const fileInput = $('#avatar-file');
     const statusLabel = $('#pf-status');
+
+    // 需求②：从个人资料页直接预览自己的卖家主页
+    const previewLink = $('#pf-preview');
+    if (previewLink) {
+      previewLink.addEventListener('click', () => { location.hash = `#/seller/${user.id}`; });
+    }
 
     function paintPreview(avatar) {
       preview.innerHTML = avatarHtml({ nickname: nicknameInput.value || user.nickname, avatar }, 88, 'profile-avatar');
@@ -129,6 +146,7 @@ export default {
 
     $('#btn-reload').addEventListener('click', () => {
       nicknameInput.value = user.nickname;
+      bioInput.value = user.bio || '';
       pendingAvatar = null;
       clearError();
       paintPreview(user.avatar);
@@ -149,7 +167,7 @@ export default {
         return;
       }
 
-      const body = { nickname };
+      const body = { nickname, bio: bioInput.value.trim() };
       if (pendingAvatar !== null) body.avatar = pendingAvatar;
 
       const button = event.currentTarget;

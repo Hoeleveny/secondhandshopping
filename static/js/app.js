@@ -46,6 +46,7 @@ const ROUTES = [
   { path: '/compare', auth: 'any', menu: 'compare', load: () => import('./pages/compare.js') },
   { path: '/product/:id', auth: 'any', menu: 'search', load: () => import('./pages/detail.js') },
   { path: '/product/:id/edit', auth: 'required', menu: 'my-products', load: () => import('./pages/productForm.js') },
+  { path: '/seller/:id', auth: 'any', menu: 'search', load: () => import('./pages/seller.js') },
   { path: '/publish', auth: 'required', menu: 'publish', load: () => import('./pages/productForm.js') },
   { path: '/my-products', auth: 'required', menu: 'my-products', load: () => import('./pages/myProducts.js') },
   { path: '/orders', auth: 'required', menu: 'orders', load: () => import('./pages/orders.js') },

@@ -131,6 +131,15 @@ def update_profile():
             user.avatar = avatar or None
             changed.append("头像")
 
+    if "bio" in body:
+        # 需求②：商家简介，展示在卖家商品主页顶部；留空表示不展示
+        bio = (body.get("bio") or "").strip()
+        if len(bio) > 100:
+            return fail("商家简介不能超过 100 个字符")
+        if bio != (user.bio or ""):
+            user.bio = bio or None
+            changed.append("商家简介")
+
     if not changed:
         return ok(user.to_dict(), msg="资料没有变化")
 
