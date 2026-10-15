@@ -26,6 +26,7 @@ from models import (
     PRODUCT_DELETED, PRODUCT_OFF_SHELF, PRODUCT_ON_SALE, PRODUCT_SOLD,
 )
 from backup import dump_all, load_all
+from rating import seller_rating
 
 bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 
@@ -125,6 +126,88 @@ def admin_orders():
             hour=0, minute=0, second=0, microsecond=0)).count(),
     }
     return ok({"list": items, "total": total, "page": page, "page_size": size, "stats": stats})
+
+
+@bp.get("/orders/detail")
+@admin_required
+def admin_orders_detail():
+    """交易监管页「状态卡」的下钻明细（需求①）。
+
+    type=pending  进行中的交易列表（按挂得最久排前面）
+    type=sellers  正在交易的商家：每人几笔进行中 + 在售/已售件数 + 好评率
+    type=today    今日新增订单
+    type=longest  挂得最久的那一笔（含双方信息、自提点、交易说明等完整细节）
+    """
+    kind = arg_str("type") or "pending"
+    now = datetime.now()
+
+    def order_row(order):
+        product = Product.query.get(order.product_id)
+        seller = User.query.get(order.seller_id)
+        data = order.to_dict()
+        data["product_name"] = product.name if product else None
+        data["product_code"] = product.product_code if product else None
+        data["seller_code"] = f"{seller.seller_seq:04d}" if seller and seller.seller_seq else None
+        data["elapsed_minutes"] = int((now - order.created_at).total_seconds() // 60)
+        return data
+
+    if kind == "pending":
+        rows = (Order.query.filter(Order.status == ORDER_PENDING)
+                .order_by(Order.created_at.asc()).limit(200).all())
+        return ok({"type": kind, "title": "进行中的交易",
+                   "subtitle": "按挂得最久排前面，共 %d 笔" % len(rows),
+                   "list": [order_row(o) for o in rows]})
+
+    if kind == "sellers":
+        grouped = (db.session.query(Order.seller_id, func.count(Order.id))
+                   .filter(Order.status == ORDER_PENDING)
+                   .group_by(Order.seller_id).all())
+        items = []
+        for seller_id, pending in grouped:
+            seller = User.query.get(seller_id)
+            if seller is None:
+                continue
+            items.append({
+                "seller_id": seller_id,
+                "nickname": seller.nickname,
+                "seller_code": f"{seller.seller_seq:04d}" if seller.seller_seq else None,
+                "pending": pending,
+                "on_sale": Product.query.filter_by(
+                    seller_id=seller_id, status=PRODUCT_ON_SALE).count(),
+                "sold": Product.query.filter_by(
+                    seller_id=seller_id, status=PRODUCT_SOLD).count(),
+                "rating": seller_rating(seller_id),
+            })
+        items.sort(key=lambda x: (-x["pending"], x["nickname"] or ""))
+        return ok({"type": kind, "title": "正在交易的商家",
+                   "subtitle": "按进行中笔数排序，共 %d 位" % len(items), "list": items})
+
+    if kind == "today":
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        rows = (Order.query.filter(Order.created_at >= start)
+                .order_by(Order.created_at.desc()).limit(200).all())
+        return ok({"type": kind, "title": "今日新增订单",
+                   "subtitle": "%s 00:00 起，共 %d 笔" % (start.strftime("%Y-%m-%d"), len(rows)),
+                   "list": [order_row(o) for o in rows]})
+
+    if kind == "longest":
+        order = (Order.query.filter(Order.status == ORDER_PENDING)
+                 .order_by(Order.created_at.asc()).first())
+        if order is None:
+            return ok({"type": kind, "title": "挂得最久的一笔交易",
+                       "subtitle": "当前没有进行中的交易", "order": None})
+        data = order_row(order)
+        product = Product.query.get(order.product_id)
+        data["product_views"] = product.views if product else None
+        data["product_status"] = product.status if product else None
+        data["product_price"] = float(product.price) if product else None
+        data["buyer_order_count"] = Order.query.filter_by(buyer_id=order.buyer_id).count()
+        data["seller_pending_count"] = Order.query.filter_by(
+            seller_id=order.seller_id, status=ORDER_PENDING).count()
+        return ok({"type": kind, "title": "挂得最久的一笔交易",
+                   "subtitle": "已进行 %d 分钟" % data["elapsed_minutes"], "order": data})
+
+    return fail("未知的下钻类型")
 
 
 @bp.get("/logs")

@@ -313,15 +313,22 @@ def main() -> int:
     buyer1 = (res.get("data") or {}).get("token")
     check("买家 buyer1 登录", bool(buyer1), str(res)[:150])
 
-    status, res = call("GET", "/api/products?page_size=50")
-    # 不能直接取「最新第一件」——用户自己发布的商品会排在最前，而它可能正是 buyer1 自己的，
-    # 那样后面「我想要」的「不能对自己商品操作」断言就会走错分支。
+    # 显式选一件 **seller1 自己发布的在售商品**：后面「不能对自己发布的商品点我想要」
+    # 靠的就是这个归属关系，不能靠「列表里第一件非 buyer1 的商品」——那件的归属会变
+    # （用户把某件买走、或新增商品，顺序一变断言就挂，我因此被咬过一次）。
     _me = (call("GET", "/api/auth/me", token=buyer1)[1].get("data") or {}).get("user") or {}
     _my_id = _me.get("id")
-    fav_pid = next((p["id"] for p in ((res.get("data") or {}).get("list") or [])
-                    if p.get("seller_id") != _my_id), None)
-    check("能选到一件「非 buyer1 自己发布」的在售商品用于后续断言",
-          bool(fav_pid), f"buyer1 id={_my_id}, fav_pid={fav_pid}")
+    status, res = call("GET", "/api/products/mine?status=on_sale&page_size=50", token=seller_token)
+    fav_pid = next((p["id"] for p in ((res.get("data") or {}).get("list") or [])), None)
+    if not fav_pid:
+        _st, r = call("POST", "/api/products", token=seller_token,
+                      body={"name": "冒烟-想要测试商品", "price": 3.0, "category_id": 1,
+                            "subcategory_id": 1, "condition": "九成新",
+                            "description": "自动化冒烟测试用商品", "default_place_id": 2,
+                            "images": []})
+        fav_pid = (r.get("data") or {}).get("id")
+    check("能选到一件「seller1 自己发布」的在售商品用于后续断言",
+          bool(fav_pid), f"seller1 在售商品里的第一件，fav_pid={fav_pid}")
     call("DELETE", f"/api/favorites/{fav_pid}", token=buyer1)  # 先清掉，保证可重复运行
 
     status, res = call("POST", "/api/favorites", token=buyer1, body={"product_id": fav_pid})
@@ -1197,6 +1204,34 @@ def main() -> int:
     check("日志带「动作中文名 + 操作人」便于阅读",
           all(item.get("action_text") and item.get("nickname") is not None for item in only[:3]),
           str(only[:1])[:200])
+
+    # 需求①-新：状态卡下钻明细
+    for kind, key in (("pending", "list"), ("sellers", "list"),
+                      ("today", "list"), ("longest", "order")):
+        _st, r = call("GET", f"/api/admin/orders/detail?type={kind}", token=admin_token)
+        d = r.get("data") or {}
+        check(f"状态卡下钻「{kind}」返回标题与 {key} 字段",
+              r.get("code") == 0 and bool(d.get("title")) and key in d, str(d)[:160])
+
+    _st, r = call("GET", "/api/admin/orders/detail?type=sellers", token=admin_token)
+    items = (r.get("data") or {}).get("list") or []
+    check("「涉及商家」明细含商家编号、进行中笔数、在售/已售件数与好评率",
+          (not items) or all(k in items[0] for k in
+                             ("seller_id", "seller_code", "pending", "on_sale", "sold", "rating")),
+          str(items[:1])[:200])
+
+    _st, r = call("GET", "/api/admin/orders/detail?type=longest", token=admin_token)
+    longest = (r.get("data") or {}).get("order")
+    check("「最长挂单」明细含双方信息、商品编号、时长与自提点",
+          longest is None or all(k in longest for k in
+                                 ("order_no", "product_name", "product_code", "buyer_nickname",
+                                  "seller_nickname", "elapsed_minutes", "meet_place", "price")),
+          str(longest)[:200])
+
+    _st, r = call("GET", "/api/admin/orders/detail?type=不存在", token=admin_token)
+    check("状态卡下钻：非法类型被拒", r.get("code") != 0, str(r)[:120])
+    _st, r = call("GET", "/api/admin/orders/detail?type=pending", token=buyer1)
+    check("状态卡下钻：普通用户看不到（403）", r.get("code") != 0, str(r)[:120])
 
     # ---------------- 需求②：卖家商品主页 + 商家简介 ----------------
     section("需求② 卖家商品主页与商家简介")

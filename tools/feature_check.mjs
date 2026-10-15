@@ -1141,6 +1141,9 @@ async function feature10(cdp) {
 
   // ---- 5. 基础数据：字母码输入框 / 列表展示 ----
   await cdp.go('/admin?tab=base');
+  // 管理后台是懒加载模块、基础数据还要先取分类列表；只靠固定毫秒等待在全量跑时会偶发失败
+  await waitFor(cdp, `!!document.querySelector('#cat-table tbody tr')`);
+  await waitFor(cdp, `!!document.querySelector('#sub-table tbody tr')`);
   const base = await cdp.eval(`
     (() => ({
       catHasCode: /\\b(TA|DG|LF|SP|OT)\\b/.test(document.querySelector('#cat-table')?.innerText || ''),
@@ -1150,7 +1153,7 @@ async function feature10(cdp) {
     base.catHasCode && base.subHasSeq, JSON.stringify(base));
 
   await cdp.eval(`document.querySelector('#cat-add').click()`);
-  await sleep(700);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-field="code"]')`);
   const modal = await cdp.eval(`
     (() => {
       const m = document.querySelector('.modal-mask');
@@ -1703,6 +1706,92 @@ async function feature15(cdp) {
   check('对方再发消息后会话重新出现在我的列表', revived > 0, `列表 ${revived} 项`);
 }
 
+/* ================================================================ 功能⑯ 交易管理状态卡下钻（需求①） */
+async function feature16(cdp) {
+  console.log('\n===== 功能⑯ 交易管理状态卡下钻（需求①）=====');
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=trades');
+  await waitFor(cdp, `document.querySelectorAll('#td-stats .stat-card').length === 4`);
+
+  const cards = await cdp.eval(`
+    (() => [...document.querySelectorAll('#td-stats .stat-card')].map(c => ({
+      kind: c.dataset.stat || '',
+      clickable: c.classList.contains('stat-clickable'),
+      label: c.querySelector('.sc-label')?.innerText.trim() || '',
+      more: c.querySelector('.sc-more')?.innerText.trim() || '',
+    })))()`);
+  check('4 张状态卡都标了类型且标记为可点',
+    cards.length === 4 && cards.every(c => c.kind && c.clickable), JSON.stringify(cards));
+  check('卡片上有「查看明细」提示', cards.every(c => /查看明细/.test(c.more)),
+    JSON.stringify(cards.map(c => c.more)));
+
+  const expect = {
+    pending: /进行中的交易/,
+    sellers: /正在交易的商家/,
+    today: /今日新增订单/,
+    longest: /挂得最久的一笔交易/,
+  };
+  const labels = {};
+  cards.forEach(c => { labels[c.kind] = c.label; });
+
+  for (const kind of ['pending', 'sellers', 'today', 'longest']) {
+    await cdp.eval(`document.querySelector('[data-stat="${kind}"]').click()`);
+    await waitFor(cdp, `!!document.querySelector('.modal-mask .modal-head')`);
+    await sleep(450);
+    const modal = await cdp.eval(`
+      (() => {
+        const m = document.querySelector('.modal-mask');
+        return {
+          title: m?.querySelector('.modal-head')?.innerText.trim() || '',
+          text: m?.innerText || '',
+          rows: m?.querySelectorAll('tbody tr').length || 0,
+          kvs: m?.querySelectorAll('.kv').length || 0,
+        };
+      })()`);
+    const hasContent = modal.rows > 0 || modal.kvs > 0 || /没有|暂无|今天还没有/.test(modal.text);
+    check(`点「${labels[kind]}」弹出明细弹窗（标题正确且有内容）`,
+      expect[kind].test(modal.title) && hasContent,
+      JSON.stringify({ kind, title: modal.title, rows: modal.rows, kvs: modal.kvs }));
+    await cdp.shot(path.join(SHOT_DIR, `f16-${kind}.png`));
+    await cdp.eval(`document.querySelector('.modal-mask [data-close]')?.click()`);
+    await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  }
+
+  // 「最长挂单」的键值明细要含双方与自提点
+  await cdp.eval(`document.querySelector('[data-stat="longest"]').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask .kv')`);
+  const kv = await cdp.eval(`document.querySelector('.modal-mask')?.innerText || ''`);
+  check('「最长挂单」明细写清订单号、买卖双方、金额、自提点与已进行时长',
+    /订单号/.test(kv) && /买家/.test(kv) && /卖家/.test(kv)
+    && /成交金额/.test(kv) && /自提点/.test(kv) && /已进行/.test(kv), kv.slice(0, 120));
+  await cdp.eval(`document.querySelector('.modal-mask [data-close]')?.click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+
+  // 「涉及商家」里点一行 → 跳卖家主页，且弹窗关闭
+  await cdp.eval(`document.querySelector('[data-stat="sellers"]').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask')`);
+  await sleep(400);
+  const canGoto = await cdp.eval(`
+    (() => {
+      const row = document.querySelector('.modal-mask tr[data-goto]');
+      if (!row) return { ok: false };
+      const target = row.dataset.goto;
+      row.click();
+      return { ok: true, target };
+    })()`);
+  if (canGoto.ok) {
+    await waitFor(cdp, `location.hash.startsWith('#/seller/')`);
+    const hash = await cdp.eval(`location.hash`);
+    check('在「涉及商家」明细里点一行会跳到该卖家的商品主页，并关掉弹窗',
+      hash === canGoto.target && !(await cdp.eval(`!!document.querySelector('.modal-mask')`)),
+      `hash=${hash} target=${canGoto.target}`);
+  } else {
+    check('在「涉及商家」明细里点一行会跳到该卖家的商品主页，并关掉弹窗',
+      false, '当前没有进行中的交易，拿不到可点的行');
+  }
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -1720,6 +1809,7 @@ const GROUPS = {
   13: { title: '商家好评率（需求③）', fn: feature13 },
   14: { title: '私信页两个按钮（需求④）', fn: feature14 },
   15: { title: '私信删除会话（需求⑤）', fn: feature15 },
+  16: { title: '交易管理状态卡下钻（需求①）', fn: feature16 },
 };
 
 async function main() {

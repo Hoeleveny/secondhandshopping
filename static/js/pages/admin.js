@@ -243,7 +243,7 @@ async function renderTrades(panel) {
           <button class="btn btn-primary btn-block" id="td-search">查询</button>
         </div>
       </div>
-      <div class="hint">进行中的交易按「挂得最久」排在最前；本页每 5 秒自动刷新一次</div>
+      <div class="hint">进行中的交易按「挂得最久」排在最前；本页每 5 秒自动刷新一次；点上方任意卡片可看明细</div>
     </div>
 
     <div class="card mt-16" id="td-list">${loadingHtml()}</div>
@@ -266,6 +266,129 @@ async function renderTrades(panel) {
       <div class="sc-label">${esc(label)}</div>
       <div class="sc-value">${value ?? 0}</div>
     </div>`;
+
+  /* ---------------- 状态卡下钻（需求①-新）---------------- */
+  const CARD_DEFS = [
+    { kind: 'pending', label: '进行中交易', icon: '⏳', value: (s) => s.pending },
+    { kind: 'sellers', label: '涉及商家', icon: '🏪', value: (s) => s.sellers_in_trade },
+    { kind: 'longest', label: '最长挂单', icon: '⏰', value: (s) => elapsedText(s.longest_pending_minutes) },
+    { kind: 'today', label: '今日新增订单', icon: '🆕', value: (s) => s.today_orders },
+  ];
+
+  function statCardHtml(def, stats) {
+    return `
+      <div class="stat-card stat-clickable" data-stat="${def.kind}" role="button" tabindex="0"
+           title="点击查看明细">
+        <span class="sc-icon">${def.icon}</span>
+        <div class="sc-label">${esc(def.label)}</div>
+        <div class="sc-value">${def.value(stats) ?? 0}</div>
+        <div class="sc-more">查看明细 ›</div>
+      </div>`;
+  }
+
+  function rowsTable(rows) {
+    return `
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>订单号</th><th>商品</th><th>买家</th><th>卖家</th>
+            <th class="text-right">金额</th><th>状态</th><th>已进行</th></tr></thead>
+          <tbody>
+            ${rows.map(o => `
+              <tr class="clickable-row" data-goto="#/product/${o.product_id}">
+                <td class="muted small">${esc(o.order_no)}</td>
+                <td>
+                  <span class="strong">${esc(o.product_name || '（商品已删除）')}</span>
+                  ${o.product_code ? `<div class="muted small">${esc(o.product_code)}</div>` : ''}
+                </td>
+                <td>${esc(o.buyer_nickname || '')}</td>
+                <td>${esc(o.seller_nickname || '')}</td>
+                <td class="text-right price">${fmtPrice(o.price)}</td>
+                <td><span class="badge ${o.status === 'pending' ? 'badge-warn' : 'badge-gray'}">${esc(o.status_text || o.status)}</span></td>
+                <td class="small">${o.status === 'pending' ? elapsedText(o.elapsed_minutes) : esc(fmtTime(o.finished_at || o.created_at))}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  function sellersTable(rows) {
+    return `
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>商家</th><th>卖家编号</th><th>进行中</th><th>在售</th>
+            <th>已售</th><th>好评率</th></tr></thead>
+          <tbody>
+            ${rows.map(s => `
+              <tr class="clickable-row" data-goto="#/seller/${s.seller_id}">
+                <td class="strong">${esc(s.nickname || '')}</td>
+                <td class="muted small">${esc(s.seller_code || '未分配')}</td>
+                <td><b>${s.pending}</b> 笔</td>
+                <td>${s.on_sale} 件</td>
+                <td>${s.sold} 件</td>
+                <td>${s.rating && s.rating.total
+                  ? `<span class="badge rating-${esc(s.rating.level)}">${s.rating.rate}% ${esc(s.rating.level_text)}</span>`
+                  : '<span class="muted small">暂无评价</span>'}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  function longestDetail(o) {
+    const line = (k, v) => `<div class="kv"><span class="kv-k">${esc(k)}</span><span class="kv-v">${v}</span></div>`;
+    return `
+      <div class="kv-list">
+        ${line('订单号', esc(o.order_no))}
+        ${line('商品', `<span class="strong">${esc(o.product_name || '（商品已删除）')}</span>`
+          + (o.product_code ? ` <span class="muted small">${esc(o.product_code)}</span>` : ''))}
+        ${line('买家', `${esc(o.buyer_nickname || '')}　<span class="muted small">历史下单 ${o.buyer_order_count} 笔</span>`)}
+        ${line('卖家', `${esc(o.seller_nickname || '')}`
+          + (o.seller_code ? `　<span class="muted small">卖家编号 ${esc(o.seller_code)}</span>` : '')
+          + `　<span class="muted small">该商家还有 ${o.seller_pending_count} 笔进行中</span>`)}
+        ${line('成交金额', fmtPrice(o.price))}
+        ${line('自提点', esc(o.meet_place?.name || '未指定'))}
+        ${line('下单时间', esc(fmtTime(o.created_at)))}
+        ${line('已进行', `<b>${elapsedText(o.elapsed_minutes)}</b>`)}
+        ${line('商品浏览', o.product_views == null ? '—' : `👁 ${o.product_views}`)}
+        ${o.trade_note ? line('交易说明', esc(o.trade_note)) : ''}
+      </div>
+      <div class="row mt-16" style="gap:8px;justify-content:flex-end">
+        <button class="btn btn-sm" data-goto="#/product/${o.product_id}">查看商品</button>
+        <button class="btn btn-sm" data-goto="#/seller/${o.seller_id}">查看卖家主页</button>
+      </div>`;
+  }
+
+  async function openStatDetail(kind) {
+    let data;
+    try {
+      data = await api.get(`/api/admin/orders/detail${qs({ type: kind })}`);
+    } catch (err) {
+      toast(`加载明细失败：${err.message}`, 'error');
+      return;
+    }
+
+    let body;
+    if (data.type === 'longest') {
+      body = data.order ? longestDetail(data.order) : emptyHtml('当前没有进行中的交易', '✅');
+    } else if (!data.list.length) {
+      body = emptyHtml(data.type === 'today' ? '今天还没有新订单' : '没有符合条件的记录', '📭');
+    } else {
+      body = data.type === 'sellers' ? sellersTable(data.list) : rowsTable(data.list);
+    }
+
+    openModal({
+      title: data.title || '明细',
+      body: `<div class="muted small mb-8">${esc(data.subtitle || '')}</div>${body}`,
+      footer: '<button class="btn" data-close>关闭</button>',
+      onMount(modal, close) {
+        modal.querySelectorAll('[data-goto]').forEach(el =>
+          el.addEventListener('click', () => {
+            close();
+            location.hash = el.dataset.goto;
+          }));
+      },
+    });
+  }
 
   const STATUS_BADGE = {
     pending: ['badge badge-warn', '进行中'],
@@ -294,12 +417,18 @@ async function renderTrades(panel) {
     }
 
     const stats = data.stats || {};
-    panel.querySelector('#td-stats').innerHTML = [
-      statCard('进行中交易', stats.pending, '⏳'),
-      statCard('涉及商家', stats.sellers_in_trade, '🏪'),
-      statCard('最长挂单', elapsedText(stats.longest_pending_minutes), '⏰'),
-      statCard('今日新增订单', stats.today_orders, '🆕'),
-    ].join('');
+    const statsBox = panel.querySelector('#td-stats');
+    statsBox.innerHTML = CARD_DEFS.map(def => statCardHtml(def, stats)).join('');
+    // 卡片是可点的（下钻明细），每次自动刷新都会重建，所以要重新绑一次
+    statsBox.querySelectorAll('[data-stat]').forEach(el => {
+      el.addEventListener('click', () => openStatDetail(el.dataset.stat));
+      el.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openStatDetail(el.dataset.stat);
+        }
+      });
+    });
 
     if (!data.list.length) {
       box.innerHTML = emptyHtml(
