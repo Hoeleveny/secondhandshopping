@@ -21,6 +21,17 @@ const DO_RESET = process.argv.includes('--reset');
 
 const results = [];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+// 等某个条件成立（默认最多 15 秒），避免「断言抢在渲染前跑」这类竞态
+async function waitFor(expr, { timeout = 15000, step = 250 } = {}) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    try {
+      if (await cdp.eval(expr)) return true;
+    } catch (err) { /* 页面切换瞬间取不到就再等一轮 */ }
+    await sleep(step);
+  }
+  return false;
+}
 
 function record(id, title, pass, evidence) {
   results.push({ id, title, pass, evidence: String(evidence).replace(/\s+/g, ' ').slice(0, 150) });
@@ -230,13 +241,19 @@ async function main() {
 }
 
 /* ================================================================ 1-2
-   注册只能选买家/卖家；登录三身份，管理员须用管理员账号 */
+   账号与身份（需求④ 之后的口径）：
+   注册不再选「买家 / 卖家」，管理员不可注册；登录只分「普通用户 / 管理员」，
+   管理员必须用管理员账号并以管理员身份登录 */
 async function check1_2() {
   const admin = await api('POST', '/api/auth/register',
-    { body: { username: `acc_admin_${Date.now()}`, password: '1234', role: 'admin' } });
+    { body: { username: `accA${String(Date.now()).slice(-8)}`, password: '1234', role: 'admin' } });
+  // 注册不传身份（新口径的默认路径）
   const okReg = await api('POST', '/api/auth/register',
-    { body: { username: 'acc_buyer', password: '1234', role: 'buyer' } });
+    { body: { username: 'acc_buyer', password: '1234' } });
   const registerOk = okReg.code === 0 || /已被注册/.test(okReg.msg || '');
+  // 老调用方传 buyer / seller 仍然兼容
+  const legacyReg = await api('POST', '/api/auth/register',
+    { body: { username: `accL${String(Date.now()).slice(-8)}`, password: '1234', role: 'seller' } });
 
   await cdp.logout();
   await cdp.go('/login');
@@ -256,15 +273,20 @@ async function check1_2() {
     { body: { username: 'buyer1', password: '123456', role: 'admin' } });
   const adminLogin = await api('POST', '/api/auth/login',
     { body: { username: 'admin', password: '123456', role: 'admin' } });
+  // 需求④：普通用户不用再选身份
+  const noRoleLogin = await api('POST', '/api/auth/login',
+    { body: { username: 'buyer1', password: '123456' } });
 
-  record(1, '注册可选买家/卖家，管理员不可注册',
-    admin.code !== 0 && registerOk && ui.adminHiddenOnRegister,
-    `role=admin 被拒（${admin.msg}）；买家注册成功；注册页管理员选项隐藏=${ui.adminHiddenOnRegister}`);
+  record(1, '需求④：注册不再选买家/卖家（老参数仍兼容），管理员不可注册',
+    admin.code !== 0 && registerOk && legacyReg.code === 0 && ui.adminHiddenOnRegister,
+    `role=admin 被拒（${admin.msg}）；不传身份的注册成功；传 role=seller 仍可用；注册页管理员选项隐藏=${ui.adminHiddenOnRegister}`);
 
-  record(2, '登录三选一，管理员须用管理员账号密码',
-    ui.roles.join(',') === 'buyer,seller,admin'
-    && adminLoginByBuyer.code !== 0 && buyerLoginByAdmin.code !== 0 && adminLogin.code === 0,
-    `身份选项 ${ui.roles.join('/')}；管理员用买家身份被拒；普通用户用管理员身份被拒；管理员正规登录成功`);
+  record(2, '需求④：登录只分「普通用户 / 管理员」，管理员须用管理员账号且显式选管理员',
+    ui.roles.join(',') === 'user,admin'
+    && adminLoginByBuyer.code !== 0 && buyerLoginByAdmin.code !== 0
+    && adminLogin.code === 0 && noRoleLogin.code === 0,
+    `身份选项 ${ui.roles.join('/')}；管理员用买家身份被拒；普通用户用管理员身份被拒；`
+    + `管理员正规登录成功；普通用户不选身份也能登录`);
 }
 
 /* ================================================================ 3
@@ -437,10 +459,15 @@ async function check9_10() {
 
   await cdp.loginAs('buyer1', '123456', 'buyer');
   await cdp.go('/orders?status=pending');
+  await waitFor(cdp, `[...document.querySelectorAll('.card')].some(c => c.innerText.includes('验收-完成流程'))`);
   const uiPending = await cdp.eval(`
     (() => {
       const card = [...document.querySelectorAll('.card')].find(c => c.innerText.includes('验收-完成流程'));
-      return { found: !!card, status: card?.querySelector('.badge')?.innerText.trim() || '' };
+      // 需求④ 起卡片右上角多了「我是买家/我是卖家」身份徽标，取状态时要把它们排除掉，
+      // 否则拿到的是身份徽标（这个坑已经踩过一次）
+      const badges = card ? [...card.querySelectorAll('.badge')]
+        .filter(b => !b.classList.contains('role-flag')) : [];
+      return { found: !!card, status: badges[0]?.innerText.trim() || '' };
     })()`);
 
   const done = (await api('PATCH', `/api/orders/${oa.id}/complete`, { token: tokens.buyer1 })).data;
