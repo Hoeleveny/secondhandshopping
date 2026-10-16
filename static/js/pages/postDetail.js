@@ -3,6 +3,7 @@
    ========================================================================== */
 import { api } from '../api.js';
 import { store } from '../store.js';
+import { ensureMeta } from '../data.js';
 import { confirmDialog, emptyHtml, esc, fmtTime, openModal, toast } from '../ui.js';
 
 async function renderPost(root, ctx) {
@@ -27,6 +28,7 @@ async function renderPost(root, ctx) {
     <div class="page-head">
       <button class="btn btn-ghost btn-sm" id="btn-back">${back.label}</button>
       ${canDelete ? '<button class="btn btn-danger btn-sm" id="btn-del">🗑️ 删除帖子</button>' : ''}
+      ${canDelete ? '' : '<button class="btn btn-sm" id="btn-report">🚩 举报</button>'}
     </div>
 
     <div class="card">
@@ -72,6 +74,18 @@ async function renderPost(root, ctx) {
     </div>`;
 
   root.querySelector('#btn-back').addEventListener('click', () => { location.hash = back.hash; });
+
+  /* ------------------------------------------------------------------ 举报帖子
+     需求③：交流广场的帖子原来只能被管理员处置、普通用户没有举报入口（商品详情早就有），
+     这里补齐，交互与「举报商品」保持一致：预设理由 + 补充说明，举报对象用 post_id。 */
+  root.querySelector('#btn-report')?.addEventListener('click', () => {
+    if (!store.isLoggedIn) {
+      toast('登录后才能举报', 'warn');
+      location.hash = '#/login';
+      return;
+    }
+    openReportModal(post);
+  });
 
   // 功能⑥：点配图放大看原图
   const gallery = root.querySelector('#post-gallery');
@@ -146,3 +160,43 @@ async function renderPost(root, ctx) {
 }
 
 export default { render: renderPost };
+
+/* ------------------------------------------------------------------ 举报帖子的弹窗 */
+async function openReportModal(post) {
+  const meta = await ensureMeta();
+  openModal({
+    title: '举报帖子',
+    body: `
+      <div class="form-row">
+        <label>举报理由<span class="req">*</span></label>
+        <select class="select" id="rp-reason">
+          ${meta.report_reasons.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-row">
+        <label>补充说明</label>
+        <textarea class="textarea" id="rp-detail" placeholder="可以补充具体情况，方便管理员核实"></textarea>
+      </div>`,
+    footer: `<button class="btn" data-close>取消</button>
+             <button class="btn btn-primary" id="rp-submit">提交举报</button>`,
+    onMount(modal, close) {
+      modal.querySelector('#rp-submit').addEventListener('click', async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        try {
+          await api.post('/api/reports', {
+            target_type: 'post',
+            target_id: post.id,
+            reason: modal.querySelector('#rp-reason').value,
+            detail: modal.querySelector('#rp-detail').value.trim(),
+          });
+          close();
+          toast('举报已提交，管理员会尽快处理');
+        } catch (err) {
+          toast(err.message, 'error');
+          button.disabled = false;
+        }
+      });
+    },
+  });
+}

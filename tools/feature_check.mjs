@@ -2367,6 +2367,100 @@ async function feature21(cdp) {
   check('买家那侧仍然能看到这笔订单', buyerIds.includes(order.id), `共 ${buyerIds.length} 笔`);
 }
 
+/* ================================================================ 功能㉒ 帖子举报入口（需求③） */
+async function feature22(cdp) {
+  console.log('\n===== 功能㉒ 交流广场帖子补上举报入口（需求③）=====');
+
+  async function ensureAccount(username, password, role) {
+    try {
+      return await login(username, password, role);
+    } catch {
+      await api('POST', '/api/auth/register', { body: { username, password, role } });
+      return login(username, password, role);
+    }
+  }
+  const authorToken = await ensureAccount('smoke_buyer', '1234', 'buyer');
+  const reporterToken = await login('buyer1', '123456', 'buyer');
+  const adminToken = await login('admin', '123456', 'admin');
+
+  // 帖子的作者与「路过的人」必须不是同一个账号——后端不允许举报自己的帖子
+  const post = (await api('POST', '/api/posts', {
+    token: authorToken,
+    body: { title: '自动化测试：待举报的帖子', content: '自动化测试用', tag: '闲聊' },
+  })).data;
+  const before = (await api('GET', '/api/admin/reports?status=pending',
+    { token: adminToken })).data.total;
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go(`/post/${post.id}`);
+  await waitFor(cdp, `!!document.querySelector('#btn-report')`);
+  check('普通用户看别人的帖子，详情页有「举报」按钮（原来完全没有）',
+    (await cdp.eval(`document.querySelector('#btn-report')?.innerText.includes('举报')`)) === true,
+    await cdp.eval(`document.querySelector('#btn-report')?.innerText.trim()`));
+
+  // 打开举报弹窗：预设理由 + 补充说明
+  await cdp.eval(`document.querySelector('#btn-report').click()`);
+  await waitFor(cdp, `!!document.querySelector('#rp-reason')`);
+  await sleep(300);
+  const dlg = await cdp.eval(`
+    (() => {
+      const m = document.querySelector('.modal-mask');
+      return {
+        title: m.querySelector('.modal-head')?.innerText.trim() || '',
+        reasons: [...m.querySelectorAll('#rp-reason option')].map(o => o.value),
+        hasDetail: !!m.querySelector('#rp-detail'),
+      };
+    })()`);
+  check('举报弹窗有预设理由（来自 /api/meta）与补充说明',
+    dlg.reasons.length >= 3 && dlg.hasDetail, JSON.stringify(dlg));
+  await cdp.shot(path.join(SHOT_DIR, 'f22-post-report.png'));
+
+  // 取消不应产生举报
+  await cdp.eval(`document.querySelector('.modal-mask [data-close]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  const afterCancel = (await api('GET', '/api/admin/reports?status=pending',
+    { token: adminToken })).data.total;
+  check('取消举报不会产生记录', afterCancel === before, `前 ${before} / 后 ${afterCancel}`);
+
+  // 真正提交
+  await cdp.eval(`document.querySelector('#btn-report').click()`);
+  await waitFor(cdp, `!!document.querySelector('#rp-reason')`);
+  await cdp.eval(`
+    (() => {
+      const sel = document.querySelector('#rp-reason');
+      sel.value = sel.options[1] ? sel.options[1].value : sel.options[0].value;
+      document.querySelector('#rp-detail').value = '自动化测试：这条帖子需要核实';
+    })()`);
+  const chosen = await cdp.eval(`document.querySelector('#rp-reason').value`);
+  await cdp.eval(`document.querySelector('#rp-submit').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  await sleep(900);
+
+  const reports = (await api('GET', '/api/admin/reports?status=pending',
+    { token: adminToken })).data.list;
+  const mine = reports.find(r => (r.target || {}).id === post.id);
+  check('提交后这条帖子出现在管理员的「待处理举报」里，且理由与补充说明都对',
+    !!mine && (mine.reason || '').includes(chosen)
+    && (mine.reason || '').includes('自动化测试：这条帖子需要核实'),
+    JSON.stringify(mine ? { reason: mine.reason, type: mine.target_type } : reports.length));
+
+  // 作者自己看自己的帖子：不该有举报按钮（后端也不允许举报自己）
+  await cdp.loginAs('smoke_buyer', '1234', 'buyer');
+  await cdp.go(`/post/${post.id}`);
+  await waitFor(cdp, `!!document.querySelector('#btn-back')`);
+  check('作者看自己的帖子时没有「举报」按钮（不允许举报自己）',
+    (await cdp.eval(`!document.querySelector('#btn-report')`)) === true,
+    await cdp.eval(`document.querySelector('#btn-report') ? '仍有按钮' : '没有按钮'`));
+
+  // 游客点举报 → 引导登录
+  await cdp.logout();
+  await cdp.go(`/post/${post.id}`);
+  await waitFor(cdp, `!!document.querySelector('#btn-report')`);
+  await cdp.eval(`document.querySelector('#btn-report').click()`);
+  await waitFor(cdp, `location.hash === '#/login'`);
+  check('游客点举报会被引导去登录', true, '');
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -2390,6 +2484,7 @@ const GROUPS = {
   19: { title: '举报填写理由 + 私信反馈（需求④）', fn: feature19 },
   20: { title: '举报审核进详情后原路返回（需求⑤）', fn: feature20 },
   21: { title: '卖家侧交易收尾（需求⑥）', fn: feature21 },
+  22: { title: '帖子举报入口（新批需求③）', fn: feature22 },
 };
 
 async function main() {
