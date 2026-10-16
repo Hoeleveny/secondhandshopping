@@ -1117,7 +1117,7 @@ async function openUserDetail(uid, refresh) {
 
   blocks.push(`<h4 class="detail-h">最近动作（${d.logs.length}）</h4>`
     + (d.logs.length ? `<div class="timeline">${d.logs.map(l => `
-        <div class="tl-item">
+        <div class="tl-item compact">
           <span class="tl-time muted small">${esc(fmtTime(l.created_at))}</span>
           <span class="tl-action">${esc(l.action_text)}</span>
           <span class="tl-summary muted">${esc(l.summary)}</span>

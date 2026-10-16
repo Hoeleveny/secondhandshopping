@@ -369,10 +369,15 @@
 /* ---------------------------------------------------------------- 动态监控时间线（需求①） */
 .timeline { display: flex; flex-direction: column; }
 .tl-item {
-  display: grid; grid-template-columns: 148px 104px 108px 1fr;
+  /* ⚠️ 列数必须和行里实际的子元素数量一致：需求② 往每行加了勾选框与删除按钮，
+     原来写死的 4 列（148/104/108/1fr）对不上 6 个子元素，grid 会自动多出列 → 整行错位。
+     现在按「勾选框 / 时间 / 操作人 / 动作 / 摘要 / 删除」六列排。 */
+  display: grid; grid-template-columns: auto 148px 104px 108px minmax(0, 1fr) auto;
   gap: 10px; align-items: baseline;
   padding: 9px 0; border-bottom: 1px solid var(--border);
 }
+/* 用户详情弹窗里的时间线没有勾选框与删除按钮，用紧凑的三列（时间 / 动作 / 摘要） */
+.tl-item.compact { grid-template-columns: 148px 108px minmax(0, 1fr); }
 .tl-item:last-child { border-bottom: none; }
 .tl-time { font-variant-numeric: tabular-nums; }
 .tl-who { font-weight: 600; color: var(--text); }
@@ -381,9 +386,10 @@
 .tl-item.clickable { cursor: pointer; border-radius: var(--radius-sm); }
 .tl-item.clickable:hover { background: var(--surface-hover); }
 .tl-item.clickable:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
-/* 新批需求②：时间线条目可勾选删除；勾选框与删除按钮别抢走条目本身的点击区域 */
-.tl-check { flex: none; cursor: pointer; }
-.tl-del { flex: none; opacity: .5; padding: 2px 6px; }
+/* 新批需求②：时间线条目可勾选删除；勾选框与删除按钮别抢走条目本身的点击区域。
+   这两样不是文字，用 baseline 对齐会飘，单独让它们居中。 */
+.tl-check { flex: none; align-self: center; cursor: pointer; }
+.tl-del { flex: none; align-self: center; opacity: .5; padding: 2px 6px; }
 .tl-item:hover .tl-del, .tl-del:focus-visible { opacity: 1; }
 .detail-h {
   margin: 14px 0 4px; font-size: 11px; font-weight: 600; letter-spacing: .16em;

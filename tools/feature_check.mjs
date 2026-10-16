@@ -4026,6 +4026,73 @@ async function feature34(cdp) {
     adminMenu.follows === false && adminMenu.blocks === false, JSON.stringify(adminMenu));
 }
 
+/* ================================================================ 功能㉟ 动态监控时间线排版（本批需求①） */
+async function feature35(cdp) {
+  console.log('\n===== 功能㉟ 动态监控时间线排版对齐（本批需求①）=====');
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=trades');
+  await waitFor(cdp, `document.querySelectorAll('#lg-list .tl-item').length > 0`);
+  await sleep(800);
+
+  const grid = await cdp.eval(`
+    (() => {
+      const items = [...document.querySelectorAll('#lg-list .tl-item')];
+      const cols = (el) => (getComputedStyle(el).gridTemplateColumns || '')
+        .split(/\\s+/).filter(Boolean).length;
+      const cfg = items.length ? {
+        declared: cols(items[0]),
+        children: items[0].children.length,
+        tags: [...items[0].children].map(c => c.tagName.toLowerCase()
+          + (c.className ? '.' + String(c.className).split(' ')[0] : '')),
+      } : {};
+      // 每一行都量一遍：网格声明的列数必须等于子元素数量（错位就是这两者不一致）
+      const mismatches = items.filter(el => cols(el) !== el.children.length).length;
+      // 时间列的左边缘在所有行里必须完全一致（这才是"排得齐"）
+      const timeLefts = items.map(el => Math.round(el.querySelector('.tl-time')?.getBoundingClientRect().left ?? -1));
+      const summaryLefts = items.map(el => Math.round(el.querySelector('.tl-summary')?.getBoundingClientRect().left ?? -1));
+      const uniq = (a) => [...new Set(a)].length;
+      // 同一行里各列从左到右依次排开
+      const ordered = items.every(el => {
+        const xs = [...el.children].map(c => c.getBoundingClientRect().left);
+        return xs.every((x, i) => i === 0 || x > xs[i - 1]);
+      });
+      return {
+        cfg, rows: items.length, mismatches,
+        timeCols: uniq(timeLefts), summaryCols: uniq(summaryLefts), ordered,
+        firstIsCheck: !!items[0]?.querySelector('.tl-check'),
+        lastIsDel: !!items[0]?.querySelector('.tl-del'),
+      };
+    })()`);
+  check('需求①：每个时间线条目「网格列数 = 行内元素数」（错位的根因就是这两者不一致）',
+    grid.rows > 0 && grid.mismatches === 0 && grid.cfg.declared === grid.cfg.children,
+    JSON.stringify(grid.cfg));
+  check('需求①：时间列在所有行里左边缘完全对齐（不多不少一列）',
+    grid.timeCols === 1 && grid.summaryCols === 1,
+    `时间列位置种类=${grid.timeCols}，摘要列位置种类=${grid.summaryCols}（都应为 1）`);
+  check('需求①：一行里各列从左到右依次排开，勾选框在最前、删除按钮在最后',
+    grid.ordered === true && grid.firstIsCheck === true && grid.lastIsDel === true,
+    JSON.stringify({ ordered: grid.ordered, first: grid.firstIsCheck, last: grid.lastIsDel }));
+  await cdp.shot(path.join(SHOT_DIR, 'f35-timeline.png'));
+
+  // 用户详情弹窗里那条时间线是紧凑三列，也要对得上
+  await cdp.go('/admin?tab=users');
+  await waitFor(cdp, `!!document.querySelector('#u-list [data-detail]')`);
+  await sleep(600);
+  await cdp.eval(`document.querySelector('#u-list [data-detail]').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask .timeline .tl-item')`);
+  await sleep(400);
+  const modalGrid = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('.modal-mask .timeline .tl-item');
+      const cols = (getComputedStyle(el).gridTemplateColumns || '').split(/\\s+/).filter(Boolean).length;
+      return { compact: el.classList.contains('compact'), declared: cols, children: el.children.length };
+    })()`);
+  check('需求①：用户详情弹窗里的时间线用紧凑三列，且与元素数一致',
+    modalGrid.compact === true && modalGrid.declared === modalGrid.children,
+    JSON.stringify(modalGrid));
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -4062,6 +4129,7 @@ const GROUPS = {
   32: { title: '评论区点用户名跳主页（新批需求⑥）', fn: feature32 },
   33: { title: '关注 / 拉黑（新批需求⑦）', fn: feature33 },
   34: { title: '我的关注 / 我的拉黑（新批需求⑧）', fn: feature34 },
+  35: { title: '动态监控时间线排版对齐（本批需求①）', fn: feature35 },
 };
 
 async function main() {
