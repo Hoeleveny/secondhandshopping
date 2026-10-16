@@ -15,7 +15,7 @@ from extensions import db
 from models import (
     CampusPlace, Category, Favorite, Message, MessageClear, OperationLog, Order, Post,
     PostComment, PostImage,
-    PostLike, Product, ProductImage, ProductWant, Report, Review, Subcategory,
+    PostLike, Product, ProductImage, ProductWant, Report, Review, ReviewComment, Subcategory,
     SwapOffer, User,
 )
 
@@ -30,6 +30,7 @@ INSERT_ORDER = [
     ("orders", Order),
     ("favorites", Favorite),
     ("reviews", Review),
+    ("review_comments", ReviewComment),
     ("posts", Post),
     ("post_comments", PostComment),
     ("post_likes", PostLike),

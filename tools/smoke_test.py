@@ -1828,6 +1828,89 @@ def main() -> int:
     check("卖家删的是自己那一侧，不报错也不影响买家侧数据",
           r.get("code") == 0, str(r)[:150])
 
+    # ---------------- 新批需求⑤：评价下的评论 + 举报评价/评论 ----------------
+    section("新批需求⑤ 评价下的评论与举报")
+
+    # 走一遍真实交易拿到一条评价
+    _st, r = call("POST", "/api/products", token=seller_token,
+                  body={"name": "冒烟测试-评价评论", "price": 33, "category_id": 1,
+                        "subcategory_id": 1, "condition": "九成新",
+                        "description": "评价评论测试", "default_place_id": 2, "images": []})
+    _rc_p = r.get("data") or {}
+    _st, r = call("POST", "/api/orders", token=token,
+                  body={"product_id": _rc_p.get("id"), "meet_place_id": 2})
+    _rc_o = (r.get("data") or {}).get("id")
+    call("PATCH", f"/api/orders/{_rc_o}/confirm", token=seller_token)
+    call("PATCH", f"/api/orders/{_rc_o}/complete", token=token)
+    _st, r = call("POST", "/api/reviews", token=token,
+                  body={"order_id": _rc_o, "rating": 5, "content": "冒烟测试：评价评论用"})
+    _rc_rev = (r.get("data") or {}).get("id")
+    check("需求⑤：已备好一条可评论的评价", bool(_rc_rev), str(r)[:120])
+
+    _st, r = call("POST", f"/api/reviews/{_rc_rev}/comments",
+                  body={"content": "冒烟测试：卖家回复"}, token=seller_token)
+    _rc_c1 = (r.get("data") or {}).get("id")
+    check("需求⑤：可以在商品评价下面发表评论", r.get("code") == 0 and bool(_rc_c1), str(r)[:150])
+    _st, r = call("POST", f"/api/reviews/{_rc_rev}/comments",
+                  body={"content": "冒烟测试：@卖家 引用一下"}, token=token)
+    check("需求⑤：评论里可以写 @昵称 作为引用（原样保存）",
+          r.get("code") == 0 and "@" in ((r.get("data") or {}).get("content") or ""),
+          str((r.get("data") or {}).get("content"))[:80])
+    _st, r = call("GET", f"/api/reviews/{_rc_rev}/comments")
+    check("需求⑤：评价评论列表游客可看",
+          r.get("code") == 0 and len(r.get("data") or []) == 2, str(len(r.get("data") or [])))
+    _st, r = call("POST", f"/api/reviews/{_rc_rev}/comments", body={"content": "  "},
+                  token=seller_token)
+    check("需求⑤：评论内容不能为空", r.get("code") != 0, str(r)[:120])
+    _st, r = call("POST", "/api/reviews/99999999/comments", body={"content": "x"},
+                  token=seller_token)
+    check("需求⑤：给不存在的评价评论会报错", r.get("code") != 0, str(r)[:120])
+    _st, r = call("POST", f"/api/reviews/{_rc_rev}/comments", body={"content": "x"})
+    check("需求⑤：未登录不能评论", status == 401 or r.get("code") != 0, str(r)[:120])
+    _st, r = call("GET", f"/api/products/{_rc_p.get('id')}")
+    _row = next((x for x in (r.get("data") or {}).get("reviews", []) if x["id"] == _rc_rev), {})
+    check("需求⑤：评价带出评论数 comment_count", _row.get("comment_count") == 2,
+          str(_row.get("comment_count")))
+
+    # 举报：评价 / 评价评论
+    _st, r = call("POST", "/api/reports", token=seller_token,
+                  body={"review_id": _rc_rev, "reason": "骚扰辱骂", "detail": "冒烟测试：举报评价"})
+    _rep_rev = (r.get("data") or {}).get("id")
+    check("需求⑤：可以举报一条评价，且带出正确的举报对象",
+          r.get("code") == 0 and (r.get("data") or {}).get("target", {}).get("type") == "review",
+          str((r.get("data") or {}).get("target"))[:120])
+    _st, r = call("POST", "/api/reports", token=token,
+                  body={"review_comment_id": _rc_c1, "reason": "骚扰辱骂"})
+    _rep_c = (r.get("data") or {}).get("id")
+    check("需求⑤：可以举报评价下的评论（对象类型 review_comment）",
+          r.get("code") == 0
+          and (r.get("data") or {}).get("target", {}).get("type") == "review_comment",
+          str((r.get("data") or {}).get("target"))[:120])
+    _st, r = call("POST", "/api/reports", token=seller_token,
+                  body={"review_comment_id": _rc_c1, "reason": "骚扰辱骂"})
+    check("需求⑤：不能举报自己的评论", r.get("code") != 0, str(r)[:120])
+    _st, r = call("POST", "/api/reports", token=seller_token,
+                  body={"review_id": _rc_rev, "reason": "骚扰辱骂"})
+    check("需求⑤：同一对象不能重复举报", r.get("code") != 0, str(r)[:120])
+
+    # 管理员处置：删评论 / 删评价
+    _st, r = call("PATCH", f"/api/admin/reports/{_rep_c}",
+                  body={"action": "handle", "reason_code": "违规内容",
+                        "reason_text": "冒烟测试处理"}, token=admin_token)
+    check("需求⑤：管理员可以处理「举报评论」并删除该评论",
+          r.get("code") == 0 and "评论" in (r.get("msg") or ""), str(r)[:150])
+    _st, r = call("GET", f"/api/reviews/{_rc_rev}/comments")
+    check("需求⑤：被处理的评论真的没了",
+          all(c["id"] != _rc_c1 for c in (r.get("data") or [])), str(r.get("data"))[:120])
+    _st, r = call("PATCH", f"/api/admin/reports/{_rep_rev}",
+                  body={"action": "handle", "reason_code": "违规内容"}, token=admin_token)
+    _st2, r2 = call("GET", f"/api/products/{_rc_p.get('id')}")
+    _left = [x for x in (r2.get("data") or {}).get("reviews", []) if x["id"] == _rc_rev]
+    check("需求⑤：管理员处理「举报评价」会删掉该评价（评论一并清掉）",
+          r.get("code") == 0 and not _left, str(r.get("msg"))[:80])
+    _st, r = call("GET", f"/api/reviews/{_rc_rev}/comments")
+    check("需求⑤：评价删掉后它的评论也一起没了", r.get("code") != 0, str(r)[:120])
+
     # ---------------- 新批需求④：私信里的商品详情卡片 ----------------
     section("新批需求④ 私信发送商品详情卡片")
 

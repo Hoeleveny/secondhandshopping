@@ -151,8 +151,10 @@ export function postItemHtml(post, options = {}) {
 
 /* ---------------------------------------------------------------- 评价条目 */
 export function reviewItemHtml(review) {
+  // 新批需求⑤：评价下面多一层评论，并且评价本身可以举报
+  const count = review.comment_count || 0;
   return `
-  <div class="review-item">
+  <div class="review-item" data-review="${review.id}">
     <div class="review-head">
       <span class="rh-name">${esc(review.reviewer_nickname || '匿名')}</span>
       ${starsHtml(review.rating)}
@@ -160,6 +162,13 @@ export function reviewItemHtml(review) {
       <span class="rh-time">${esc(fmtTime(review.created_at))}</span>
     </div>
     ${review.content ? `<div class="review-body">${esc(review.content)}</div>` : '<div class="review-body muted">（没有填写文字评价）</div>'}
+    <div class="review-ops">
+      <button class="btn btn-ghost btn-sm" data-rev-comments="${review.id}">
+        💬 评论（<span data-rev-count="${review.id}">${count}</span>）
+      </button>
+      <button class="btn btn-ghost btn-sm" data-rev-report="${review.id}">🚩 举报评价</button>
+    </div>
+    <div class="review-comments" data-rev-box="${review.id}" hidden></div>
   </div>`;
 }
 

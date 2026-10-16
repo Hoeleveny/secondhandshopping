@@ -270,6 +270,9 @@ CREATE TABLE `reports` (
   `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `product_id`  BIGINT UNSIGNED NULL COMMENT '举报商品时非空',
   `post_id`     BIGINT UNSIGNED NULL COMMENT '举报帖子时非空',
+  `review_id`   BIGINT UNSIGNED NULL COMMENT '举报评价时非空（迁移 015）',
+  `comment_id`  BIGINT UNSIGNED NULL COMMENT '举报帖子评论时非空（迁移 015）',
+  `review_comment_id` BIGINT UNSIGNED NULL COMMENT '举报评价评论时非空（迁移 015）',
   `reporter_id` BIGINT UNSIGNED NOT NULL,
   `reason`      VARCHAR(200)    NOT NULL,
   `status`      ENUM('pending','handled','dismissed') NOT NULL DEFAULT 'pending'
@@ -281,12 +284,36 @@ CREATE TABLE `reports` (
   KEY `idx_reports_status_created` (`status`, `created_at`),
   KEY `idx_reports_product` (`product_id`),
   KEY `idx_reports_post` (`post_id`),
+  KEY `idx_reports_review` (`review_id`),
+  KEY `idx_reports_comment` (`comment_id`),
+  KEY `idx_reports_review_comment` (`review_comment_id`),
   CONSTRAINT `fk_reports_product`  FOREIGN KEY (`product_id`)  REFERENCES `products` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_reports_post`     FOREIGN KEY (`post_id`)     REFERENCES `posts` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_reports_review`   FOREIGN KEY (`review_id`)   REFERENCES `reviews` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_reports_comment`  FOREIGN KEY (`comment_id`)  REFERENCES `post_comments` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_reports_review_comment` FOREIGN KEY (`review_comment_id`) REFERENCES `review_comments` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_reports_reporter` FOREIGN KEY (`reporter_id`) REFERENCES `users` (`id`),
-  CONSTRAINT `fk_reports_handler`  FOREIGN KEY (`handled_by`)  REFERENCES `users` (`id`) ON DELETE SET NULL,
-  CONSTRAINT `ck_reports_target`   CHECK ((`product_id` IS NOT NULL) OR (`post_id` IS NOT NULL))
+  CONSTRAINT `fk_reports_handler`  FOREIGN KEY (`handled_by`)  REFERENCES `users` (`id`) ON DELETE SET NULL
+  -- 注意：这里原本有一条 ck_reports_target CHECK，迁移 015 已把它去掉——
+  -- MySQL 不允许 CHECK 里引用的列同时带 ON DELETE SET NULL 的外键动作（3823），
+  -- 而 SET NULL 才是必需的（评论被删时不能让外键挡住）。目标合法性由接口层校验。
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='违规举报';
+
+-- -------------------------------------------------------------
+-- 表 9b：review_comments（评价下的评论 · 新批需求⑤）
+-- -------------------------------------------------------------
+DROP TABLE IF EXISTS `review_comments`;
+CREATE TABLE `review_comments` (
+  `id`         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `review_id`  BIGINT UNSIGNED NOT NULL            COMMENT '所属评价',
+  `author_id`  BIGINT UNSIGNED NOT NULL            COMMENT '评论人',
+  `content`    TEXT            NOT NULL            COMMENT '评论内容（可含 @昵称 引用）',
+  `created_at` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_review_comments_review` (`review_id`, `created_at`),
+  CONSTRAINT `fk_review_comments_review` FOREIGN KEY (`review_id`) REFERENCES `reviews` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_review_comments_author` FOREIGN KEY (`author_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='评价下的评论（需求⑤）';
 
 -- -------------------------------------------------------------
 -- 表 10：swap_offers（以物换物）

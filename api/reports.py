@@ -1,14 +1,20 @@
-"""举报提交（商品 / 帖子）。审核动作在 api/admin.py。"""
+"""举报提交（商品 / 帖子 / 评价 / 评论）。审核动作在 api/admin.py。"""
 from flask import Blueprint
 
 from api.common import current_user, fail, json_body, login_required, ok, paginate_args
 from config import Config
 from extensions import db
-from models import Post, Product, Report, PRODUCT_DELETED
+from models import (
+    Post, PostComment, Product, Report, Review, ReviewComment, PRODUCT_DELETED,
+)
 
 bp = Blueprint("reports", __name__, url_prefix="/api")
 
 VALID_REASONS = Config.REPORT_REASONS
+
+# 举报对象类型 -> 中文名（写日志用）
+TARGET_TEXT = {"product": "商品", "post": "帖子", "review": "评价",
+               "comment": "评论", "review_comment": "评价评论"}
 
 
 @bp.post("/reports")
@@ -21,10 +27,18 @@ def create_report():
     if not target_type:
         # 没显式指定时按「传了哪个 id」推断：只传 post_id 却默认成 product，
         # 会静默地去举报同 id 的商品（或报「商品不存在」），这个坑踩过。
-        target_type = "post" if (body.get("post_id") and not body.get("product_id")) else "product"
+        target_type = "product"
+        for cand, key in (("post", "post_id"), ("review", "review_id"),
+                          ("comment", "comment_id"),
+                          ("review_comment", "review_comment_id")):
+            if body.get(key):
+                target_type = cand
+                break
     reason = (body.get("reason") or "").strip()
     detail = (body.get("detail") or "").strip()
-    target_id = body.get("target_id") or body.get("product_id") or body.get("post_id")
+    target_id = (body.get("target_id") or body.get("product_id") or body.get("post_id")
+                 or body.get("review_id") or body.get("comment_id")
+                 or body.get("review_comment_id"))
 
     if not target_id:
         return fail("请选择要举报的对象")
@@ -49,8 +63,29 @@ def create_report():
         if post.author_id == user.id:
             return fail("不能举报自己发布的帖子")
         target_field = {"post_id": post.id}
+    elif target_type == "review":
+        review = Review.query.get(int(target_id))
+        if review is None:
+            return fail("评价不存在", 404)
+        if review.reviewer_id == user.id:
+            return fail("不能举报自己发布的评价")
+        target_field = {"review_id": review.id}
+    elif target_type == "comment":
+        comment = PostComment.query.get(int(target_id))
+        if comment is None:
+            return fail("评论不存在", 404)
+        if comment.author_id == user.id:
+            return fail("不能举报自己的评论")
+        target_field = {"comment_id": comment.id}
+    elif target_type == "review_comment":
+        comment = ReviewComment.query.get(int(target_id))
+        if comment is None:
+            return fail("评论不存在", 404)
+        if comment.author_id == user.id:
+            return fail("不能举报自己的评论")
+        target_field = {"review_comment_id": comment.id}
     else:
-        return fail("举报对象只能是商品或帖子")
+        return fail("举报对象只能是商品、帖子、评价或评论")
 
     duplicate = Report.query.filter_by(
         reporter_id=user.id, status="pending", **target_field
@@ -65,7 +100,7 @@ def create_report():
     import audit
 
     audit.record("report_create", "report", report.id,
-                 f"举报{'商品' if target_field.get('product_id') else '帖子'}：{full_reason[:60]}")
+                 f"举报{TARGET_TEXT.get(target_type, '对象')}：{full_reason[:60]}")
     db.session.commit()
     return ok(report.to_dict(), msg="举报已提交，管理员会尽快处理")
 

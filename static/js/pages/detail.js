@@ -7,7 +7,7 @@ import { ensureMeta, ensurePlaces } from '../data.js';
 import { reviewItemHtml } from '../components.js';
 import {
   confirmDialog, emptyHtml, esc, fmtPrice, fmtTime, go, imgUrl,
-  openModal, ratingBadgeHtml, statusFlagHtml, toast,
+  loadingHtml, openModal, ratingBadgeHtml, statusFlagHtml, toast,
 } from '../ui.js';
 
 export default {
@@ -84,6 +84,81 @@ export default {
       if (fromAdmin) { location.hash = '#/admin?tab=reports'; return; }
       history.back();
     });
+
+    /* ---------------- 新批需求⑤：评价下的评论（写评论 / 回复(@某人) / 举报） ---------------- */
+    const reviewCommentsHtml = (list) => (list.length
+      ? list.map(c => `
+          <div class="rc-item" data-rc="${c.id}">
+            <div class="cm-head">
+              <b>${esc(c.author_nickname || '')}</b>
+              <span class="muted small">${esc(fmtTime(c.created_at))}</span>
+            </div>
+            <div class="rc-body">${esc(c.content)}</div>
+            <div class="cm-actions">
+              <button class="btn btn-ghost btn-sm" data-rc-reply="${c.id}"
+                      data-nick="${esc(c.author_nickname || '')}">回复</button>
+              <button class="btn btn-ghost btn-sm" data-rc-report="${c.id}">举报</button>
+            </div>
+          </div>`).join('')
+      : '<div class="muted small">还没有评论，来说两句</div>');
+
+    function bindReviewComments(box, reviewId) {
+      box.querySelectorAll('[data-rc-reply]').forEach(btn =>
+        btn.addEventListener('click', () => {
+          const input = box.querySelector(`[data-rc-input="${reviewId}"]`);
+          if (!input) return;
+          // 引用(@用户名)：把 `@昵称 ` 填进输入框（一次只引用一个人，重复点会替换掉上一个）
+          input.value = `@${btn.dataset.nick} ` + input.value.replace(/^@\S+\s*/, '');
+          input.focus();
+        }));
+      box.querySelectorAll('[data-rc-report]').forEach(btn =>
+        btn.addEventListener('click', () =>
+          openReportModal({ type: 'review_comment', id: Number(btn.dataset.rcReport) })));
+      box.querySelector(`[data-rc-send="${reviewId}"]`)?.addEventListener('click', async () => {
+        const input = box.querySelector(`[data-rc-input="${reviewId}"]`);
+        const content = (input?.value || '').trim();
+        if (!content) { toast('评论内容不能为空', 'warn'); return; }
+        try {
+          await api.post(`/api/reviews/${reviewId}/comments`, { content });
+          await loadReviewComments(reviewId, box);
+          const cnt = root.querySelector(`[data-rev-count="${reviewId}"]`);
+          if (cnt) cnt.textContent = Number(cnt.textContent || 0) + 1;
+          toast('评论已发布');
+        } catch (err) { toast(err.message, 'error'); }
+      });
+    }
+
+    async function loadReviewComments(reviewId, box) {
+      box.innerHTML = loadingHtml('加载评论…');
+      let list = [];
+      try {
+        list = await api.get(`/api/reviews/${reviewId}/comments`);
+      } catch (err) {
+        box.innerHTML = emptyHtml(`加载失败：${err.message}`, '😵');
+        return;
+      }
+      box.innerHTML = `
+        <div class="rc-list">${reviewCommentsHtml(list)}</div>
+        <div class="rc-input row" style="gap:8px;align-items:flex-end">
+          <textarea class="textarea" data-rc-input="${reviewId}" style="min-height:44px"
+                    placeholder="写点评论…点「回复」可以引用(@)某个人"></textarea>
+          <button class="btn btn-primary btn-sm" data-rc-send="${reviewId}">发送</button>
+        </div>`;
+      bindReviewComments(box, reviewId);
+    }
+
+    root.querySelectorAll('[data-rev-comments]').forEach(btn =>
+      btn.addEventListener('click', async () => {
+        const rid = btn.dataset.revComments;
+        const box = root.querySelector(`[data-rev-box="${rid}"]`);
+        if (!box) return;
+        if (!box.hidden) { box.hidden = true; return; }
+        box.hidden = false;
+        await loadReviewComments(rid, box);
+      }));
+    root.querySelectorAll('[data-rev-report]').forEach(btn =>
+      btn.addEventListener('click', () =>
+        openReportModal({ type: 'review', id: Number(btn.dataset.revReport) })));
 
     // 图片切换
     const thumbs = root.querySelector('#thumbs');
@@ -186,7 +261,7 @@ async function renderActions(root, product, id) {
       }
 
       if (act === 'buy') { await openBuyModal(product); return; }
-      if (act === 'report') { await openReportModal(product); return; }
+      if (act === 'report') { await openReportModal({ type: 'product', id: product.id }); return; }
 
       if (act === 'off' || act === 'on') {
         const target = act === 'off' ? 'off_shelf' : 'on_sale';
@@ -282,10 +357,14 @@ async function openBuyModal(product) {
 }
 
 /* ------------------------------------------------------------------ 举报 */
-async function openReportModal(product) {
+async function openReportModal(target) {
   const meta = await ensureMeta();
+  const t = target.type || 'product';
+  const LABEL = {
+    product: '商品', post: '帖子', review: '评价', comment: '评论', review_comment: '评论',
+  };
   openModal({
-    title: '举报商品',
+    title: `举报${LABEL[t] || '内容'}`,
     body: `
       <div class="form-row">
         <label>举报理由<span class="req">*</span></label>
@@ -305,8 +384,8 @@ async function openReportModal(product) {
         button.disabled = true;
         try {
           await api.post('/api/reports', {
-            target_type: 'product',
-            target_id: product.id,
+            target_type: t,
+            target_id: target.id,
             reason: modal.querySelector('#rp-reason').value,
             detail: modal.querySelector('#rp-detail').value.trim(),
           });

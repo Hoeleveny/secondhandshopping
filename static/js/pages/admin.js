@@ -1185,6 +1185,15 @@ function openBanDialog(uid, nickname, refresh) {
   });
 }
 
+/* 新批需求⑤：举报对象扩展到评价与评论 */
+const TARGET_META = {
+  product: { text: '商品', badge: '', handle: '下架商品', link: 'product' },
+  post: { text: '帖子', badge: 'badge-info', handle: '删除帖子', link: 'post' },
+  review: { text: '评价', badge: 'badge-warn', handle: '删除评价', link: '' },
+  comment: { text: '评论', badge: 'badge-warn', handle: '删除评论', link: '' },
+  review_comment: { text: '评价评论', badge: 'badge-warn', handle: '删除评论', link: '' },
+};
+
 /* ================================================================ 举报审核 */
 async function renderReports(panel) {
   let status = 'pending';
@@ -1233,12 +1242,16 @@ async function renderReports(panel) {
           <tbody>
             ${data.list.map(r => {
               const target = r.target || {};
-              const isProduct = r.target_type === 'product';
+              const meta = TARGET_META[r.target_type]
+                || { text: '对象', badge: 'badge-gray', handle: '删除', link: '' };
               const canHandle = r.status === 'pending';
               return `
               <tr>
-                <td>${target.id ? `<span class="strong" data-target="${isProduct ? 'product' : 'post'}:${target.id}" style="cursor:pointer">${esc(target.title || '')}</span>` : '<span class="muted">对象已删除</span>'}</td>
-                <td><span class="badge ${isProduct ? '' : 'badge-info'}">${isProduct ? '商品' : '帖子'}</span></td>
+                <td>${target.id ? (meta.link
+                  ? `<span class="strong" data-target="${meta.link}:${target.id}" style="cursor:pointer">${esc(target.title || '')}</span>`
+                  : `<span class="strong">${esc(target.title || '')}</span>`)
+                  : '<span class="muted">对象已删除</span>'}</td>
+                <td><span class="badge ${meta.badge}">${meta.text}</span></td>
                 <td>${esc(r.reporter_nickname || '')}</td>
                 <td style="max-width:260px">${esc(r.reason)}</td>
                 <td>${r.status === 'pending' ? '<span class="badge badge-warn">待处理</span>'
@@ -1249,7 +1262,7 @@ async function renderReports(panel) {
                   <div class="ops">
                     ${canHandle ? `
                       <button class="btn btn-danger btn-sm" data-handle="${r.id}" data-type="${r.target_type}">
-                        ${isProduct ? '下架商品' : '删除帖子'}
+                        ${meta.handle}
                       </button>
                       <button class="btn btn-sm" data-dismiss="${r.id}">驳回</button>` : '<span class="muted small">已处理</span>'}
                   </div>
@@ -1274,13 +1287,11 @@ async function renderReports(panel) {
 
     listBox.querySelectorAll('[data-handle]').forEach(el =>
       el.addEventListener('click', () => {
-        const isProduct = el.dataset.type === 'product';
+        const meta = TARGET_META[el.dataset.type] || { handle: '处理' };
         openFormModal({
-          title: isProduct ? '下架被举报的商品' : '删除被举报的帖子',
-          submitText: isProduct ? '下架并通知卖家' : '删帖并通知作者',
-          successMsg: isProduct
-            ? '已下架商品，并私信告知卖家'
-            : '已删除帖子，并私信告知作者',
+          title: meta.handle + '（举报处理）',
+          submitText: '处理并通知对方',
+          successMsg: `已处理：${meta.handle}，并私信告知相关的人`,
           fields: [
             { key: 'reason_code', label: '大致原因', type: 'select', required: true,
               options: (reasonOptions.handle || [])

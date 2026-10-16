@@ -411,6 +411,11 @@ class Review(db.Model):
         db.UniqueConstraint("order_id", "reviewer_id", name="uk_reviews_order_reviewer"),
     )
 
+    # 新批需求⑤：评价下面新增一层评论（可以引用(@用户名) / 举报）
+    comments = db.relationship(
+        "ReviewComment", backref="review", cascade="all, delete-orphan",
+        order_by="ReviewComment.created_at")
+
     def to_dict(self, viewer_id: int | None = None) -> dict:
         direction = "买家评卖家"
         if self.order and viewer_id is not None:
@@ -426,6 +431,36 @@ class Review(db.Model):
             "rating": self.rating,
             "content": self.content or "",
             "direction": direction,
+            "comment_count": len(self.comments),
+            "created_at": _dt(self.created_at),
+        }
+
+
+# ---------------------------------------------------------------- 8b. 评价下的评论（新批需求⑤）
+class ReviewComment(db.Model):
+    """商品评价下面的评论（新批需求⑤）。
+
+    口径（用户拍板）：评价下面**新增一层评论**，这些评论可以「引用(@用户名)」与「举报」；
+    引用就是在内容里带上 `@昵称 `（点「回复」自动填），因此不需要额外字段。
+    """
+
+    __tablename__ = "review_comments"
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    review_id = db.Column(db.BigInteger, db.ForeignKey("reviews.id"), nullable=False)
+    author_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
+
+    author = db.relationship("User")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "review_id": self.review_id,
+            "author_id": self.author_id,
+            "author_nickname": self.author.nickname if self.author else None,
+            "content": self.content,
             "created_at": _dt(self.created_at),
         }
 
@@ -440,6 +475,10 @@ class Report(db.Model):
     id = db.Column(db.BigInteger, primary_key=True)
     product_id = db.Column(db.BigInteger, db.ForeignKey("products.id"))
     post_id = db.Column(db.BigInteger, db.ForeignKey("posts.id"))
+    # 新批需求⑤：举报对象扩展到「评价」「帖子评论」「评价评论」
+    review_id = db.Column(db.BigInteger, db.ForeignKey("reviews.id"))
+    comment_id = db.Column(db.BigInteger, db.ForeignKey("post_comments.id"))
+    review_comment_id = db.Column(db.BigInteger, db.ForeignKey("review_comments.id"))
     reporter_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
     reason = db.Column(db.String(200), nullable=False)
     status = db.Column(
@@ -454,12 +493,25 @@ class Report(db.Model):
     handler = db.relationship("User", foreign_keys=[handled_by])
     product = db.relationship("Product")
     post = db.relationship("Post")
+    review = db.relationship("Review")
+    comment = db.relationship("PostComment", foreign_keys=[comment_id])
+    review_comment = db.relationship("ReviewComment", foreign_keys=[review_comment_id])
 
     STATUS_TEXT = {"pending": "待处理", "handled": "已处理", "dismissed": "驳回"}
 
     @property
     def target_type(self) -> str:
-        return "product" if self.product_id else "post"
+        if self.product_id:
+            return "product"
+        if self.post_id:
+            return "post"
+        if self.review_id:
+            return "review"
+        if self.comment_id:
+            return "comment"
+        if self.review_comment_id:
+            return "review_comment"
+        return ""
 
     def to_dict(self) -> dict:
         target = None
@@ -467,6 +519,16 @@ class Report(db.Model):
             target = {"type": "product", "id": self.product_id, "title": self.product.name}
         elif self.post_id and self.post:
             target = {"type": "post", "id": self.post_id, "title": self.post.title}
+        elif self.review_id and self.review:
+            target = {"type": "review", "id": self.review_id,
+                      "title": f"{self.review.reviewer.nickname if self.review.reviewer else '匿名'}"
+                               f" 的评价：{(self.review.content or '')[:30]}"}
+        elif self.comment_id and self.comment:
+            target = {"type": "comment", "id": self.comment_id,
+                      "title": f"评论：{(self.comment.content or '')[:30]}"}
+        elif self.review_comment_id and self.review_comment:
+            target = {"type": "review_comment", "id": self.review_comment_id,
+                      "title": f"评价评论：{(self.review_comment.content or '')[:30]}"}
         return {
             "id": self.id,
             "target": target,

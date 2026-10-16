@@ -28,16 +28,36 @@ async function renderPost(root, ctx) {
   // 评论区渲染抽成函数：初次渲染、自己发评论后、以及需求⑧的自动更新都复用同一份
   const commentListHtml = (items) => (items.length
     ? items.map(c => `
-        <div class="comment-item">
+        <div class="comment-item" data-comment="${c.id}">
           <div class="cm-head"><b>${esc(c.author_nickname || '')}</b><span>${esc(fmtTime(c.created_at))}</span></div>
-          <div>${esc(c.content)}</div>
+          <div class="cm-body">${esc(c.content)}</div>
+          <div class="cm-actions">
+            <button class="btn btn-ghost btn-sm" data-reply="${c.id}"
+                    data-nick="${esc(c.author_nickname || '')}">回复</button>
+            <button class="btn btn-ghost btn-sm" data-report-comment="${c.id}">举报</button>
+          </div>
         </div>`).join('')
     : emptyHtml('还没有评论，来说两句', '💬'));
+
+  // 新批需求⑤：评论上的「回复（引用 @某人）」与「举报」
+  function bindCommentActions(scope) {
+    scope.querySelectorAll('[data-reply]').forEach(btn =>
+      btn.addEventListener('click', () => {
+        const input = root.querySelector('#comment-input');
+        if (!input) return;
+        input.value = `@${btn.dataset.nick} ` + input.value.replace(/^@\S+\s*/, '');
+        input.focus();
+      }));
+    scope.querySelectorAll('[data-report-comment]').forEach(btn =>
+      btn.addEventListener('click', () =>
+        openReportModal({ type: 'comment', id: Number(btn.dataset.reportComment) })));
+  }
 
   const paintComments = (items) => {
     const list = root.querySelector('#comment-list');
     if (!list) return;
     list.innerHTML = commentListHtml(items);
+    bindCommentActions(list);
     const title = root.querySelector('.card-head h2');
     if (title) title.textContent = `评论（${items.length}）`;
   };
@@ -84,6 +104,7 @@ async function renderPost(root, ctx) {
     </div>`;
 
   root.querySelector('#btn-back').addEventListener('click', () => { location.hash = back.hash; });
+  bindCommentActions(root.querySelector('#comment-list'));   // 需求⑤：初次渲染也要绑上回复/举报
 
   // 需求⑤：帖子详情里点作者也能去 TA 的主页
   root.querySelector('[data-user]')?.addEventListener('click', (event) => {
@@ -99,7 +120,7 @@ async function renderPost(root, ctx) {
       location.hash = '#/login';
       return;
     }
-    openReportModal(post);
+    openReportModal({ type: 'post', id: post.id });
   });
 
   // 功能⑥：点配图放大看原图
@@ -185,10 +206,12 @@ async function renderPost(root, ctx) {
 export default { render: renderPost };
 
 /* ------------------------------------------------------------------ 举报帖子的弹窗 */
-async function openReportModal(post) {
+async function openReportModal(target) {
   const meta = await ensureMeta();
+  const t = target.type || 'post';
+  const LABEL = { product: '商品', post: '帖子', review: '评价', comment: '评论', review_comment: '评论' };
   openModal({
-    title: '举报帖子',
+    title: `举报${LABEL[t] || '内容'}`,
     body: `
       <div class="form-row">
         <label>举报理由<span class="req">*</span></label>
@@ -208,8 +231,8 @@ async function openReportModal(post) {
         button.disabled = true;
         try {
           await api.post('/api/reports', {
-            target_type: 'post',
-            target_id: post.id,
+            target_type: t,
+            target_id: target.id,
             reason: modal.querySelector('#rp-reason').value,
             detail: modal.querySelector('#rp-detail').value.trim(),
           });

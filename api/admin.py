@@ -21,8 +21,8 @@ from api.common import (
 from config import Config
 from extensions import db
 from models import (
-    CampusPlace, Category, Message, OperationLog, Order, Post, Product, Report,
-    Review, Subcategory, User, _dt,
+    CampusPlace, Category, Message, OperationLog, Order, Post, PostComment, Product, Report,
+    Review, ReviewComment, Subcategory, User, _dt,
     ORDER_AWAITING, ORDER_CANCELED, ORDER_DONE, ORDER_PENDING,
     PRODUCT_DELETED, PRODUCT_OFF_SHELF, PRODUCT_ON_SALE, PRODUCT_SOLD,
     ROLE_ADMIN,
@@ -600,12 +600,39 @@ def handle_report(rid: int):
             notify_id = post.author_id if post else None
             message = "已删除被举报的帖子"
             notice = f"【平台通知】你发布的帖子《{title}》因【{reason_code}】已被删除。"
+        elif report.review_id:
+            review = Review.query.get(report.review_id)
+            notify_id = review.reviewer_id if review else None
+            message = "已删除被举报的评价"
+            notice = f"【平台通知】你发布的商品评价因【{reason_code}】已被删除。"
+            if review:
+                db.session.delete(review)      # 评价下的评论会随外键一起清掉
+        elif report.comment_id:
+            comment = PostComment.query.get(report.comment_id)
+            notify_id = comment.author_id if comment else None
+            message = "已删除被举报的评论"
+            notice = f"【平台通知】你在帖子下的评论因【{reason_code}】已被删除。"
+            if comment:
+                db.session.delete(comment)
+        elif report.review_comment_id:
+            comment = ReviewComment.query.get(report.review_comment_id)
+            notify_id = comment.author_id if comment else None
+            message = "已删除被举报的评价评论"
+            notice = f"【平台通知】你在商品评价下的评论因【{reason_code}】已被删除。"
+            if comment:
+                db.session.delete(comment)
         report.status = "handled"
     else:
         if report.post_id and report.post:
             title = report.post.title
         elif report.product_id and report.product:
             title = report.product.name
+        elif report.review_id and report.review:
+            title = "评价"
+        elif report.comment_id and report.comment:
+            title = "评论"
+        elif report.review_comment_id and report.review_comment:
+            title = "评价评论"
         else:
             title = "（对象已删除）"
         notify_id = report.reporter_id

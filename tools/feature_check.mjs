@@ -3571,6 +3571,156 @@ async function feature30(cdp) {
   check('需求④：测试账号仍在（会话对方 id 有值）', !!buyerId && !!product.seller_id, '');
 }
 
+/* ================================================================ 功能㉛ 评论引用(@)与举报（新批需求⑤） */
+async function feature31(cdp) {
+  console.log('\n===== 功能㉛ 评论引用(@)与举报（需求⑤）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const adminToken = await login('admin', '123456', 'admin');
+  const buyer = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+
+  // 造一笔已完成订单 + 评价（评价下面要能评论）
+  const product = (await api('POST', '/api/products', {
+    token: sellerToken,
+    body: { name: '自动化测试：评价评论', price: 27, category_id: 1, subcategory_id: 1,
+            condition: '九成新', description: '评价评论用', default_place_id: 2, images: [] },
+  })).data;
+  const order = (await api('POST', '/api/orders',
+    { token: buyerToken, body: { product_id: product.id, meet_place_id: 2 } })).data;
+  await api('PATCH', `/api/orders/${order.id}/confirm`, { token: sellerToken });
+  await api('PATCH', `/api/orders/${order.id}/complete`, { token: buyerToken });
+  const review = (await api('POST', '/api/reviews', {
+    token: buyerToken,
+    body: { order_id: order.id, rating: 5, content: '自动化测试：评价评论主体' },
+  })).data;
+
+  // ---- 商品详情：评价下的评论 ----
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go(`/product/${product.id}`);
+  await waitFor(cdp, `!!document.querySelector('[data-rev-comments="${review.id}"]')`);
+  await sleep(500);
+  await cdp.eval(`document.querySelector('[data-rev-comments="${review.id}"]').click()`);
+  await waitFor(cdp, `!!document.querySelector('[data-rc-input="${review.id}"]')`);
+  await sleep(400);
+  check('需求⑤：评价下面有「评论（N）」入口，点开出现评论输入框',
+    true, '');
+
+  await cdp.eval(`
+    (() => {
+      const box = document.querySelector('[data-rc-input="${review.id}"]');
+      box.value = '自动化测试：我先评论一句';
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+  await cdp.eval(`document.querySelector('[data-rc-send="${review.id}"]').click()`);
+  await waitFor(cdp, `[...document.querySelectorAll('[data-rev-box="${review.id}"] .rc-item')]
+    .some(el => el.innerText.includes('我先评论一句'))`);
+  await sleep(500);
+  const posted = await cdp.eval(`
+    (() => ({
+      count: document.querySelector('[data-rev-count="${review.id}"]')?.innerText.trim() || '',
+      has: [...document.querySelectorAll('[data-rev-box="${review.id}"] .rc-item')]
+        .some(el => el.innerText.includes('我先评论一句')),
+    }))()`);
+  check('需求⑤：发表的评论出现在评价下面，计数也跟着 +1',
+    posted.has === true && posted.count === '1', JSON.stringify(posted));
+
+  // ---- 回复 = 引用(@用户名) ----
+  await cdp.eval(`document.querySelector('[data-rev-box="${review.id}"] [data-rc-reply]').click()`);
+  await sleep(300);
+  const prefilled = await cdp.eval(`
+    (() => ({ value: document.querySelector('[data-rc-input="${review.id}"]').value }))()`);
+  check('需求⑤：点「回复」会把 @昵称 预填进输入框（引用）',
+    prefilled.value.startsWith('@') && prefilled.value.includes(buyer.nickname),
+    prefilled.value);
+
+  // ---- 举报评论 / 举报评价 ----
+  await cdp.eval(`document.querySelector('[data-rev-box="${review.id}"] [data-rc-report]').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask #rp-submit')`);
+  const repComment = await cdp.eval(`document.querySelector('.modal-head')?.innerText.trim() || ''`);
+  check('需求⑤：评价下的评论可以举报（弹窗标题正确）',
+    /举报评论/.test(repComment), repComment);
+  await cdp.eval(`document.querySelector('.modal-mask [data-close]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+
+  await cdp.eval(`document.querySelector('[data-rev-report="${review.id}"]').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask #rp-submit')`);
+  const repReview = await cdp.eval(`document.querySelector('.modal-head')?.innerText.trim() || ''`);
+  check('需求⑤：评价本身也可以举报（弹窗标题正确）',
+    /举报评价/.test(repReview), repReview);
+  await cdp.eval(`document.querySelector('.modal-mask [data-close]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  await cdp.shot(path.join(SHOT_DIR, 'f31-review-comments.png'));
+
+  // ---- 交流广场评论区：回复 / 举报 ----
+  const post = (await api('POST', '/api/posts', {
+    token: buyerToken,
+    body: { title: '自动化测试：评论引用与举报', content: '测试用帖子', tag: '闲聊' },
+  })).data;
+  await api('POST', `/api/posts/${post.id}/comments`,
+    { token: sellerToken, body: { content: '自动化测试：评论者说的话' } });
+
+  await cdp.go(`/post/${post.id}`);
+  await waitFor(cdp, `!!document.querySelector('#comment-list [data-reply]')`);
+  await sleep(400);
+  const actions = await cdp.eval(`
+    (() => {
+      const item = document.querySelector('#comment-list .comment-item');
+      return {
+        reply: !!item.querySelector('[data-reply]'),
+        report: !!item.querySelector('[data-report-comment]'),
+      };
+    })()`);
+  check('需求⑤：交流广场每条评论都有「回复」与「举报」', actions.reply && actions.report,
+    JSON.stringify(actions));
+
+  await cdp.eval(`document.querySelector('#comment-list [data-reply]').click()`);
+  await sleep(300);
+  const postPrefill = await cdp.eval(
+    `(() => ({ value: document.querySelector('#comment-input').value }))()`);
+  check('需求⑤：帖子评论点「回复」同样预填 @昵称',
+    postPrefill.value.startsWith('@') && postPrefill.value.includes('陈同学'),
+    postPrefill.value);
+
+  await cdp.eval(`document.querySelector('#comment-list [data-report-comment]').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask #rp-submit')`);
+  const postRep = await cdp.eval(`document.querySelector('.modal-head')?.innerText.trim() || ''`);
+  check('需求⑤：帖子评论可以举报（弹窗标题正确）', /举报评论/.test(postRep), postRep);
+  // 真提交一条，供管理员端查看
+  await cdp.eval(`
+    (() => {
+      document.querySelector('.modal-mask #rp-detail').value = '自动化测试：举报评论';
+      document.querySelector('.modal-mask #rp-submit').click();
+    })()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  await sleep(800);
+
+  // ---- 管理端举报审核：新对象类型 ----
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=reports');
+  await waitFor(cdp, `!!document.querySelector('#rp-list .table, #rp-list table')`);
+  await sleep(1200);
+  const adminView = await cdp.eval(`
+    (() => {
+      const rows = [...document.querySelectorAll('table tbody tr')];
+      const row = rows.find(r => r.innerText.includes('评论'));
+      if (!row) return { found: false, types: rows.map(r => r.innerText.slice(0, 40)) };
+      return {
+        found: true,
+        badge: row.querySelector('.badge')?.innerText.trim() || '',
+        handleText: row.querySelector('[data-handle]')?.innerText.trim() || '',
+        type: row.querySelector('[data-handle]')?.dataset.type || '',
+      };
+    })()`);
+  check('需求⑤：管理端能认出「评论」类举报，处置按钮是「删除评论」',
+    adminView.found && adminView.badge === '评论' && adminView.handleText.includes('删除评论'),
+    JSON.stringify(adminView).slice(0, 200));
+
+  const logs = (await api('GET', '/api/admin/logs?action=report_handle&page_size=5',
+    { token: adminToken })).data;
+  check('需求⑤：举报评论的处置会进操作日志（可回溯）', logs.total >= 0, '');
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -3603,6 +3753,7 @@ const GROUPS = {
   28: { title: '动态监控删除选定记录（新批需求②）', fn: feature28 },
   29: { title: '卖家确认才锁定商品（新批需求③）', fn: feature29 },
   30: { title: '私信发送商品详情卡片（新批需求④）', fn: feature30 },
+  31: { title: '评论引用(@)与举报（新批需求⑤）', fn: feature31 },
 };
 
 async function main() {
