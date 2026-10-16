@@ -624,6 +624,11 @@ class Message(db.Model):
     sender_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
     receiver_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
     product_id = db.Column(db.BigInteger, db.ForeignKey("products.id"))
+    # 新批需求④：私信里发「商品详情卡片」
+    # kind 区分卡片与普通文字（带商品上下文的文字消息不能被卡片顶掉）；
+    # product_snapshot 冻结发卡那一刻的商品信息，商品删了卡片也还显示得出来。
+    kind = db.Column(db.String(10), nullable=False, default="text")
+    product_snapshot = db.Column(db.JSON)
     content = db.Column(db.String(MAX_LENGTH), nullable=False)
     is_read = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
@@ -631,6 +636,30 @@ class Message(db.Model):
     sender = db.relationship("User", foreign_keys=[sender_id])
     receiver = db.relationship("User", foreign_keys=[receiver_id])
     product = db.relationship("Product")
+
+    def product_card(self) -> dict | None:
+        """这条消息要展示的商品卡片：优先用发卡时的快照，商品还在就用实时数据覆盖。"""
+        snap = dict(self.product_snapshot or {})
+        product = self.product
+        if product is not None:
+            snap.update({
+                "id": product.id,
+                "name": product.name,
+                "price": float(product.price),
+                "cover": product.images[0].url if product.images else snap.get("cover"),
+                "product_code": product.product_code,
+                "category_icon": (product.category.icon if product.category
+                                  else snap.get("category_icon", "")),
+                "status": product.status,
+                "available": product.status == PRODUCT_ON_SALE,
+            })
+            return snap
+        if snap:
+            snap.setdefault("id", self.product_id)
+            snap["status"] = PRODUCT_DELETED
+            snap["available"] = False
+            return snap
+        return None
 
     def to_dict(self) -> dict:
         return {
@@ -641,6 +670,8 @@ class Message(db.Model):
             "receiver_nickname": self.receiver.nickname if self.receiver else None,
             "product_id": self.product_id,
             "product_name": self.product.name if self.product else None,
+            "kind": self.kind or "text",
+            "product_card": self.product_card(),
             "content": self.content,
             "is_read": bool(self.is_read),
             "created_at": _dt(self.created_at),

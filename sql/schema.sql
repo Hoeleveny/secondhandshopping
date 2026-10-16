@@ -322,6 +322,8 @@ CREATE TABLE `messages` (
   `sender_id`   BIGINT UNSIGNED NOT NULL                COMMENT '发信人',
   `receiver_id` BIGINT UNSIGNED NOT NULL                COMMENT '收信人',
   `product_id`  BIGINT UNSIGNED NULL                    COMMENT '针对哪件商品聊的，可空',
+  `kind`        VARCHAR(10)     NOT NULL DEFAULT 'text' COMMENT 'text=普通文字 / product=商品卡片（迁移 014）',
+  `product_snapshot` JSON       NULL                    COMMENT '商品卡片快照，商品删了卡片仍能显示（迁移 014）',
   `content`     VARCHAR(1000)   NOT NULL                COMMENT '消息内容',
   `is_read`     TINYINT(1)      NOT NULL DEFAULT 0      COMMENT '收信人是否已读',
   `created_at`  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,

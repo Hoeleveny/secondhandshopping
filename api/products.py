@@ -15,7 +15,7 @@ from api.common import (
 from config import Config
 from extensions import db
 from models import (
-    Category, Favorite, Order, Product, ProductImage, ProductWant, Report, Review,
+    Category, Favorite, Message, Order, Product, ProductImage, ProductWant, Report, Review,
     Subcategory, SwapOffer, User,
     PRODUCT_DELETED, PRODUCT_OFF_SHELF, PRODUCT_ON_SALE, PRODUCT_SOLD, ROLE_ADMIN,
 )
@@ -512,6 +512,10 @@ def delete_product_record(pid: int):
     SwapOffer.query.filter_by(product_id=product.id).delete()
     Report.query.filter_by(product_id=product.id).delete()
     Review.query.filter_by(product_id=product.id).delete()
+    # 私信里的商品卡片：**保留聊天记录**，只把 product_id 摘掉（否则外键会挡住彻底删除；
+    # 卡片本身靠 messages.product_snapshot 继续显示）。新批需求④ 顺带补的既有漏洞。
+    Message.query.filter_by(product_id=product.id).update(
+        {Message.product_id: None}, synchronize_session=False)
     db.session.delete(product)
     audit.record("product_purge", "product", pid,
                  f"彻底删除商品记录「{product.name}」（{product.product_code}）")

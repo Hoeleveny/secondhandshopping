@@ -59,8 +59,15 @@ STEPS: list[tuple[str, str]] = [
      "DELETE FROM posts WHERE title LIKE '冒烟%' "
      "OR title LIKE '验收%' OR title LIKE '自动化测试%'"),
     ("测试消息",
-     "DELETE FROM messages WHERE content LIKE '冒烟测试%' "
-     "OR content LIKE '自动化测试%'"),
+     # 用「冒烟/自动化测试/验收」开头做前缀匹配，而不是只匹配「冒烟测试」——
+     # 临时验证脚本发的「冒烟：…」也要能被清掉（漏了就会一直堆在演示账号收件箱里）
+     "DELETE FROM messages WHERE content LIKE '冒烟%' "
+     "OR content LIKE '自动化测试%' "
+     "OR content LIKE '验收%' "
+     # 需求④ 的商品卡片消息内容是自动生成的「【商品】<商品名>」，前缀在商品名里面
+     "OR content LIKE '【商品】冒烟%' "
+     "OR content LIKE '【商品】自动化测试%' "
+     "OR content LIKE '【商品】验收%'"),
     # 需求④之后，处理测试举报会给「帖子作者/卖家」发平台通知；测试里的对象属演示账号时，
     # 这些通知会留在演示账号收件箱里（还会顶掉「未读数」相关断言），所以按内容里的测试对象名清掉。
     ("平台通知私信（内容是测试对象触发的）",

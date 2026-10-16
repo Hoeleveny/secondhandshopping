@@ -5,7 +5,7 @@
 import { api } from '../api.js';
 import { store } from '../store.js';
 import { liveUpdate } from '../live.js';
-import { avatarHtml, confirmDialog, emptyHtml, esc, fmtTime, loadingHtml, ratingBadgeHtml, toast } from '../ui.js';
+import { avatarHtml, confirmDialog, emptyHtml, esc, fmtPrice, fmtTime, loadingHtml, ratingBadgeHtml, toast } from '../ui.js';
 
 let conversationsCache = [];
 let unreadTimer = null;
@@ -17,6 +17,19 @@ async function renderMessages(root, ctx) {
   // originProductId：需求④「返回原商品」用——买家是从哪个商品详情页点进来的。
   // 从会话列表主动切到别的会话时清掉，避免对着不相干的会话显示"返回原商品"。
   let originProductId = productId;
+
+  // 新批需求④：把「现在在咨询哪件商品」显示清楚（发卡片前先让用户确认是这一件）
+  let ctxProductHint = '';
+  async function loadCtxProduct() {
+    if (!originProductId) { ctxProductHint = ''; return; }
+    try {
+      const p = await api.get(`/api/products/${originProductId}`);
+      ctxProductHint = `<div class="hint">正在咨询：<b>${esc(p.name)}</b> · ${fmtPrice(p.price)}${
+        p.product_code ? ` · 编号 ${esc(p.product_code)}` : ''}</div>`;
+    } catch {
+      ctxProductHint = '<div class="hint">正在咨询的那件商品已经不在了</div>';
+    }
+  }
 
   let currentUid = null;
   let currentUser = null;
@@ -69,6 +82,7 @@ async function renderMessages(root, ctx) {
       el.addEventListener('click', () => {
         // 主动切会话：不再算「从某个商品详情页点进来的」
         originProductId = null;
+        ctxProductHint = '';
         openChat(Number(el.dataset.uid));
       }));
     // 需求⑤：点对方昵称去 TA 的主页（stopPropagation，别顺手把会话也切了）
@@ -92,6 +106,7 @@ async function renderMessages(root, ctx) {
     currentUser = data.user;
     messages = data.list || [];
     productId = productId && messages.length === 0 ? productId : null;
+    await loadCtxProduct();
     // 地址里保留 product，刷新/回退后「返回原商品」还在
     history.replaceState(null, '', `#/messages?to=${uid}`
       + (originProductId ? `&product=${originProductId}` : ''));
@@ -100,16 +115,56 @@ async function renderMessages(root, ctx) {
     refreshTopbarUnread();
   }
 
+  // 新批需求④：带商品的消息渲染成一张可点的小卡片（参考拼多多客服那种商品卡）
+  const productCardHtml = (card) => {
+    if (!card) return '';
+    const cover = card.cover
+      ? `<img src="/uploads/${encodeURIComponent(card.cover)}" alt="">`
+      : `<span style="font-size:22px">${esc(card.category_icon || '📦')}</span>`;
+    const gone = card.available === false;
+    return `<div class="msg-product ${gone ? 'gone' : ''}" data-product="${card.id}"
+                 role="button" tabindex="0"
+                 title="${gone ? '这件商品已经不在了' : '查看商品详情'}">
+              <div class="mp-cover">${cover}</div>
+              <div class="mp-info">
+                <div class="mp-name">${esc(card.name || '（商品已删除）')}</div>
+                <div class="mp-meta">${card.price != null ? fmtPrice(card.price) : ''}${
+                  card.product_code ? ` · 编号 ${esc(card.product_code)}` : ''}</div>
+                <div class="mp-hint">${gone ? '商品已不在 ›' : '点击查看商品详情 ›'}</div>
+              </div>
+            </div>`;
+  };
+
   // 气泡渲染抽出来：初次绘制与需求⑧的自动更新共用（只换气泡，输入框里的字不会被清掉）
   const bubblesHtml = (list) => (list.length
     ? list.map(m => {
         const mine = m.sender_id === store.user?.id;
-        return `<div class="bubble ${mine ? 'mine' : 'other'}">
-                  ${esc(m.content)}
+        // 只有「商品卡片」消息才把内容换成卡片——带商品上下文的**文字消息**里
+        // 有用户自己打的字，绝不能被卡片顶掉
+        const card = m.kind === 'product' ? m.product_card : null;
+        const ref = (!card && m.product_id)
+          ? `<div class="mp-ref">关于：${esc(m.product_name || '商品')}</div>` : '';
+        return `<div class="bubble ${mine ? 'mine' : 'other'} ${card ? 'has-card' : ''}">
+                  ${card ? productCardHtml(card) : esc(m.content)}
+                  ${ref}
                   <span class="b-time">${esc(fmtTime(m.created_at))}</span>
                 </div>`;
       }).join('')
     : emptyHtml('还没有消息，打个招呼吧', '👋'));
+
+  // 卡片点击：跳到商品详情（商品已不在就提示一下，别跳到空页面）
+  function bindProductCards(scope) {
+    scope.querySelectorAll('.msg-product').forEach(el => {
+      const go2 = () => {
+        if (el.classList.contains('gone')) { toast('这件商品已经不在了', 'warn'); return; }
+        location.hash = `#/product/${el.dataset.product}`;
+      };
+      el.addEventListener('click', go2);
+      el.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); go2(); }
+      });
+    });
+  }
 
   function paintChat() {
     chatBox.innerHTML = `
@@ -124,12 +179,15 @@ async function renderMessages(root, ctx) {
             ${ratingBadgeHtml(currentUser?.rating)}
             <button class="btn btn-ghost btn-sm" data-go-seller="${currentUser?.id || ''}">查看 TA 的商品</button>
             ${originProductId
+              ? `<button class="btn btn-sm" data-send-card="${originProductId}"
+                   title="把这件商品以卡片形式发给对方">📦 发送商品详情</button>`
+              : ''}
+            ${originProductId
               ? `<button class="btn btn-ghost btn-sm" data-go-origin="${originProductId}">返回原商品</button>`
               : ''}
             <button class="btn btn-ghost btn-sm" data-del-conv="${currentUser?.id || ''}">🗑 删除对话</button>
           </div>
-          ${productId ? `<div class="hint">正在咨询商品 #${productId}</div>` : ''}
-        </div>
+          ${ctxProductHint}        </div>
         <div class="chat-body" id="chat-body">${bubblesHtml(messages)}</div>
         <div class="chat-input">
           <textarea class="textarea" id="msg-input" style="min-height:56px"
@@ -149,6 +207,12 @@ async function renderMessages(root, ctx) {
         send();
       }
     });
+    // 新批需求④：发送商品详情卡片
+    const sendCard = chatBox.querySelector('[data-send-card]');
+    if (sendCard) {
+      sendCard.addEventListener('click', () => sendProductCard(sendCard.dataset.sendCard));
+    }
+    bindProductCards(chatBox);
     // 需求④：「查看 TA 的商品」→ 卖家商品主页；「返回原商品」→ 买家原来浏览的那件商品
     const goSeller = chatBox.querySelector('[data-go-seller]');
     if (goSeller) {
@@ -219,6 +283,24 @@ async function renderMessages(root, ctx) {
     }
   }
 
+  // 新批需求④：把商品详情以卡片发给对方（不改输入框里的字，也不消耗商品上下文）
+  async function sendProductCard(pid) {
+    if (!currentUid || !pid) return;
+    try {
+      const created = await api.post('/api/messages', {
+        receiver_id: currentUid,
+        product_id: Number(pid),
+        kind: 'product',
+      });
+      messages.push(created);
+      paintChat();
+      loadConversations();
+      toast('已发送商品详情');
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  }
+
   async function refreshTopbarUnread() {
     const badge = document.getElementById('msg-badge');
     if (!badge) return;
@@ -252,6 +334,7 @@ async function renderMessages(root, ctx) {
     if (!body) return;
     const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
     body.innerHTML = bubblesHtml(messages);
+    bindProductCards(body);
     if (atBottom) body.scrollTop = body.scrollHeight;
     await loadConversations();   // 左侧列表的最后一条 / 未读数也跟上
     refreshTopbarUnread();

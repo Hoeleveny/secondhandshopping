@@ -8,6 +8,7 @@ from flask import Blueprint
 from sqlalchemy import and_, or_
 
 from api.common import current_user, fail, json_body, login_required, ok
+from api.orders import product_snapshot
 from extensions import db
 from models import Message, MessageClear, Product, User
 from rating import seller_rating
@@ -44,7 +45,9 @@ def send_message():
         return fail("收信人参数不正确")
     if receiver_id == me.id:
         return fail("不能给自己发私信")
-    if not content:
+    # 注意：只带商品、不带文字也是合法的一条消息（需求④ 的商品卡片），
+    # 所以这里只在「既没内容、也没关联商品」时才拒绝。
+    if not content and product_id in (None, "", 0):
         return fail("消息内容不能为空")
     if len(content) > MAX_CONTENT:
         return fail(f"消息内容不能超过 {MAX_CONTENT} 个字")
@@ -59,10 +62,20 @@ def send_message():
         if product is None:
             return fail("关联的商品不存在", 404)
 
+    # 新批需求④：发「商品详情卡片」——没填内容时自动用商品名兜一句可读文本，
+    # 这样会话列表的「最后一条」与未读提醒都还看得懂。
+    is_card = (body.get("kind") == "product") or (product is not None and not content)
+    if not content:
+        if product is None:
+            return fail("消息内容不能为空")
+        content = f"【商品】{product.name}"[:MAX_CONTENT]
+
     message = Message(
         sender_id=me.id,
         receiver_id=receiver.id,
         product_id=product.id if product else None,
+        kind="product" if is_card else "text",
+        product_snapshot=product_snapshot(product) if product else None,
         content=content,
         is_read=False,
     )

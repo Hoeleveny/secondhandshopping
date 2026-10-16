@@ -517,13 +517,16 @@ async function feature4(cdp) {
     pendingCard.found && pendingCard.hasDel === false, JSON.stringify(pendingCard));
 
   await cdp.go('/orders?status=done');
+  // 用**订单 id** 定位按钮，别按商品名找卡片：名字里的 Date.now()%100000 会跨轮次重名，
+  // 上一轮崩溃残留的同名单子会让断言误判（我在这上面栽过）。
+  await waitFor(cdp, `!!document.querySelector('#list-area [data-act="del-order"][data-id="${orderId}"]')`);
   const doneCard = await cdp.eval(`
     (() => {
-      const card = [...document.querySelectorAll('#list-area .card')]
-        .find(c => c.innerText.includes('待删订单'));
+      const btn = document.querySelector('#list-area [data-act="del-order"][data-id="${orderId}"]');
+      const card = btn ? btn.closest('.card') : null;
       return {
         found: !!card,
-        hasDel: card ? !!card.querySelector('[data-act="del-order"]') : null,
+        hasDel: !!btn,
         text: card ? card.innerText.replace(/\\s+/g, ' ').trim().slice(0, 80) : '',
       };
     })()`);
@@ -533,19 +536,15 @@ async function feature4(cdp) {
   await cdp.shot(path.join(SHOT_DIR, 'f4-order-delete.png'));
 
   await cdp.eval(`
-    (() => {
-      const card = [...document.querySelectorAll('#list-area .card')]
-        .find(c => c.innerText.includes('待删订单'));
-      card.querySelector('[data-act="del-order"]').click();
-    })()`);
+    document.querySelector('#list-area [data-act="del-order"][data-id="${orderId}"]').click()`);
   await sleep(500);
   await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
-  await sleep(1200);
+  await waitFor(cdp, `!document.querySelector('#list-area [data-act="del-order"][data-id="${orderId}"]')`);
+  await sleep(300);
 
   const afterDel = await cdp.eval(`
     (() => ({
-      stillShown: [...document.querySelectorAll('#list-area .card')]
-        .some(c => c.innerText.includes('待删订单')),
+      stillShown: !!document.querySelector('#list-area [data-act="del-order"][data-id="${orderId}"]'),
       toast: document.querySelector('.toast')?.innerText || '',
     }))()`);
   check('买家删除后自己的订单列表不再显示该订单',
@@ -3464,6 +3463,114 @@ async function feature29(cdp) {
   if (retry.code === 0) await api('PATCH', `/api/orders/${retry.data.id}/cancel`, { token: buyerToken });
 }
 
+/* ================================================================ 功能㉚ 私信发送商品详情卡片（新批需求④） */
+async function feature30(cdp) {
+  console.log('\n===== 功能㉚ 私信里的商品详情卡片（需求④）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const buyerId = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user.id;
+
+  const product = (await api('POST', '/api/products', {
+    token: sellerToken,
+    body: { name: '自动化测试：商品卡片', price: 46.5, category_id: 1, subcategory_id: 1,
+            condition: '九成新', description: '商品卡片测试', default_place_id: 2, images: [] },
+  })).data;
+
+  // ---- 从商品详情点「私信卖家」进入聊天 ----
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go(`/product/${product.id}`);
+  await waitFor(cdp, `!!document.querySelector('[data-act="msg"]')`);
+  await cdp.eval(`document.querySelector('[data-act="msg"]').click()`);
+  await waitFor(cdp, `!!document.querySelector('#chat-area [data-send-card]')`);
+  await sleep(600);
+
+  const head = await cdp.eval(`
+    (() => {
+      const box = document.querySelector('#chat-area');
+      return {
+        sendBtn: box.querySelector('[data-send-card]')?.innerText.trim() || '',
+        hint: box.querySelector('.hint')?.innerText.trim() || '',
+        backBtn: !!box.querySelector('[data-go-origin]'),
+      };
+    })()`);
+  check('需求④：从商品详情进私信后，聊天头部有「发送商品详情」按钮',
+    head.sendBtn.includes('发送商品详情') && head.backBtn, JSON.stringify(head));
+  check('需求④：头部提示写清「正在咨询」的是哪件商品（含价格与编号）',
+    head.hint.includes('自动化测试：商品卡片') && head.hint.includes('46.5')
+    && head.hint.includes(product.product_code), head.hint);
+
+  // ---- 点按钮 → 发出去一张卡片 ----
+  await cdp.eval(`document.querySelector('#chat-area [data-send-card]').click()`);
+  // 按商品 id 精确定位这张卡片：聊天记录里可能还有别的卡片（其他轮次/别的商品留下的）
+  await waitFor(cdp, `!!document.querySelector('#chat-body .msg-product[data-product="${product.id}"]')`);
+  await sleep(700);
+  const card = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#chat-body .msg-product[data-product="${product.id}"]');
+      return {
+        name: el.querySelector('.mp-name')?.innerText.trim() || '',
+        meta: el.querySelector('.mp-meta')?.innerText.trim() || '',
+        hint: el.querySelector('.mp-hint')?.innerText.trim() || '',
+        pid: el.dataset.product || '',
+        gone: el.classList.contains('gone'),
+      };
+    })()`);
+  check('需求④：聊天里出现可点击的商品卡片（名称 / 价格 / 编号）',
+    card.name === '自动化测试：商品卡片' && card.meta.includes('46.5')
+    && card.meta.includes(product.product_code) && card.pid === String(product.id)
+    && card.gone === false,
+    JSON.stringify(card));
+  check('需求④：卡片上有「点击查看商品详情」的提示',
+    /点击查看商品详情/.test(card.hint), card.hint);
+  await cdp.shot(path.join(SHOT_DIR, 'f30-msg-card.png'));
+
+  // ---- 点卡片 → 跳商品详情 ----
+  await cdp.eval(`document.querySelector('#chat-body .msg-product[data-product="${product.id}"]').click()`);
+  await waitFor(cdp, `location.hash === '#/product/${product.id}'`);
+  check('需求④：点卡片直接跳到商品详情', true, '');
+
+  // ---- 文字消息不能被卡片顶掉 ----
+  await cdp.go(`/messages?to=${product.seller_id}&product=${product.id}`);
+  await waitFor(cdp, `!!document.querySelector('#msg-input')`);
+  await sleep(600);
+  await cdp.eval(`
+    (() => {
+      const box = document.querySelector('#msg-input');
+      box.value = '自动化测试：这张卡片我要了';
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+  await cdp.eval(`document.querySelector('#msg-send').click()`);
+  await waitFor(cdp, `[...document.querySelectorAll('#chat-body .bubble')]
+    .some(b => b.innerText.includes('这张卡片我要了'))`);
+  const textOk = await cdp.eval(`
+    (() => {
+      const b = [...document.querySelectorAll('#chat-body .bubble')]
+        .find(x => x.innerText.includes('这张卡片我要了'));
+      return { text: b.innerText.includes('这张卡片我要了'), card: !!b.querySelector('.msg-product'),
+               ref: /关于：/.test(b.innerText) };
+    })()`);
+  check('需求④：买家自己打的字仍然是文字气泡（不会被商品卡片顶掉）',
+    textOk.text === true && textOk.card === false, JSON.stringify(textOk));
+
+  // ---- 商品被卖家删除后：卡片显示「商品已不在」 ----
+  await api('DELETE', `/api/products/${product.id}`, { token: sellerToken });
+  await cdp.go(`/messages?to=${product.seller_id}`);
+  await waitFor(cdp, `!!document.querySelector('#chat-body .msg-product[data-product="${product.id}"]')`);
+  await sleep(800);
+  const gone = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#chat-body .msg-product[data-product="${product.id}"]');
+      return { gone: el.classList.contains('gone'),
+               hint: el.querySelector('.mp-hint')?.innerText.trim() || '',
+               name: el.querySelector('.mp-name')?.innerText.trim() || '' };
+    })()`);
+  check('需求④：商品被删除后卡片仍在，但标为「商品已不在」',
+    gone.gone === true && /商品已不在/.test(gone.hint)
+    && gone.name === '自动化测试：商品卡片', JSON.stringify(gone));
+  check('需求④：测试账号仍在（会话对方 id 有值）', !!buyerId && !!product.seller_id, '');
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -3495,6 +3602,7 @@ const GROUPS = {
   27: { title: '用户管理 + 封禁（新批需求①）', fn: feature27 },
   28: { title: '动态监控删除选定记录（新批需求②）', fn: feature28 },
   29: { title: '卖家确认才锁定商品（新批需求③）', fn: feature29 },
+  30: { title: '私信发送商品详情卡片（新批需求④）', fn: feature30 },
 };
 
 async function main() {

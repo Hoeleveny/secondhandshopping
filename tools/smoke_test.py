@@ -1828,6 +1828,72 @@ def main() -> int:
     check("卖家删的是自己那一侧，不报错也不影响买家侧数据",
           r.get("code") == 0, str(r)[:150])
 
+    # ---------------- 新批需求④：私信里的商品详情卡片 ----------------
+    section("新批需求④ 私信发送商品详情卡片")
+
+    _st, r = call("POST", "/api/products", token=seller_token,
+                  body={"name": "冒烟测试-商品卡片", "price": 45.5, "category_id": 1,
+                        "subcategory_id": 1, "condition": "九成新",
+                        "description": "商品卡片测试", "default_place_id": 2, "images": []})
+    _card_p = r.get("data") or {}
+
+    # 只带商品、不带文字 → 合法的一条卡片消息
+    _st, r = call("POST", "/api/messages", token=buyer1,
+                  body={"receiver_id": seller_id, "product_id": _card_p.get("id"),
+                        "kind": "product"})
+    _card_msg = r.get("data") or {}
+    _pc = _card_msg.get("product_card") or {}
+    check("需求④：可以只发一张商品卡片（不填文字）",
+          r.get("code") == 0 and _card_msg.get("kind") == "product"
+          and _pc.get("name") == "冒烟测试-商品卡片" and _pc.get("price") == 45.5
+          and _pc.get("product_code") == _card_p.get("product_code"),
+          str(_card_msg)[:200])
+    check("需求④：卡片消息自动带一句可读文本（会话列表预览看得懂）",
+          _card_msg.get("content") == "【商品】冒烟测试-商品卡片", str(_card_msg.get("content"))[:80])
+
+    # 带商品上下文的**文字**消息不能被当成卡片（否则用户打的字会消失）
+    _st, r = call("POST", "/api/messages", token=buyer1,
+                  body={"receiver_id": seller_id, "content": "冒烟测试：这件还在吗？",
+                        "product_id": _card_p.get("id")})
+    check("需求④：带商品上下文的文字消息仍然是文字（内容不会被卡片顶掉）",
+          (r.get("data") or {}).get("kind") == "text"
+          and (r.get("data") or {}).get("content") == "冒烟测试：这件还在吗？",
+          str(r.get("data"))[:150])
+
+    _st, r = call("POST", "/api/messages", token=buyer1,
+                  body={"receiver_id": seller_id, "content": ""})
+    check("需求④：既没文字也没商品时仍然拒绝", r.get("code") != 0, str(r)[:120])
+    _st, r = call("POST", "/api/messages", token=buyer1,
+                  body={"receiver_id": seller_id, "product_id": 99999999, "kind": "product"})
+    check("需求④：给不存在的商品发卡片会报错", r.get("code") != 0, str(r)[:120])
+
+    # 商品软删 → 卡片还在（显示为不可用）；彻底删除 → 卡片靠快照继续显示，且删除本身要成功
+    call("DELETE", f"/api/products/{_card_p.get('id')}", token=seller_token)
+    _st, r = call("GET", f"/api/messages/with/{seller_id}", token=buyer1)
+    _one = next((m for m in (r.get("data") or {}).get("list", [])
+                 if m.get("id") == _card_msg.get("id")), {})
+    check("需求④：商品被软删除后卡片仍在，但标记为不可用",
+          (_one.get("product_card") or {}).get("name") == "冒烟测试-商品卡片"
+          and (_one.get("product_card") or {}).get("available") is False,
+          str(_one.get("product_card"))[:150])
+
+    _st, r = call("DELETE", f"/api/products/{_card_p.get('id')}/record", token=seller_token)
+    check("需求④（顺带修的旧漏洞）：私信引用过商品，也能彻底删除记录",
+          r.get("code") == 0, str(r)[:150])
+    _st, r = call("GET", f"/api/messages/with/{seller_id}", token=buyer1)
+    _one = next((m for m in (r.get("data") or {}).get("list", [])
+                 if m.get("id") == _card_msg.get("id")), {})
+    _pc2 = _one.get("product_card") or {}
+    check("需求④：商品被彻底删除后，卡片靠快照仍显示名称/价格/编号",
+          _pc2.get("name") == "冒烟测试-商品卡片" and _pc2.get("price") == 45.5
+          and _pc2.get("product_code") == _card_p.get("product_code")
+          and _pc2.get("available") is False,
+          str(_pc2)[:180])
+    _st, r = call("GET", f"/api/messages/with/{seller_id}", token=buyer1)
+    _texts = [m.get("content") for m in (r.get("data") or {}).get("list", [])]
+    check("需求④：彻底删除商品不会连聊天记录一起删",
+          any("冒烟测试：这件还在吗？" == c for c in _texts), f"{len(_texts)} 条")
+
     # ---------------- 新批需求②：动态监控可删除选定记录 ----------------
     section("新批需求② 动态监控删除选定记录")
 
