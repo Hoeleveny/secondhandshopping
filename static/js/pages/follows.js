@@ -13,7 +13,7 @@ export default {
     const cfg = isBlock
       ? {
         title: '我的拉黑',
-        hint: '被你拉黑的人：你看不到 TA 的商品与评论，TA 也不能给你发私信；'
+        hint: '被你拉黑的人：你看不到 TA 的商品与评论，**你们双方也都不能互发私信**；'
               + '但 TA 仍能看到你的商品、也能下单（交易不受影响）。',
         api: '/api/blocks/mine',
         cancel: (id) => api.del(`/api/blocks/${id}`),

@@ -102,7 +102,7 @@ export default {
                     data-status="sold">已售 ${counts.sold ?? 0}</button>
           </div>
         </div>
-        ${blockedByMe ? `<div class="hint">🚫 你已拉黑 TA：这里看不到 TA 的任何商品与评论，TA 也无法给你发私信。想恢复请点上面的「已拉黑」。</div>` : ''}`;
+        ${blockedByMe ? `<div class="hint">🚫 你已拉黑 TA：这里看不到 TA 的任何商品与评论，双方也无法互发私信。想恢复请点上面的「已拉黑」。</div>` : ''}`;
 
       head.querySelectorAll('[data-status]').forEach(btn =>
         btn.addEventListener('click', () => {
@@ -147,7 +147,7 @@ export default {
         }
         const sure = await confirmDialog({
           title: `拉黑「${seller.nickname}」？`, danger: true, okText: '拉黑',
-          message: '拉黑后：你这边看不到 TA 的商品与评论，TA 也不能给你发私信；'
+          message: '拉黑后：你这边看不到 TA 的商品与评论，**你们双方也都不能互发私信**；'
             + '但 TA 仍能看到你的商品、也能下单（交易不受影响）。随时可以解除。',
         });
         if (!sure) return;

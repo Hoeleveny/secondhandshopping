@@ -1948,8 +1948,8 @@ def main() -> int:
                   body={"receiver_id": _me.get("id"), "content": "冒烟测试：被拉黑还想发私信"})
     check("需求⑦：被拉黑的人不能给我发私信", r.get("code") != 0, str(r)[:120])
     _st, r = call("POST", "/api/messages", token=token,
-                  body={"receiver_id": _seller_u.get("id"), "content": "冒烟测试：我能发"})
-    check("需求⑦：单向——我仍然能给他发私信", r.get("code") == 0, str(r)[:120])
+                  body={"receiver_id": _seller_u.get("id"), "content": "冒烟测试：我也不能发"})
+    check("需求⑦（2026-10-16 改为双向）：我拉黑了 TA，我也不能给 TA 发私信", r.get("code") != 0, str(r)[:120])
     _st, r = call("POST", f"/api/blocks/{_me.get('id')}", body={}, token=token)
     check("需求⑦：不能拉黑自己", r.get("code") != 0, str(r)[:120])
     _st, r = call("GET", "/api/blocks/mine", token=token)
@@ -1958,6 +1958,9 @@ def main() -> int:
           str(r.get("data"))[:150])
     _st, r = call("DELETE", f"/api/blocks/{_seller_u.get('id')}", token=token)
     check("需求⑦：可以解除拉黑", r.get("code") == 0, str(r)[:120])
+    _st, r = call("POST", "/api/messages", token=token,
+                  body={"receiver_id": _seller_u.get("id"), "content": "冒烟测试：解除后我又能发了"})
+    check("需求⑦：解除拉黑后双方恢复正常（我又能发私信）", r.get("code") == 0, str(r)[:120])
     _st, r = call("GET", f"/api/sellers/{_seller_u.get('id')}", token=token)
     check("需求⑦：解除后又能看到 TA 的商品",
           bool((r.get("data") or {}).get("list")), str((r.get("data") or {}).get("total")))

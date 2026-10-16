@@ -8,6 +8,7 @@
 过滤一律放在**接口层**（前端只负责隐藏按钮）。
 """
 from flask import Blueprint
+from sqlalchemy import and_, or_
 
 from api.common import current_user, fail, login_required, ok
 from extensions import db
@@ -29,6 +30,20 @@ def blocked_me(viewer_id: int | None, other_id: int) -> bool:
     if not viewer_id:
         return False
     return Block.query.filter_by(blocker_id=other_id, blocked_id=viewer_id).first() is not None
+
+
+def block_between(a: int | None, b: int | None) -> bool:
+    """a 与 b 之间是否存在拉黑关系（**任一方向**）。
+
+    2026-10-16 用户把口径从「单向阻断」改成「**双向都不能发私信**」：
+    不论是我拉黑了 TA，还是 TA 拉黑了我，双方都不能互发私信。
+    """
+    if not a or not b:
+        return False
+    return Block.query.filter(or_(
+        and_(Block.blocker_id == a, Block.blocked_id == b),
+        and_(Block.blocker_id == b, Block.blocked_id == a),
+    )).first() is not None
 
 
 def social_state(viewer_id: int | None, uid: int) -> dict:
