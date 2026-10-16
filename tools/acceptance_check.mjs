@@ -442,7 +442,7 @@ async function check8() {
 }
 
 /* ================================================================ 9-10
-   下单 → 已售 + 待完成；确认完成 / 取消恢复在售 */
+   需求③（新批）起：下单只是「购买意向」→ 卖家确认才锁定商品 → 完成 / 取消 */
 async function check9_10() {
   // 造两件测试商品
   const mk = async (name, price) => (await api('POST', '/api/products', {
@@ -453,14 +453,15 @@ async function check9_10() {
   const pa = await mk('验收-完成流程', 88);
   const pb = await mk('验收-取消流程', 66);
 
+  // 下单只是意向：商品仍在售，别人也能下单
   const oa = (await api('POST', '/api/orders', { token: tokens.buyer1, body: { product_id: pa, meet_place_id: 2, trade_note: '下午四点' } })).data;
-  const paAfter = (await api('GET', `/api/products/${pa}`)).data;
+  const paAfterIntent = (await api('GET', `/api/products/${pa}`)).data;
   const again = await api('POST', '/api/orders', { token: tokens.buyer2, body: { product_id: pa, meet_place_id: 2 } });
 
   await cdp.loginAs('buyer1', '123456', 'buyer');
-  await cdp.go('/orders?status=pending');
+  await cdp.go('/orders?status=awaiting');
   await waitFor(cdp, `[...document.querySelectorAll('.card')].some(c => c.innerText.includes('验收-完成流程'))`);
-  const uiPending = await cdp.eval(`
+  const uiAwaiting = await cdp.eval(`
     (() => {
       const card = [...document.querySelectorAll('.card')].find(c => c.innerText.includes('验收-完成流程'));
       // 需求④ 起卡片右上角多了「我是买家/我是卖家」身份徽标，取状态时要把它们排除掉，
@@ -470,19 +471,26 @@ async function check9_10() {
       return { found: !!card, status: badges[0]?.innerText.trim() || '' };
     })()`);
 
+  // 卖家确认 → 商品才被锁定（已售），订单转「待完成」
+  const confirmed = (await api('PATCH', `/api/orders/${oa.id}/confirm`, { token: tokens.seller1 })).data;
+  const paAfter = (await api('GET', `/api/products/${pa}`)).data;
+
   const done = (await api('PATCH', `/api/orders/${oa.id}/complete`, { token: tokens.buyer1 })).data;
 
   const ob = (await api('POST', '/api/orders', { token: tokens.buyer1, body: { product_id: pb, meet_place_id: 1 } })).data;
   const canceled = (await api('PATCH', `/api/orders/${ob.id}/cancel`, { token: tokens.buyer1 })).data;
   const pbAfter = (await api('GET', `/api/products/${pb}`)).data;
 
-  record(9, '下单后商品变「已售」，订单出现在「我的订单」且为「待完成」',
-    paAfter.status === 'sold' && oa.status === 'pending' && again.code !== 0 && uiPending.found && uiPending.status === '待完成',
-    `商品状态 ${paAfter.status}；订单状态 ${oa.status}；他人再下单被拒（${again.msg}）；界面订单卡状态「${uiPending.status}」`);
+  record(9, '需求③：下单只是意向（商品仍在售、他人也能下单），卖家确认后商品才变「已售」、订单转「待完成」',
+    oa.status === 'awaiting' && paAfterIntent.status === 'on_sale' && again.code === 0
+    && confirmed.status === 'pending' && paAfter.status === 'sold'
+    && uiAwaiting.found && uiAwaiting.status === '待卖家确认',
+    `下单后：商品 ${paAfterIntent.status}、订单 ${oa.status}、他人也能下单=${again.code === 0}；`
+    + `确认后：商品 ${paAfter.status}、订单 ${confirmed.status}；界面意向卡状态「${uiAwaiting.status}」`);
 
-  record(10, '确认完成 → 已完成；取消订单 → 已取消且商品恢复「在售」',
+  record(10, '确认完成 → 已完成；取消意向 → 已取消且商品保持「在售」',
     done.status === 'done' && canceled.status === 'canceled' && pbAfter.status === 'on_sale',
-    `确认完成后订单 ${done.status}；取消后订单 ${canceled.status}、商品恢复 ${pbAfter.status}`);
+    `确认完成后订单 ${done.status}；取消后订单 ${canceled.status}、商品 ${pbAfter.status}`);
 
   // 清理
   await api('DELETE', `/api/products/${pa}`, { token: tokens.seller1 });
@@ -802,6 +810,8 @@ async function check18() {
   })).data.id;
   const order = (await api('POST', '/api/orders', { token: tokens.buyer1, body: { product_id: pid, meet_place_id: 1 } })).data;
 
+  // 需求③（新批）起：下单只是意向，卖家确认后商品才锁定、订单才进「待完成」
+  await api('PATCH', `/api/orders/${order.id}/confirm`, { token: tokens.seller1 });
   await api('PUT', `/api/orders/${order.id}/location`, { token: tokens.buyer1, body: { place_id: 1 } });
   await api('PUT', `/api/orders/${order.id}/location`, { token: tokens.seller1, body: { place_id: 5 } });
   const map = (await api('GET', `/api/orders/${order.id}/map`, { token: tokens.buyer1 })).data;
@@ -839,6 +849,8 @@ async function check19() {
   const order = (await api('POST', '/api/orders', { token: tokens.buyer1, body: { product_id: pid, meet_place_id: 1 } })).data;
 
   const early = await api('POST', '/api/reviews', { token: tokens.buyer1, body: { order_id: order.id, rating: 5, content: '太早' } });
+  // 需求③（新批）：先由卖家确认接单，再完成交易
+  await api('PATCH', `/api/orders/${order.id}/confirm`, { token: tokens.seller2 });
   await api('PATCH', `/api/orders/${order.id}/complete`, { token: tokens.buyer1 });
   const first = await api('POST', '/api/reviews', { token: tokens.buyer1, body: { order_id: order.id, rating: 5, content: '验收：东西很好，卖家爽快' } });
   const second = await api('POST', '/api/reviews', { token: tokens.buyer1, body: { order_id: order.id, rating: 3, content: '重复评价' } });
