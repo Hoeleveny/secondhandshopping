@@ -79,6 +79,13 @@ export default {
       listArea.querySelectorAll('.post-item[data-post]').forEach(item =>
         item.addEventListener('click', () => { location.hash = `#/post/${item.dataset.post}`; }));
 
+      // 需求⑤：点发帖人昵称去 TA 的主页（必须 stopPropagation，否则会先触发整卡跳详情）
+      listArea.querySelectorAll('.post-item [data-user]').forEach(el =>
+        el.addEventListener('click', (event) => {
+          event.stopPropagation();
+          location.hash = `#/seller/${el.dataset.user}`;
+        }));
+
       listArea.querySelectorAll('[data-like]').forEach(btn =>
         btn.addEventListener('click', async (event) => {
           event.stopPropagation();   // 点赞不要触发整卡跳转

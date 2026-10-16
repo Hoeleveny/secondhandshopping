@@ -2609,6 +2609,118 @@ async function feature23(cdp) {
     JSON.stringify(legacy));
 }
 
+/* ================================================================ 功能㉔ 用户主页 + 私信入口（新批需求⑤） */
+async function feature24(cdp) {
+  console.log('\n===== 功能㉔ 对外用户主页：私信按钮 + 各处点击用户可跳转（需求⑤）=====');
+
+  async function ensureAccount(username, password) {
+    try {
+      return await login(username, password, 'buyer');
+    } catch {
+      await api('POST', '/api/auth/register', { body: { username, password } });
+      return login(username, password, 'buyer');
+    }
+  }
+  const authorToken = await ensureAccount('acc_buyer', '1234');
+  const author = (await api('GET', '/api/auth/me', { token: authorToken })).data.user;
+
+  // 备一条帖子，作者是测试账号（保证不是当前登录者自己的）
+  const post = (await api('POST', '/api/posts', {
+    token: authorToken,
+    body: { title: '自动化测试：用户主页跳转', content: '自动化测试用', tag: '闲聊' },
+  })).data;
+
+  // ---- 1. 交流广场：点发帖人去 TA 的主页（而不是进帖子详情）----
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go('/posts');
+  await waitFor(cdp, `document.querySelectorAll('.post-item [data-user]').length > 0`);
+  const picked = await cdp.eval(`
+    (() => {
+      const el = [...document.querySelectorAll('.post-item [data-user]')]
+        .find(x => x.dataset.user === ${JSON.stringify(String(author.id))});
+      if (!el) return { ok: false };
+      const card = el.closest('.post-item');
+      const name = el.innerText.trim();
+      el.click();
+      return { ok: true, name, cardPost: card?.dataset.post || '' };
+    })()`);
+  await waitFor(cdp, `location.hash.startsWith('#/seller/')`);
+  const afterClick = await cdp.eval(`location.hash`);
+  check('需求⑤：交流广场点发帖人昵称，跳去 TA 的主页（而不是帖子详情）',
+    picked.ok && afterClick === `#/seller/${author.id}`,
+    `点了「${picked.name}」-> ${afterClick}（该卡片帖子 id=${picked.cardPost}）`);
+  await waitFor(cdp, `!!document.querySelector('#seller-head .seller-nick')`);
+  check('需求⑤：主页确实渲染出了这个人的信息',
+    (await cdp.eval(`document.querySelector('#seller-head .seller-nick').innerText.trim()`))
+      === (author.nickname || ''),
+    await cdp.eval(`document.querySelector('#seller-head .seller-nick').innerText.trim()`));
+
+  // ---- 2. 主页上的「私信 TA」按钮：一键发起会话 ----
+  const msgBtn = await cdp.eval(`
+    (() => {
+      const b = document.querySelector('[data-msg]');
+      return b ? { exists: true, text: b.innerText.trim(), uid: b.dataset.msg } : { exists: false };
+    })()`);
+  check('需求⑤：TA 的主页有「私信 TA」按钮', msgBtn.exists && /私信/.test(msgBtn.text), JSON.stringify(msgBtn));
+  await cdp.eval(`document.querySelector('[data-msg]').click()`);
+  await waitFor(cdp, `location.hash.startsWith('#/messages')`);
+  await waitFor(cdp, `!!document.querySelector('.chat-head')`);
+  await sleep(600);
+  const chat = await cdp.eval(`
+    (() => ({
+      hash: location.hash,
+      headName: document.querySelector('.chat-head [data-user]')?.innerText.trim() || '',
+      activeConv: document.querySelector('.msg-conv.active')?.innerText.trim().slice(0, 20) || '',
+    }))()`);
+  check('需求⑤：点「私信 TA」直接进入与 TA 的会话',
+    chat.hash.includes(`to=${author.id}`) && chat.headName.includes(author.nickname || ''),
+    JSON.stringify(chat));
+
+  // ---- 3. 私信页点对方昵称 → TA 的主页 ----
+  const convClicked = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('.msg-conv [data-user]');
+      if (!el) return { ok: false };
+      const uid = el.dataset.user, name = el.innerText.trim();
+      el.click();
+      return { ok: true, uid, name };
+    })()`);
+  await waitFor(cdp, `location.hash.startsWith('#/seller/')`);
+  check('需求⑤：私信页点对方昵称，跳去 TA 的主页',
+    convClicked.ok && (await cdp.eval(`location.hash`)) === `#/seller/${convClicked.uid}`,
+    `点了「${convClicked.name}」-> ${await cdp.eval(`location.hash`)}`);
+
+  // ---- 4. 聊天头部点对方也能跳 ----
+  await cdp.go(`/messages?to=${author.id}`);
+  await waitFor(cdp, `!!document.querySelector('.chat-head [data-user]')`);
+  await cdp.eval(`document.querySelector('.chat-head [data-user]').click()`);
+  await waitFor(cdp, `location.hash.startsWith('#/seller/')`);
+  check('需求⑤：聊天窗口顶部点对方头像/昵称也能去 TA 的主页',
+    (await cdp.eval(`location.hash`)) === `#/seller/${author.id}`,
+    await cdp.eval(`location.hash`));
+
+  // ---- 5. 自己的主页不显示「私信 TA」 ----
+  await cdp.loginAs('acc_buyer', '1234', 'buyer');
+  await cdp.go(`/seller/${author.id}`);
+  await waitFor(cdp, `!!document.querySelector('#seller-head .seller-nick')`);
+  const own = await cdp.eval(`
+    (() => ({
+      hasMsg: !!document.querySelector('[data-msg]'),
+      ownBadge: !!document.querySelector('#sk-status .badge'),
+      text: document.querySelector('#sk-status')?.innerText.trim() || '',
+    }))()`);
+  check('需求⑤：看自己的主页时不显示「私信 TA」，而是提示这是你自己的主页',
+    !own.hasMsg && own.ownBadge && /你自己/.test(own.text), JSON.stringify(own));
+
+  // ---- 6. 游客点「私信 TA」会被引导登录 ----
+  await cdp.logout();
+  await cdp.go(`/seller/${author.id}`);
+  await waitFor(cdp, `!!document.querySelector('[data-msg-login]')`);
+  await cdp.eval(`document.querySelector('[data-msg-login]').click()`);
+  await waitFor(cdp, `location.hash === '#/login'`);
+  check('需求⑤：游客点「私信 TA」会被引导登录', true, '');
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -2634,6 +2746,7 @@ const GROUPS = {
   21: { title: '卖家侧交易收尾（需求⑥）', fn: feature21 },
   22: { title: '帖子举报入口（新批需求③）', fn: feature22 },
   23: { title: '买卖身份合并（新批需求④）', fn: feature23 },
+  24: { title: '用户主页 + 私信入口（新批需求⑤）', fn: feature24 },
 };
 
 async function main() {

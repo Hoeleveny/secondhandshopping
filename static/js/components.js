@@ -116,7 +116,7 @@ export function postItemHtml(post, options = {}) {
         ${post.images.length > 3 ? `<span class="post-thumb-more">+${post.images.length - 3}</span>` : ''}
       </div>` : ''}
     <div class="post-meta">
-      <span>👤 ${esc(post.author_nickname || '')}</span>
+      <span class="user-link" data-user="${post.author_id}" title="查看 TA 的主页">👤 ${esc(post.author_nickname || '')}</span>
       <span>🕒 ${esc(fmtTime(post.created_at))}</span>
       <span>💬 ${post.comment_count} 条评论</span>
     </div>

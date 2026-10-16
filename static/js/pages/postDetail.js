@@ -37,7 +37,7 @@ async function renderPost(root, ctx) {
         <span class="badge">${esc(post.tag)}</span>
       </div>
       <div class="post-meta mt-8">
-        <span>👤 ${esc(post.author_nickname || '')}</span>
+        <span class="user-link" data-user="${post.author_id}" title="查看 TA 的主页">👤 ${esc(post.author_nickname || '')}</span>
         <span>🕒 ${esc(fmtTime(post.created_at))}</span>
         <span>❤️ <span id="like-count">${post.like_count}</span> 赞</span>
         <span>💬 ${post.comment_count} 条评论</span>
@@ -74,6 +74,11 @@ async function renderPost(root, ctx) {
     </div>`;
 
   root.querySelector('#btn-back').addEventListener('click', () => { location.hash = back.hash; });
+
+  // 需求⑤：帖子详情里点作者也能去 TA 的主页
+  root.querySelector('[data-user]')?.addEventListener('click', (event) => {
+    location.hash = `#/seller/${event.currentTarget.dataset.user}`;
+  });
 
   /* ------------------------------------------------------------------ 举报帖子
      需求③：交流广场的帖子原来只能被管理员处置、普通用户没有举报入口（商品详情早就有），

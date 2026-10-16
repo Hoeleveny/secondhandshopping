@@ -1,14 +1,18 @@
 /* ==========================================================================
-   需求② 卖家商品主页
-   入口：商品详情页点卖家昵称 → #/seller/<uid>
-   内容：卖家自己愿意公开的信息（头像/昵称/商家简介/在售件数/加入时间/卖家编号）
+   需求② 卖家商品主页 = 需求⑤的「对外用户主页（用户空间）」
+   入口：商品详情页点卖家昵称、交流广场点发帖人、私信页点对方
+   内容：对方愿意公开的信息（头像/昵称/商家简介/在售件数/加入时间/卖家编号）
         + TA 发布的商品（默认在售，可切已售；支持关键词与分类筛选）
+   需求⑤：这里可以直接私信 TA 发起会话。
    已下架、已删除的商品不展示。
    ========================================================================== */
 import { api, qs } from '../api.js';
 import { ensureCategories } from '../data.js';
 import { bindProductCards, productCardHtml } from '../components.js';
-import { avatarHtml, emptyHtml, esc, loadingHtml, ratingBadgeHtml, renderPagination } from '../ui.js';
+import {
+  avatarHtml, emptyHtml, esc, loadingHtml, ratingBadgeHtml, renderPagination, toast,
+} from '../ui.js';
+import { store } from '../store.js';
 
 export default {
   async render(root, ctx) {
@@ -22,8 +26,8 @@ export default {
 
     root.innerHTML = `
       <div class="page-head">
-        <h1>卖家主页</h1>
-        <span class="muted small">这里只展示卖家愿意公开的信息</span>
+        <h1>TA 的主页</h1>
+        <span class="muted small">这里只展示对方愿意公开的信息；可以直接私信 TA</span>
       </div>
 
       <div class="card" id="seller-head">${loadingHtml()}</div>
@@ -74,6 +78,11 @@ export default {
             </div>
           </div>
           <div class="seller-switch" id="sk-status">
+            ${store.isLoggedIn
+              ? (String(seller.id) === String(store.user?.id)
+                  ? '<span class="badge badge-info">这是你自己的主页</span>'
+                  : `<button class="btn btn-primary btn-sm" data-msg="${seller.id}">✉️ 私信 TA</button>`)
+              : '<button class="btn btn-sm" data-msg-login="1">✉️ 私信 TA</button>'}
             <button class="btn btn-sm ${status === 'on_sale' ? 'btn-primary' : ''}"
                     data-status="on_sale">在售 ${counts.on_sale ?? 0}</button>
             <button class="btn btn-sm ${status === 'sold' ? 'btn-primary' : ''}"
@@ -88,6 +97,15 @@ export default {
           page = 1;
           load();
         }));
+
+      // 需求⑤：一键发起私信（未登录先引导登录）
+      head.querySelector('[data-msg]')?.addEventListener('click', (event) => {
+        location.hash = `#/messages?to=${event.currentTarget.dataset.msg}`;
+      });
+      head.querySelector('[data-msg-login]')?.addEventListener('click', () => {
+        toast('登录后才能私信', 'warn');
+        location.hash = '#/login';
+      });
     }
 
     async function load() {

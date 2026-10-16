@@ -58,7 +58,7 @@ async function renderMessages(root, ctx) {
         <div class="msg-conv ${active ? 'active' : ''}" data-uid="${user.id}">
           ${avatarHtml(user)}
           <div class="mc-body">
-            <div class="mc-name">${esc(user.nickname || '（用户已注销）')}</div>
+            <div class="mc-name user-link" data-user="${user.id}" title="查看 TA 的主页">${esc(user.nickname || '（用户已注销）')}</div>
             <div class="mc-last">${esc(last.content || '')}</div>
           </div>
           ${item.unread > 0 ? `<span class="badge badge-danger">${item.unread}</span>` : ''}
@@ -69,6 +69,12 @@ async function renderMessages(root, ctx) {
         // 主动切会话：不再算「从某个商品详情页点进来的」
         originProductId = null;
         openChat(Number(el.dataset.uid));
+      }));
+    // 需求⑤：点对方昵称去 TA 的主页（stopPropagation，别顺手把会话也切了）
+    convBox.querySelectorAll('[data-user]').forEach(el =>
+      el.addEventListener('click', (event) => {
+        event.stopPropagation();
+        location.hash = `#/seller/${el.dataset.user}`;
       }));
   }
 
@@ -98,8 +104,11 @@ async function renderMessages(root, ctx) {
       <div class="chat-box">
         <div class="chat-head">
           <div class="row" style="gap:10px">
-            ${avatarHtml(currentUser, 32)}
-            <b>${esc(currentUser?.nickname || '')}</b>
+            <span class="user-link row" style="gap:8px;align-items:center"
+                  data-user="${currentUser?.id || ''}" title="查看 TA 的主页">
+              ${avatarHtml(currentUser, 32)}
+              <b>${esc(currentUser?.nickname || '')}</b>
+            </span>
             ${ratingBadgeHtml(currentUser?.rating)}
             <button class="btn btn-ghost btn-sm" data-go-seller="${currentUser?.id || ''}">查看 TA 的商品</button>
             ${originProductId
@@ -143,6 +152,13 @@ async function renderMessages(root, ctx) {
     if (goSeller) {
       goSeller.addEventListener('click', () => {
         location.hash = `#/seller/${goSeller.dataset.goSeller}`;
+      });
+    }
+    // 需求⑤：聊天头部点对方头像/昵称 → TA 的主页
+    const headUser = chatBox.querySelector('.chat-head [data-user]');
+    if (headUser) {
+      headUser.addEventListener('click', () => {
+        location.hash = `#/seller/${headUser.dataset.user}`;
       });
     }
     const goOrigin = chatBox.querySelector('[data-go-origin]');
