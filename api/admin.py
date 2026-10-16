@@ -661,6 +661,50 @@ def handle_report(rid: int):
     return ok(report.to_dict(), msg=message)
 
 
+@bp.post("/reports/delete")
+@admin_required
+def delete_reports():
+    """删除选定的举报记录（本批需求②）。
+
+    口径（用户拍板）：**待处理的举报也能删**，但前端会额外给出"删除等于放弃处理、
+    举报人收不到任何反馈"的提醒；这里如实统计并写进操作日志，方便以后回溯。
+    """
+    admin = current_user()
+    body = json_body()
+    raw = body.get("ids")
+    if not isinstance(raw, list) or not raw:
+        return fail("请选择要删除的记录")
+    try:
+        ids = sorted({int(x) for x in raw})
+    except (TypeError, ValueError):
+        return fail("记录 id 只能是数字")
+    if len(ids) > 200:
+        return fail("一次最多删除 200 条记录")
+
+    rows = Report.query.filter(Report.id.in_(ids)).all()
+    if not rows:
+        return fail("这些记录已经不存在了", 404)
+
+    pending = [r for r in rows if r.status == "pending"]
+    detail = "；".join(
+        f"#{r.id} {r.reporter.username if r.reporter else ''} {(r.reason or '')[:20]}"
+        for r in rows[:8])
+    if len(rows) > 8:
+        detail += f" …等 {len(rows)} 条"
+
+    for row in rows:
+        db.session.delete(row)
+    audit.record(
+        "report_delete", "report", None,
+        (f"删除举报记录 {len(rows)} 条"
+         + (f"（其中 {len(pending)} 条是「待处理」，删除即放弃处理）" if pending else "")
+         + f"：{detail}")[:250])
+    db.session.commit()
+    return ok({"deleted": len(rows), "pending_deleted": len(pending)},
+              msg=(f"已删除 {len(rows)} 条举报记录"
+                   + (f"（含 {len(pending)} 条待处理）" if pending else "")))
+
+
 # ================================================================ 基础数据
 # ---------------------------------------------------------------- 分类
 @bp.post("/categories")

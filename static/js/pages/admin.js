@@ -1234,10 +1234,17 @@ async function renderReports(panel) {
     }
 
     listBox.innerHTML = `
+      <div class="row-between mb-8">
+        <label class="row" style="gap:6px;align-items:center;cursor:pointer">
+          <input type="checkbox" id="rp-check-all">
+          <span class="muted small">全选本页</span>
+        </label>
+        <button class="btn btn-danger btn-sm" id="rp-del-selected" disabled>🗑 删除选中（0）</button>
+      </div>
       <div class="table-wrap">
         <table class="table">
           <thead>
-            <tr><th>对象</th><th>类型</th><th>举报人</th><th>理由</th><th>状态</th><th>时间</th><th>操作</th></tr>
+            <tr><th style="width:34px"></th><th>对象</th><th>类型</th><th>举报人</th><th>理由</th><th>状态</th><th>时间</th><th>操作</th></tr>
           </thead>
           <tbody>
             ${data.list.map(r => {
@@ -1247,6 +1254,8 @@ async function renderReports(panel) {
               const canHandle = r.status === 'pending';
               return `
               <tr>
+                <td><input type="checkbox" class="rp-check" data-check="${r.id}"
+                           data-status="${r.status}" title="选中后可批量删除这条举报记录"></td>
                 <td>${target.id ? (meta.link
                   ? `<span class="strong" data-target="${meta.link}:${target.id}" style="cursor:pointer">${esc(target.title || '')}</span>`
                   : `<span class="strong">${esc(target.title || '')}</span>`)
@@ -1281,6 +1290,49 @@ async function renderReports(panel) {
           ? `#/product/${id}?from=admin`
           : `#/post/${id}?from=admin`;
       }));
+
+    // 本批需求②：勾选后可删除选定的举报记录（口径：待处理的也能删，但要额外提醒）
+    const checkAll = listBox.querySelector('#rp-check-all');
+    const delBtn = listBox.querySelector('#rp-del-selected');
+    const picked = () => [...listBox.querySelectorAll('.rp-check:checked')]
+      .map(el => ({ id: Number(el.dataset.check), status: el.dataset.status }));
+    const syncDel = () => {
+      const n = picked().length;
+      const total = listBox.querySelectorAll('.rp-check').length;
+      if (delBtn) {
+        delBtn.textContent = `🗑 删除选中（${n}）`;
+        delBtn.disabled = n === 0;
+      }
+      if (checkAll) {
+        checkAll.checked = n > 0 && n === total;
+        checkAll.indeterminate = n > 0 && n < total;
+      }
+    };
+    checkAll?.addEventListener('change', () => {
+      listBox.querySelectorAll('.rp-check').forEach(el => { el.checked = checkAll.checked; });
+      syncDel();
+    });
+    listBox.querySelectorAll('.rp-check').forEach(el => el.addEventListener('change', syncDel));
+    delBtn?.addEventListener('click', async () => {
+      const list = picked();
+      if (!list.length) return;
+      const pendingCount = list.filter(x => x.status === 'pending').length;
+      const sure = await confirmDialog({
+        title: `删除选中的 ${list.length} 条举报记录？`, danger: true, okText: '删除记录',
+        message: (pendingCount
+          ? `其中 ${pendingCount} 条还是「待处理」——删掉等于放弃处理这些举报，举报人收不到任何反馈。`
+          : '')
+          + '删除后这些记录就查不回来了；删除动作本身会留下一条操作日志。',
+      });
+      if (!sure) return;
+      try {
+        const res = await api.post('/api/admin/reports/delete',
+          { ids: list.map(x => x.id) });
+        toast(`已删除 ${res.deleted} 条举报记录`);
+        load();
+      } catch (err) { toast(err.message, 'error'); }
+    });
+    syncDel();
 
     // 需求④：处理举报时可填「大致原因 + 详细说明」，处理结果会以私信反馈给对方
     const reasonOptions = data.reason_options || { handle: ['其他'], dismiss: ['其他'] };

@@ -4093,6 +4093,102 @@ async function feature35(cdp) {
     JSON.stringify(modalGrid));
 }
 
+/* ================================================================ 功能㊱ 举报记录选定删除（本批需求②） */
+async function feature36(cdp) {
+  console.log('\n===== 功能㊱ 举报审核的选定删除（本批需求②）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+
+  // 造两条举报：一条待处理、一条已驳回
+  const mk = async (name) => (await api('POST', '/api/products', {
+    token: sellerToken,
+    body: { name, price: 5, category_id: 1, subcategory_id: 1, condition: '九成新',
+            description: '删举报记录用', default_place_id: 2, images: [] },
+  })).data.id;
+  const p1 = await mk('自动化测试：删举报记录A');
+  const p2 = await mk('自动化测试：删举报记录B');
+  const r1 = (await api('POST', '/api/reports',
+    { token: buyerToken, body: { product_id: p1, reason: '虚假信息' } })).data.id;
+  const r2 = (await api('POST', '/api/reports',
+    { token: buyerToken, body: { product_id: p2, reason: '虚假信息' } })).data.id;
+  await api('PATCH', `/api/admin/reports/${r2}`,
+    { token: await login('admin', '123456', 'admin'),
+      body: { action: 'dismiss', reason_code: '证据不足' } });
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=reports');
+  await waitFor(cdp, `!!document.querySelector('#rp-list .rp-check')`);
+  await sleep(700);
+
+  const initial = await cdp.eval(`
+    (() => ({
+      checks: document.querySelectorAll('#rp-list .rp-check').length,
+      hasAll: !!document.querySelector('#rp-check-all'),
+      delText: document.querySelector('#rp-del-selected')?.innerText.trim() || '',
+      delDisabled: document.querySelector('#rp-del-selected')?.disabled ?? null,
+    }))()`);
+  check('需求②：举报列表每条都有勾选框，并有「全选本页」与「删除选中」按钮',
+    initial.checks > 0 && initial.hasAll && initial.delText.includes('删除选中'),
+    JSON.stringify(initial));
+  check('需求②：没勾选时「删除选中」是禁用的', initial.delDisabled === true,
+    `disabled=${initial.delDisabled}`);
+
+  // 勾上那条「待处理」的举报
+  await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#rp-list .rp-check[data-status="pending"]');
+      el.checked = true;
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+  await sleep(400);
+  const afterCheck = await cdp.eval(`
+    (() => ({
+      text: document.querySelector('#rp-del-selected')?.innerText.trim() || '',
+      disabled: document.querySelector('#rp-del-selected')?.disabled ?? null,
+      rows: document.querySelectorAll('#rp-list tbody tr').length,
+    }))()`);
+  check('需求②：勾选后按钮变可点并显示已选条数',
+    /（1）/.test(afterCheck.text) && afterCheck.disabled === false,
+    JSON.stringify(afterCheck));
+
+  // 确认框必须为「待处理」额外提醒
+  await cdp.eval(`document.querySelector('#rp-del-selected').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  const dlg = await cdp.eval(`document.querySelector('.modal-mask')?.innerText.replace(/\\n/g, ' ') || ''`);
+  check('需求②：删除待处理的举报时，确认框额外提醒「等于放弃处理、举报人收不到反馈」',
+    /待处理/.test(dlg) && /放弃处理/.test(dlg) && /举报人收不到/.test(dlg),
+    dlg.slice(0, 160));
+
+  // 取消 → 数据不变
+  await cdp.eval(`document.querySelector('.modal-mask [data-cancel]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  await sleep(500);
+  const stillThere = (await api('GET', '/api/admin/reports?status=all&page_size=50',
+    { token: await login('admin', '123456', 'admin') })).data.list.some(x => x.id === r1);
+  check('需求②：取消确认时举报记录不会被删', stillThere === true, `还在=${stillThere}`);
+
+  // 确认删除 → 行消失 + 接口也查不到
+  await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#rp-list .rp-check[data-status="pending"]');
+      el.checked = true;
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+  await sleep(300);
+  await cdp.eval(`document.querySelector('#rp-del-selected').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  await sleep(1200);
+  const left = (await api('GET', '/api/admin/reports?status=all&page_size=50',
+    { token: await login('admin', '123456', 'admin') })).data.list.map(x => x.id);
+  check('需求②：确认后被选中的举报记录真的被删掉了（接口侧也查不到）',
+    !left.includes(r1) && left.includes(r2),
+    `剩余含 r2=${left.includes(r2)}`);
+  await cdp.shot(path.join(SHOT_DIR, 'f36-report-delete.png'));
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -4130,6 +4226,7 @@ const GROUPS = {
   33: { title: '关注 / 拉黑（新批需求⑦）', fn: feature33 },
   34: { title: '我的关注 / 我的拉黑（新批需求⑧）', fn: feature34 },
   35: { title: '动态监控时间线排版对齐（本批需求①）', fn: feature35 },
+  36: { title: '举报记录选定删除（本批需求②）', fn: feature36 },
 };
 
 async function main() {

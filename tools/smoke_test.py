@@ -1828,6 +1828,60 @@ def main() -> int:
     check("卖家删的是自己那一侧，不报错也不影响买家侧数据",
           r.get("code") == 0, str(r)[:150])
 
+    # ---------------- 本批需求②：举报记录可选定删除 ----------------
+    section("本批需求② 举报记录选定删除")
+
+    _st, r = call("GET", "/api/admin/reports?status=all&page_size=5", token=admin_token)
+    _before_total = (r.get("data") or {}).get("total", 0)
+
+    # 造两条举报：一条保持待处理，一条先驳回（用来验证「都能删」）
+    _probe_pids = []
+    for _i in (1, 2):
+        _st, r = call("POST", "/api/products", token=seller_token,
+                      body={"name": f"冒烟测试-待删举报商品{_i}", "price": 7, "category_id": 1,
+                            "subcategory_id": 1, "condition": "九成新",
+                            "description": "删举报用", "default_place_id": 2, "images": []})
+        _probe_pids.append((r.get("data") or {}).get("id"))
+    _rep_ids = []
+    for _pid in _probe_pids:
+        _st, r = call("POST", "/api/reports", token=token,
+                      body={"product_id": _pid, "reason": "虚假信息",
+                            "detail": "冒烟测试：删举报记录"})
+        _rep_ids.append((r.get("data") or {}).get("id"))
+    check("需求②：已备好两条举报记录（一条待处理、一条已驳回）",
+          all(_rep_ids), str(_rep_ids))
+
+    _st, r = call("PATCH", f"/api/admin/reports/{_rep_ids[1]}",
+                  body={"action": "dismiss", "reason_code": "证据不足"}, token=admin_token)
+    check("需求②：其中一条已驳回（便于验证不同状态都能删）", r.get("code") == 0, str(r)[:120])
+
+    _st, r = call("POST", "/api/admin/reports/delete", body={}, token=admin_token)
+    check("需求②：删除举报记录时必须指定要删哪些", r.get("code") != 0, str(r)[:120])
+    _st, r = call("POST", "/api/admin/reports/delete", body={"ids": ["abc"]}, token=admin_token)
+    check("需求②：id 必须合法", r.get("code") != 0, str(r)[:120])
+    _st, r = call("POST", "/api/admin/reports/delete", body={"ids": [99999999]},
+                  token=admin_token)
+    check("需求②：删不存在的记录会报错", r.get("code") != 0, str(r)[:120])
+    _st, r = call("POST", "/api/admin/reports/delete", body={"ids": _rep_ids},
+                  token=buyer1)
+    check("需求②：普通用户不能删除举报记录（403）", r.get("code") != 0, str(r)[:120])
+
+    _st, r = call("POST", "/api/admin/reports/delete", body={"ids": _rep_ids},
+                  token=admin_token)
+    _data = r.get("data") or {}
+    check("需求②：可以一次删掉多条举报记录（含待处理的那条）",
+          r.get("code") == 0 and _data.get("deleted") == 2, str(r)[:150])
+    check("需求②：待处理的条数被单独统计出来（前端据此给额外提醒）",
+          _data.get("pending_deleted") == 1, str(_data))
+    _st, r = call("GET", "/api/admin/reports?status=all&page_size=5", token=admin_token)
+    _after_ids = [x["id"] for x in (r.get("data") or {}).get("list", [])]
+    check("需求②：被删的举报记录不再出现在列表里",
+          all(i not in _after_ids for i in _rep_ids), str(_after_ids[:5]))
+    _d = _logs_q(action="report_delete", page_size=2)
+    check("需求②：删除动作本身留在动态监控里，并写明含多少条待处理",
+          bool(_d.get("list")) and "待处理" in (((_d.get("list") or [{}])[0]).get("summary") or ""),
+          str((_d.get("list") or [{}])[0].get("summary"))[:150])
+
     # ---------------- 新批需求⑦：关注 / 拉黑 ----------------
     section("新批需求⑦ 关注与拉黑（单向）")
 
