@@ -4,6 +4,7 @@
 import { api } from '../api.js';
 import { store } from '../store.js';
 import { ensureMeta } from '../data.js';
+import { liveUpdate } from '../live.js';
 import { confirmDialog, emptyHtml, esc, fmtTime, openModal, toast } from '../ui.js';
 
 async function renderPost(root, ctx) {
@@ -23,6 +24,23 @@ async function renderPost(root, ctx) {
     ? { hash: '#/admin?tab=reports', label: '‹ 返回举报审核' }
     : { hash: '#/posts', label: '‹ 返回广场' };
   const comments = post.comments || [];
+
+  // 评论区渲染抽成函数：初次渲染、自己发评论后、以及需求⑧的自动更新都复用同一份
+  const commentListHtml = (items) => (items.length
+    ? items.map(c => `
+        <div class="comment-item">
+          <div class="cm-head"><b>${esc(c.author_nickname || '')}</b><span>${esc(fmtTime(c.created_at))}</span></div>
+          <div>${esc(c.content)}</div>
+        </div>`).join('')
+    : emptyHtml('还没有评论，来说两句', '💬'));
+
+  const paintComments = (items) => {
+    const list = root.querySelector('#comment-list');
+    if (!list) return;
+    list.innerHTML = commentListHtml(items);
+    const title = root.querySelector('.card-head h2');
+    if (title) title.textContent = `评论（${items.length}）`;
+  };
 
   root.innerHTML = `
     <div class="page-head">
@@ -56,15 +74,7 @@ async function renderPost(root, ctx) {
 
     <div class="card">
       <div class="card-head"><h2>评论（${comments.length}）</h2></div>
-      <div id="comment-list">
-        ${comments.length
-          ? comments.map(c => `
-            <div class="comment-item">
-              <div class="cm-head"><b>${esc(c.author_nickname || '')}</b><span>${esc(fmtTime(c.created_at))}</span></div>
-              <div>${esc(c.content)}</div>
-            </div>`).join('')
-          : emptyHtml('还没有评论，来说两句', '💬')}
-      </div>
+      <div id="comment-list">${commentListHtml(comments)}</div>
       <div class="divider"></div>
       <div class="row" style="align-items:flex-start">
         <textarea class="textarea" id="comment-input" style="min-height:64px"
@@ -136,6 +146,8 @@ async function renderPost(root, ctx) {
 
   const commentBtn = root.querySelector('#btn-comment');
   const commentInput = root.querySelector('#comment-input');
+  // 需求⑧：评论区/点赞数的「指纹」，用来判断自动更新时到底要不要动 DOM
+  let lastSig = `${comments.length}:${post.like_count}`;
   const submitComment = async () => {
     if (!store.isLoggedIn) { toast('登录后才能评论', 'warn'); location.hash = '#/login'; return; }
     const content = commentInput.value.trim();
@@ -145,16 +157,9 @@ async function renderPost(root, ctx) {
       toast('评论成功');
       // 只刷新评论区，避免整页重绘
       const fresh = await api.get(`/api/posts/${id}`);
-      const list = root.querySelector('#comment-list');
       const items = fresh.comments || [];
-      list.innerHTML = items.length
-        ? items.map(c => `
-            <div class="comment-item">
-              <div class="cm-head"><b>${esc(c.author_nickname || '')}</b><span>${esc(fmtTime(c.created_at))}</span></div>
-              <div>${esc(c.content)}</div>
-            </div>`).join('')
-        : emptyHtml('还没有评论，来说两句', '💬');
-      root.querySelector('.card-head h2').textContent = `评论（${items.length}）`;
+      paintComments(items);
+      lastSig = `${items.length}:${fresh.like_count}`;
       commentInput.value = '';
     } catch (err) { toast(err.message, 'error'); }
   };
@@ -162,6 +167,19 @@ async function renderPost(root, ctx) {
   commentInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitComment();
   });
+
+  // 需求⑧：每 8 秒看一眼有没有别人发的新评论 / 新点赞。
+  // 只有「确实变了」才动 DOM——否则会把正在读评论、或正在输入框里打字的人打断。
+  liveUpdate('post-detail', '#comment-list', async () => {
+    const fresh = await api.get(`/api/posts/${id}`);
+    const items = fresh.comments || [];
+    const sig = `${items.length}:${fresh.like_count}`;
+    if (sig === lastSig) return;
+    lastSig = sig;
+    paintComments(items);
+    const likeCount = root.querySelector('#like-count');
+    if (likeCount) likeCount.textContent = fresh.like_count;
+  }, 8000);
 }
 
 export default { render: renderPost };

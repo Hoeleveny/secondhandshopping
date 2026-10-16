@@ -118,7 +118,7 @@ export function postItemHtml(post, options = {}) {
     <div class="post-meta">
       <span class="user-link" data-user="${post.author_id}" title="查看 TA 的主页">👤 ${esc(post.author_nickname || '')}</span>
       <span>🕒 ${esc(fmtTime(post.created_at))}</span>
-      <span>💬 ${post.comment_count} 条评论</span>
+      <span>💬 <span data-comment-count="${post.id}">${post.comment_count}</span> 条评论</span>
     </div>
     <div class="post-actions">
       <button data-like="${post.id}" class="${post.liked ? 'liked' : ''}">

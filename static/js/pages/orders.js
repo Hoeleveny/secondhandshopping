@@ -3,6 +3,7 @@
    ========================================================================== */
 import { api, qs } from '../api.js';
 import { orderCardHtml } from '../components.js';
+import { liveUpdate } from '../live.js';
 import {
   confirmDialog, emptyHtml, go, openModal, renderPagination, starPicker, toast,
 } from '../ui.js';
@@ -63,6 +64,8 @@ export default {
 
     // 记住这一页拿到的订单，供按钮回调判断「我在这张单里是谁」
     let loaded = [];
+    // 需求⑧：列表「指纹」（id + 状态），只有真变了才重绘，避免打断正在操作的人
+    let lastSig = '';
 
     function syncHash() {
       history.replaceState(null, '', `#/orders${qs({ side, status, page })}`);
@@ -78,6 +81,7 @@ export default {
         return;
       }
       loaded = data.list || [];
+      lastSig = loaded.map(o => `${o.id}:${o.status}`).join(',');
 
       sideTabsEl.innerHTML = SIDE_TABS.map(tab => `
         <button class="tab ${tab.key === side ? 'active' : ''}" data-side="${tab.key}">
@@ -173,6 +177,16 @@ export default {
     }
 
     await load();
+
+    // 需求⑧：停留在这个页面时自动跟进订单状态变化（对方确认完成/取消等），
+    // 每 15 秒对一次「指纹」，变了才整页重绘列表。
+    liveUpdate('orders', '#list-area', async () => {
+      const data = await api.get(`/api/orders/mine${qs({ side, status, page, page_size: 8 })}`);
+      const sig = (data.list || []).map(o => `${o.id}:${o.status}`).join(',');
+      if (sig === lastSig) return;
+      await load();
+      window.dispatchEvent(new CustomEvent('cm:order-seen'));   // 顺手把红点也跟上
+    }, 15000);
 
     // 需求⑥：进了「我的订单」就把红点清零（游标推到最新），否则红点会一直挂着。
     // 用事件通知外壳去刷新，避免页面反向 import app.js（外壳监听 cm:order-seen）。

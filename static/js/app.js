@@ -8,6 +8,7 @@ import { store } from './store.js';
 import { ensureMeta } from './data.js';
 import { emptyHtml, esc, initials, loadingHtml, toast } from './ui.js';
 import { initTheme, mountThemeSwitcher } from './theme.js';
+import { stopAllLive } from './live.js';
 
 // 尽早贴主题，减少首屏闪一下默认配色
 initTheme();
@@ -379,6 +380,9 @@ let renderToken = 0;
 async function render() {
   const token = ++renderToken;
   const { path, query } = parseHash();
+
+  // 需求⑧：换页前先停掉上一页的自动更新定时器（各页面渲染时再按需重新注册）
+  stopAllLive();
 
   if (path === '/login') {
     if (store.isLoggedIn) { go('#/home'); return; }

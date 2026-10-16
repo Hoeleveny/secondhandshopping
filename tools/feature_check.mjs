@@ -2831,6 +2831,133 @@ async function feature25(cdp) {
   await api('POST', '/api/orders/updates/seen', { token: buyerToken, body: {} });
 }
 
+/* ================================================================ 功能㉖ 页面状态自动更新（新批需求⑧） */
+async function feature26(cdp) {
+  console.log('\n===== 功能㉖ 网页状态自动更新（需求⑧）=====');
+
+  async function ensureAccount(username, password) {
+    try {
+      return await login(username, password, 'buyer');
+    } catch {
+      await api('POST', '/api/auth/register', { body: { username, password } });
+      return login(username, password, 'buyer');
+    }
+  }
+  const otherToken = await ensureAccount('acc_buyer', '1234');
+  const other = (await api('GET', '/api/auth/me', { token: otherToken })).data.user;
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+
+  // 备一条测试帖子（作者是测试账号）
+  const post = (await api('POST', '/api/posts', {
+    token: otherToken,
+    body: { title: '自动化测试：实时更新', content: '自动化测试用', tag: '闲聊' },
+  })).data;
+
+  // ---- 1. 帖子详情：别人发的评论自己冒出来（不刷新页面）----
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go(`/post/${post.id}`);
+  await waitFor(cdp, `!!document.querySelector('#comment-list')`);
+  const beforeComments = await cdp.eval(`document.querySelectorAll('#comment-list .comment-item').length`);
+
+  await api('POST', `/api/posts/${post.id}/comments`, {
+    token: otherToken, body: { content: '自动化测试：别人刚发的评论' },
+  });
+  // 轮询间隔 8 秒，留足余量
+  await waitFor(cdp,
+    `document.querySelector('#comment-list')?.innerText.includes('自动化测试：别人刚发的评论') === true`,
+    { timeout: 20000, step: 500 });
+  const afterComments = await cdp.eval(`
+    (() => ({
+      count: document.querySelectorAll('#comment-list .comment-item').length,
+      title: document.querySelector('.card-head h2')?.innerText.trim() || '',
+    }))()`);
+  check('需求⑧：别人发的评论会自动出现，且评论数跟着更新（没有手动刷新）',
+    afterComments.count === beforeComments + 1 && /评论（\d+）/.test(afterComments.title),
+    `评论条数 ${beforeComments} → ${afterComments.count}；标题=${afterComments.title}`);
+
+  // 输入框里没发出去的字不能被轮询清掉
+  await cdp.eval(`document.querySelector('#comment-input').value = '打了一半的字'`);
+  await sleep(9000);
+  check('需求⑧：自动更新不会清掉你正在输入框里写的字',
+    (await cdp.eval(`document.querySelector('#comment-input').value`)) === '打了一半的字',
+    await cdp.eval(`document.querySelector('#comment-input').value`));
+
+  // ---- 2. 交流广场列表：点赞数自动跟上 ----
+  await cdp.go('/posts');
+  await waitFor(cdp, `document.querySelectorAll('.post-item').length > 0`);
+  const likeBefore = await cdp.eval(`
+    document.querySelector('[data-like-count="${post.id}"]')?.textContent ?? null`);
+  await api('POST', `/api/posts/${post.id}/like`, { token: otherToken });
+  await waitFor(cdp,
+    `(document.querySelector('[data-like-count="${post.id}"]')?.textContent || '') !== ${JSON.stringify(String(likeBefore))}`,
+    { timeout: 25000, step: 500 });
+  const likeAfter = await cdp.eval(`document.querySelector('[data-like-count="${post.id}"]')?.textContent`);
+  check('需求⑧：交流广场列表里的点赞数会自动跟上（不重排列表）',
+    Number(likeAfter) === Number(likeBefore) + 1,
+    `点赞 ${likeBefore} → ${likeAfter}`);
+
+  // ---- 3. 私信：对方发来的消息自动出现 ----
+  await api('POST', '/api/messages', {
+    token: otherToken, body: { receiver_id: (await api('GET', '/api/auth/me', { token: buyerToken })).data.user.id, content: '自动化测试：你好呀' },
+  });
+  await cdp.go(`/messages?to=${other.id}`);
+  await waitFor(cdp, `!!document.querySelector('#chat-body')`);
+  await sleep(600);
+  const bubblesBefore = await cdp.eval(`document.querySelectorAll('#chat-body .bubble').length`);
+  await cdp.eval(`document.querySelector('#msg-input').value = '我也打一半'`);
+
+  await api('POST', '/api/messages', {
+    token: otherToken,
+    body: { receiver_id: (await api('GET', '/api/auth/me', { token: buyerToken })).data.user.id,
+            content: '自动化测试：对方刚发的新消息' },
+  });
+  await waitFor(cdp, `document.querySelector('#chat-body')?.innerText.includes('自动化测试：对方刚发的新消息') === true`,
+    { timeout: 15000, step: 500 });
+  const chatState = await cdp.eval(`
+    (() => ({
+      bubbles: document.querySelectorAll('#chat-body .bubble').length,
+      input: document.querySelector('#msg-input').value,
+    }))()`);
+  check('需求⑧：对方发来的新私信会自动出现', chatState.bubbles === bubblesBefore + 1,
+    `气泡 ${bubblesBefore} → ${chatState.bubbles}`);
+  check('需求⑧：自动刷私信时不会清掉输入框里没发出去的内容',
+    chatState.input === '我也打一半', JSON.stringify(chatState.input));
+
+  // ---- 4. 我的订单：对方改了状态，列表自动更新 ----
+  const product = (await api('POST', '/api/products', {
+    token: buyerToken,
+    body: { name: '自动化测试：实时订单', price: 12, category_id: 1, subcategory_id: 1,
+            condition: '九成新', description: '实时更新用', default_place_id: 2, images: [] },
+  })).data;
+  const order = (await api('POST', '/api/orders', {
+    token: otherToken, body: { product_id: product.id, meet_place_id: 2 },
+  })).data;
+
+  await cdp.go('/orders?side=seller');
+  await waitFor(cdp, `document.querySelectorAll('#list-area .card').length > 0`);
+  await sleep(800);
+  const statusBefore = await cdp.eval(`
+    [...document.querySelectorAll('#list-area .card')]
+      .find(c => c.innerText.includes('自动化测试：实时订单'))?.innerText.match(/待完成|已完成|已取消/)?.[0] || ''`);
+  await api('PATCH', `/api/orders/${order.id}/cancel`, { token: otherToken });
+  await waitFor(cdp,
+    `[...document.querySelectorAll('#list-area .card')].some(c => c.innerText.includes('自动化测试：实时订单') && c.innerText.includes('已取消'))`,
+    { timeout: 25000, step: 500 });
+  const statusAfter = await cdp.eval(`
+    [...document.querySelectorAll('#list-area .card')]
+      .find(c => c.innerText.includes('自动化测试：实时订单'))?.innerText.match(/待完成|已完成|已取消/)?.[0] || ''`);
+  check('需求⑧：对方取消订单后，「我的订单」里的状态自动变成「已取消」',
+    statusBefore === '待完成' && statusAfter === '已取消', `${statusBefore} → ${statusAfter}`);
+  await cdp.shot(path.join(SHOT_DIR, 'f26-live-updates.png'));
+
+  // ---- 5. 离开页面后不该继续轮询（别留一串后台请求）----
+  await cdp.go('/home');
+  await sleep(1200);
+  const leftPolling = await cdp.eval(`
+    (() => document.querySelectorAll('#list-area, #comment-list, #chat-body').length)()`);
+  check('需求⑧：离开页面后定时器会被清掉（页面上已没有这些容器）', leftPolling === 0, `残留容器=${leftPolling}`);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -2858,6 +2985,7 @@ const GROUPS = {
   23: { title: '买卖身份合并（新批需求④）', fn: feature23 },
   24: { title: '用户主页 + 私信入口（新批需求⑤）', fn: feature24 },
   25: { title: '订单新状态红点（新批需求⑥）', fn: feature25 },
+  26: { title: '页面状态自动更新（新批需求⑧）', fn: feature26 },
 };
 
 async function main() {

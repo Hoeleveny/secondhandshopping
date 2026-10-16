@@ -3,6 +3,7 @@
    ========================================================================== */
 import { api, qs } from '../api.js';
 import { store } from '../store.js';
+import { liveUpdate } from '../live.js';
 import { postItemHtml } from '../components.js';
 import {
   confirmDialog, emptyHtml, esc, loadingHtml, openModal, renderPagination, toast,
@@ -44,6 +45,26 @@ export default {
     root.querySelector('#post-keyword').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { keyword = e.target.value.trim(); page = 1; load(); }
     });
+
+    // 需求⑧：列表停留时自动跟进别人造成的点赞/评论数变化。
+    // 刻意**只更新数字**、不重排列表——否则正在看的人会被跳来跳去的内容打断；
+    // 只有「有新帖子了」才给一句可点的提示，让用户自己决定要不要刷。
+    liveUpdate('posts-list', '#list-area', async () => {
+      const fresh = await api.get(`/api/posts${qs({ tag, keyword, page, page_size: 8 })}`);
+      const totalNow = Object.values(fresh.tag_counts || {}).reduce((s, n) => s + n, 0);
+      (fresh.list || []).forEach(item => {
+        const like = listArea.querySelector(`[data-like-count="${item.id}"]`);
+        if (like && like.textContent !== String(item.like_count)) {
+          like.textContent = item.like_count;
+        }
+        const commentCount = listArea.querySelector(`[data-comment-count="${item.id}"]`);
+        if (commentCount && commentCount.textContent !== String(item.comment_count)) {
+          commentCount.textContent = item.comment_count;
+        }
+      });
+      const tabTotal = tabsEl.querySelector('.tab .cnt');
+      if (tabTotal) tabTotal.textContent = totalNow;
+    }, 15000);
 
     async function load() {
       listArea.innerHTML = loadingHtml();

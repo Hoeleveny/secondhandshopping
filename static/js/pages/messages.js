@@ -4,6 +4,7 @@
    ========================================================================== */
 import { api } from '../api.js';
 import { store } from '../store.js';
+import { liveUpdate } from '../live.js';
 import { avatarHtml, confirmDialog, emptyHtml, esc, fmtTime, loadingHtml, ratingBadgeHtml, toast } from '../ui.js';
 
 let conversationsCache = [];
@@ -99,6 +100,17 @@ async function renderMessages(root, ctx) {
     refreshTopbarUnread();
   }
 
+  // 气泡渲染抽出来：初次绘制与需求⑧的自动更新共用（只换气泡，输入框里的字不会被清掉）
+  const bubblesHtml = (list) => (list.length
+    ? list.map(m => {
+        const mine = m.sender_id === store.user?.id;
+        return `<div class="bubble ${mine ? 'mine' : 'other'}">
+                  ${esc(m.content)}
+                  <span class="b-time">${esc(fmtTime(m.created_at))}</span>
+                </div>`;
+      }).join('')
+    : emptyHtml('还没有消息，打个招呼吧', '👋'));
+
   function paintChat() {
     chatBox.innerHTML = `
       <div class="chat-box">
@@ -118,17 +130,7 @@ async function renderMessages(root, ctx) {
           </div>
           ${productId ? `<div class="hint">正在咨询商品 #${productId}</div>` : ''}
         </div>
-        <div class="chat-body" id="chat-body">
-          ${messages.length
-            ? messages.map(m => {
-                const mine = m.sender_id === store.user?.id;
-                return `<div class="bubble ${mine ? 'mine' : 'other'}">
-                          ${esc(m.content)}
-                          <span class="b-time">${esc(fmtTime(m.created_at))}</span>
-                        </div>`;
-              }).join('')
-            : emptyHtml('还没有消息，打个招呼吧', '👋')}
-        </div>
+        <div class="chat-body" id="chat-body">${bubblesHtml(messages)}</div>
         <div class="chat-input">
           <textarea class="textarea" id="msg-input" style="min-height:56px"
                     placeholder="按 Enter 发送，Shift + Enter 换行"></textarea>
@@ -236,6 +238,24 @@ async function renderMessages(root, ctx) {
 
   clearInterval(unreadTimer);
   unreadTimer = setInterval(refreshTopbarUnread, 20000);
+
+  // 需求⑧：会话打开着的时候，每 6 秒看对方有没有发新消息。
+  // 只重绘气泡区（不碰输入框），并且「本来就在底部」时才自动滚到底——
+  // 正在往上翻旧消息的人不该被拽下来。
+  liveUpdate('chat', '#chat-area', async () => {
+    if (!currentUid) return;
+    const data = await api.get(`/api/messages/with/${currentUid}`);
+    const list = data.list || [];
+    if (list.length === messages.length) return;
+    messages = list;
+    const body = document.getElementById('chat-body');
+    if (!body) return;
+    const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+    body.innerHTML = bubblesHtml(messages);
+    if (atBottom) body.scrollTop = body.scrollHeight;
+    await loadConversations();   // 左侧列表的最后一条 / 未读数也跟上
+    refreshTopbarUnread();
+  }, 6000);
 }
 
 export default { render: renderMessages };
