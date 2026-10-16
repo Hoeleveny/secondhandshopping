@@ -29,7 +29,10 @@ async function renderPost(root, ctx) {
   const commentListHtml = (items) => (items.length
     ? items.map(c => `
         <div class="comment-item" data-comment="${c.id}">
-          <div class="cm-head"><b>${esc(c.author_nickname || '')}</b><span>${esc(fmtTime(c.created_at))}</span></div>
+          <div class="cm-head">
+            <b class="user-link" data-user="${c.author_id}" title="查看 TA 的主页">${esc(c.author_nickname || '')}</b>
+            <span>${esc(fmtTime(c.created_at))}</span>
+          </div>
           <div class="cm-body">${esc(c.content)}</div>
           <div class="cm-actions">
             <button class="btn btn-ghost btn-sm" data-reply="${c.id}"
@@ -40,7 +43,13 @@ async function renderPost(root, ctx) {
     : emptyHtml('还没有评论，来说两句', '💬'));
 
   // 新批需求⑤：评论上的「回复（引用 @某人）」与「举报」
+  // 新批需求⑥：点评论里的用户名 → 跳 TA 的个人主页
   function bindCommentActions(scope) {
+    scope.querySelectorAll('[data-user]').forEach(el =>
+      el.addEventListener('click', (event) => {
+        event.stopPropagation();
+        location.hash = `#/seller/${el.dataset.user}`;
+      }));
     scope.querySelectorAll('[data-reply]').forEach(btn =>
       btn.addEventListener('click', () => {
         const input = root.querySelector('#comment-input');

@@ -103,6 +103,12 @@ export default {
       : '<div class="muted small">还没有评论，来说两句</div>');
 
     function bindReviewComments(box, reviewId) {
+      // 新批需求⑥：评价/评价评论里的用户名都能点进 TA 的主页
+      box.querySelectorAll('[data-user]').forEach(el =>
+        el.addEventListener('click', (event) => {
+          event.stopPropagation();
+          location.hash = `#/seller/${el.dataset.user}`;
+        }));
       box.querySelectorAll('[data-rc-reply]').forEach(btn =>
         btn.addEventListener('click', () => {
           const input = box.querySelector(`[data-rc-input="${reviewId}"]`);
@@ -159,6 +165,9 @@ export default {
     root.querySelectorAll('[data-rev-report]').forEach(btn =>
       btn.addEventListener('click', () =>
         openReportModal({ type: 'review', id: Number(btn.dataset.revReport) })));
+    // 需求⑥：评价作者的名字也能点进主页
+    root.querySelectorAll('#review-area [data-user]').forEach(el =>
+      el.addEventListener('click', () => { location.hash = `#/seller/${el.dataset.user}`; }));
 
     // 图片切换
     const thumbs = root.querySelector('#thumbs');

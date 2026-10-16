@@ -156,7 +156,8 @@ export function reviewItemHtml(review) {
   return `
   <div class="review-item" data-review="${review.id}">
     <div class="review-head">
-      <span class="rh-name">${esc(review.reviewer_nickname || '匿名')}</span>
+      <span class="rh-name user-link" data-user="${review.reviewer_id}"
+            title="查看 TA 的主页">${esc(review.reviewer_nickname || '匿名')}</span>
       ${starsHtml(review.rating)}
       <span class="badge badge-gray">${esc(review.direction || '')}</span>
       <span class="rh-time">${esc(fmtTime(review.created_at))}</span>

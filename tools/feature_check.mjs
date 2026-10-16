@@ -3721,6 +3721,91 @@ async function feature31(cdp) {
   check('需求⑤：举报评论的处置会进操作日志（可回溯）', logs.total >= 0, '');
 }
 
+/* ================================================================ 功能㉜ 评论区点用户名跳首页（新批需求⑥） */
+async function feature32(cdp) {
+  console.log('\n===== 功能㉜ 评论区点用户名跳其主页（需求⑥）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const seller = (await api('GET', '/api/auth/me', { token: sellerToken })).data.user;
+
+  // 帖子 + 一条别人的评论
+  const post = (await api('POST', '/api/posts', {
+    token: buyerToken,
+    body: { title: '自动化测试：点用户名跳主页', content: '测试用', tag: '闲聊' },
+  })).data;
+  await api('POST', `/api/posts/${post.id}/comments`,
+    { token: sellerToken, body: { content: '自动化测试：我是评论者' } });
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go(`/post/${post.id}`);
+  await waitFor(cdp, `!!document.querySelector('#comment-list [data-user]')`);
+  await sleep(400);
+
+  const linked = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#comment-list [data-user]');
+      return { uid: el.dataset.user || '', text: el.innerText.trim(),
+               clickable: getComputedStyle(el).cursor };
+    })()`);
+  check('需求⑥：帖子评论里的用户名是可点的（带 data-user）',
+    linked.uid === String(seller.id) && linked.text.includes('陈同学'), JSON.stringify(linked));
+
+  await cdp.eval(`document.querySelector('#comment-list [data-user]').click()`);
+  await waitFor(cdp, `location.hash === '#/seller/${seller.id}'`);
+  await sleep(800);
+  const page = await cdp.eval(`
+    (() => ({
+      hash: location.hash,
+      hasName: document.body.innerText.includes('陈同学'),
+      hasMsgBtn: !!document.querySelector('[data-msg], [data-msg-login]'),
+    }))()`);
+  check('需求⑥：点评论里的用户名会跳到 TA 的个人主页（含「私信 TA」入口）',
+    page.hash === `#/seller/${seller.id}` && page.hasName, JSON.stringify(page));
+  await cdp.shot(path.join(SHOT_DIR, 'f32-user-from-comment.png'));
+
+  // 点用户名不能顺手触发「回复/举报」
+  await cdp.go(`/post/${post.id}`);
+  await waitFor(cdp, `!!document.querySelector('#comment-list [data-user]')`);
+  await sleep(400);
+  await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#comment-list [data-user]');
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    })()`);
+  await sleep(400);
+  const after = await cdp.eval(`
+    (() => ({
+      modal: !!document.querySelector('.modal-mask'),
+      input: document.querySelector('#comment-input')?.value || '',
+    }))()`);
+  check('需求⑥：点用户名不会误触发回复/举报弹窗',
+    after.modal === false && after.input === '', JSON.stringify(after));
+
+  // 商品评价区的用户名同样可点
+  const myProduct = (await api('POST', '/api/products', {
+    token: sellerToken,
+    body: { name: '自动化测试：评价用户名可点', price: 12, category_id: 1, subcategory_id: 1,
+            condition: '九成新', description: 'x', default_place_id: 2, images: [] },
+  })).data;
+  const order = (await api('POST', '/api/orders',
+    { token: buyerToken, body: { product_id: myProduct.id, meet_place_id: 2 } })).data;
+  await api('PATCH', `/api/orders/${order.id}/confirm`, { token: sellerToken });
+  await api('PATCH', `/api/orders/${order.id}/complete`, { token: buyerToken });
+  await api('POST', '/api/reviews', {
+    token: buyerToken,
+    body: { order_id: order.id, rating: 5, content: '自动化测试：评价用户名可点' },
+  });
+
+  const buyer = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+  await cdp.go(`/product/${myProduct.id}`);
+  await waitFor(cdp, `!!document.querySelector('#review-area [data-user]')`);
+  await sleep(400);
+  await cdp.eval(`document.querySelector('#review-area [data-user]').click()`);
+  await waitFor(cdp, `location.hash === '#/seller/${buyer.id}'`);
+  check('需求⑥：商品评价里的作者名同样能点进主页', true, '');
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -3754,6 +3839,7 @@ const GROUPS = {
   29: { title: '卖家确认才锁定商品（新批需求③）', fn: feature29 },
   30: { title: '私信发送商品详情卡片（新批需求④）', fn: feature30 },
   31: { title: '评论引用(@)与举报（新批需求⑤）', fn: feature31 },
+  32: { title: '评论区点用户名跳主页（新批需求⑥）', fn: feature32 },
 };
 
 async function main() {
