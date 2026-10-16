@@ -41,6 +41,16 @@ export default {
         <h1>我的订单</h1>
         <span class="muted small">买卖用的是同一个账号，每张单上都标了「我在这笔交易里是买家还是卖家」</span>
       </div>
+      <div class="card order-legend">
+        <div class="legend-row">
+          <span class="badge badge-info legend-flag">我是买家</span>
+          <span class="muted small">这笔单里是我买对方的东西：我能「确认完成」或「取消订单」，完成后可以评价卖家</span>
+        </div>
+        <div class="legend-row">
+          <span class="badge badge-warn legend-flag">我是卖家</span>
+          <span class="muted small">这笔单里是对方买了我的东西：我能「确认完成」收尾，但取消订单只有买家能做</span>
+        </div>
+      </div>
       <div class="tabs" id="side-tabs"></div>
       <div class="tabs mt-8" id="tabs"></div>
       <div id="list-area"></div>

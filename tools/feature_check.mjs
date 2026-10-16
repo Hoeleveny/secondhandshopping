@@ -183,6 +183,9 @@ async function feature2(cdp) {
 
   await cdp.logout();
   await cdp.go('/search');
+  // 等结果区真的渲染完再读——否则可能读到「加载中…」，
+  // 于是「默认展示全部在售商品」直接失败，且后面拿它当基线的断言会跟着一起错
+  await waitFor(cdp, `/共 \\d+ 件/.test(document.querySelector('#result-count')?.innerText || '')`);
 
   const total = await cdp.eval(`document.querySelector('#result-count').innerText`);
   check('默认展示全部在售商品', /共 \d+ 件/.test(total), total);
@@ -2602,6 +2605,25 @@ async function feature23(cdp) {
     }))()`);
   check('需求④：「我买到的」里只剩买家身份的单',
     buyView.cards > 0 && buyView.roles.join('') === '我是买家', JSON.stringify(buyView));
+
+  // ---- 需求⑦：页面上有身份标记的说明（图例），把两种身份讲清楚 ----
+  const legend = await cdp.eval(`
+    (() => {
+      const box = document.querySelector('.order-legend');
+      if (!box) return { exists: false };
+      return {
+        exists: true,
+        flags: [...box.querySelectorAll('.legend-flag')].map(e => e.innerText.trim()),
+        text: box.innerText.replace(/\\s+/g, ' ').trim(),
+      };
+    })()`);
+  check('需求⑦：「我的订单」顶部有买家/卖家标记的说明（两种身份都讲清楚）',
+    legend.exists && legend.flags.join('|') === '我是买家|我是卖家'
+    && /取消订单/.test(legend.text) && /确认完成/.test(legend.text),
+    JSON.stringify(legend).slice(0, 220));
+  check('需求⑦：图例只在页面顶部出现一次（不会混进订单卡片里干扰身份统计）',
+    (await cdp.eval(`document.querySelectorAll('.order-legend .legend-flag').length`)) === 2,
+    `图例徽标数=${await cdp.eval(`document.querySelectorAll('.order-legend .legend-flag').length`)}`);
 
   // ---- 4. 老路由 #/sold 仍可用，默认落在「我卖出的」----
   await cdp.go('/sold');
