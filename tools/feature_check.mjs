@@ -4189,6 +4189,88 @@ async function feature36(cdp) {
   await cdp.shot(path.join(SHOT_DIR, 'f36-report-delete.png'));
 }
 
+/* ================================================================ 功能㊲ 交流广场列表的配图缩略图（本批需求③） */
+async function feature37(cdp) {
+  console.log('\n===== 功能㊲ 交流广场列表的配图缩略图（本批需求③）=====');
+
+  const token = await login('buyer1', '123456', 'buyer');
+
+  // 真上传几张图：用 Node 的 FormData/Blob 直接打 multipart
+  const PNG = Buffer.from(
+    '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8cfc0f01f0005000100ff2f2f2f0000000049454e44ae426082',
+    'hex');
+  const upload = async (name) => {
+    const fd = new FormData();
+    fd.append('file', new Blob([PNG], { type: 'image/png' }), name);
+    const res = await fetch(`${BASE}/api/upload`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
+    });
+    const data = await res.json();
+    if (data.code !== 0) throw new Error(data.msg || '上传失败');
+    return data.data.url;
+  };
+  const [img1, img2, img3, img4] = [
+    await upload('f37-a.png'), await upload('f37-b.png'),
+    await upload('f37-c.png'), await upload('f37-d.png'),
+  ];
+
+  const two = (await api('POST', '/api/posts', {
+    token, body: { title: '自动化测试：两张配图', content: '列表缩略图用', tag: '闲聊',
+                   images: [img1, img2] },
+  })).data;
+  const four = (await api('POST', '/api/posts', {
+    token, body: { title: '自动化测试：四张配图', content: '超过三张', tag: '闲聊',
+                   images: [img1, img2, img3, img4] },
+  })).data;
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go('/posts');
+  await waitFor(cdp, `!!document.querySelector('#list-area .post-item')`);
+  await sleep(1200);
+
+  const list = await cdp.eval(`
+    (() => {
+      const find = (t) => [...document.querySelectorAll('#list-area .post-item')]
+        .find(el => el.innerText.includes(t));
+      const read = (el) => el ? {
+        thumbs: el.querySelectorAll('.post-thumbs img').length,
+        label: el.querySelector('.post-thumb-more')?.innerText.trim() || '',
+        size: (() => {
+          const i = el.querySelector('.post-thumbs img');
+          return i ? Math.round(i.getBoundingClientRect().width) : 0;
+        })(),
+      } : null;
+      return { two: read(find('两张配图')), four: read(find('四张配图')) };
+    })()`);
+  check('需求③：列表卡片显示配图缩略图（两张的帖子显示 2 张）',
+    list.two && list.two.thumbs === 2, JSON.stringify(list.two));
+  check('需求③：多张配图时给出「共 N 张」提示',
+    list.two && /共 2 张/.test(list.two.label), JSON.stringify(list.two));
+  check('需求③：缩略图被限制在小尺寸（不是原图撑满）',
+    list.two && list.two.size > 0 && list.two.size <= 200, `首图宽 ${list.two?.size}px`);
+  check('需求③：超过 3 张时最多展示 3 张缩略图，并标出总数',
+    list.four && list.four.thumbs === 3 && /共 4 张/.test(list.four.label),
+    JSON.stringify(list.four));
+  await cdp.shot(path.join(SHOT_DIR, 'f37-post-thumbs.png'));
+
+  // 点卡片 → 详情里能看到全部配图
+  await cdp.eval(`
+    (() => {
+      const el = [...document.querySelectorAll('#list-area .post-item')]
+        .find(x => x.innerText.includes('四张配图'));
+      el.click();
+    })()`);
+  await waitFor(cdp, `location.hash.startsWith('#/post/')`);
+  await sleep(900);
+  const detail = await cdp.eval(`document.querySelectorAll('img[data-full]').length`);
+  check('需求③：点进详情能看到全部 4 张配图', detail >= 4, `详情大图 ${detail} 张`);
+
+  // 清理测试帖子
+  for (const p of [two, four]) {
+    await api('DELETE', `/api/posts/${p.id}`, { token }).catch(() => null);
+  }
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -4227,6 +4309,7 @@ const GROUPS = {
   34: { title: '我的关注 / 我的拉黑（新批需求⑧）', fn: feature34 },
   35: { title: '动态监控时间线排版对齐（本批需求①）', fn: feature35 },
   36: { title: '举报记录选定删除（本批需求②）', fn: feature36 },
+  37: { title: '广场列表配图缩略图（本批需求③）', fn: feature37 },
 };
 
 async function main() {

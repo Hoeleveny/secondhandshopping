@@ -132,7 +132,7 @@ export function postItemHtml(post, options = {}) {
     ${(post.images || []).length ? `
       <div class="post-thumbs">
         ${post.images.slice(0, 3).map(url => `<img src="/uploads/${encodeURIComponent(url)}" alt="" loading="lazy">`).join('')}
-        ${post.images.length > 3 ? `<span class="post-thumb-more">+${post.images.length - 3}</span>` : ''}
+        ${post.images.length > 1 ? `<span class="post-thumb-more">共 ${post.images.length} 张</span>` : ''}
       </div>` : ''}
     <div class="post-meta">
       <span class="user-link" data-user="${post.author_id}" title="查看 TA 的主页">👤 ${esc(post.author_nickname || '')}</span>
