@@ -4,7 +4,7 @@
    ========================================================================== */
 import { api } from '../api.js';
 import { store } from '../store.js';
-import { avatarHtml, esc, fmtTime, toast } from '../ui.js';
+import { avatarHtml, esc, fmtTime, openModal, toast } from '../ui.js';
 
 const MAX_AVATAR_SIZE = 2 * 1024 * 1024;
 
@@ -131,6 +131,128 @@ export default {
       statusLabel.textContent = '已选择恢复默认头像，记得点「保存修改」';
     });
 
+    /* 本批需求④：上传头像前自己选定展示范围（拖动 + 缩放，裁成正方形再上传） */
+    async function uploadAvatar(file) {
+      const uploaded = await api.upload(file);
+      pendingAvatar = uploaded.url;
+      paintPreview(pendingAvatar);
+      $('#btn-clear-avatar').disabled = false;
+      statusLabel.textContent = '头像已上传，记得点「保存修改」';
+    }
+
+    async function openCropper(file) {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = () => reject(new Error('图片读不出来'));
+        img.src = url;
+      });
+
+      const BOX = 300;                       // 取景框边长（正方形）
+      const OUT = 512;                       // 输出的头像边长
+      const base = Math.max(BOX / img.width, BOX / img.height);   // 短边铺满
+      let zoom = 1;
+      let scale = base;
+      let offsetX = (BOX - img.width * scale) / 2;
+      let offsetY = (BOX - img.height * scale) / 2;
+
+      const clamp = () => {
+        const w = img.width * scale;
+        const h = img.height * scale;
+        offsetX = Math.min(0, Math.max(BOX - w, offsetX));
+        offsetY = Math.min(0, Math.max(BOX - h, offsetY));
+      };
+      clamp();
+
+      openModal({
+        title: '调整头像的展示范围',
+        body: `
+          <div class="crop-wrap">
+            <div class="crop-box" id="crop-box" title="拖动调整位置">
+              <img id="crop-img" src="${url}" alt="">
+            </div>
+            <div class="form-row" style="width:100%">
+              <label>缩放</label>
+              <input type="range" id="crop-zoom" min="1" max="3" step="0.01" value="1"
+                     style="width:100%">
+            </div>
+            <div class="muted small">拖动图片调整位置、滑块缩放；框内这块正方形就是最终的头像。</div>
+          </div>`,
+        footer: `<button class="btn" data-close>取消</button>
+                 <button class="btn btn-primary" id="crop-ok">裁剪并上传</button>`,
+        onMount(modal, close) {
+          const boxEl = modal.querySelector('#crop-box');
+          const imgEl = modal.querySelector('#crop-img');
+          const zoomEl = modal.querySelector('#crop-zoom');
+          const paint = () => {
+            imgEl.style.width = `${img.width * scale}px`;
+            imgEl.style.height = `${img.height * scale}px`;
+            imgEl.style.left = `${offsetX}px`;
+            imgEl.style.top = `${offsetY}px`;
+          };
+          paint();
+
+          let dragging = false;
+          let startX = 0;
+          let startY = 0;
+          let ox = 0;
+          let oy = 0;
+          boxEl.addEventListener('pointerdown', (event) => {
+            dragging = true;
+            startX = event.clientX;
+            startY = event.clientY;
+            ox = offsetX;
+            oy = offsetY;
+          });
+          boxEl.addEventListener('pointermove', (event) => {
+            if (!dragging) return;
+            offsetX = ox + (event.clientX - startX);
+            offsetY = oy + (event.clientY - startY);
+            clamp();
+            paint();
+          });
+          const stopDrag = () => { dragging = false; };
+          boxEl.addEventListener('pointerup', stopDrag);
+          boxEl.addEventListener('pointerleave', stopDrag);
+
+          zoomEl.addEventListener('input', () => {
+            // 以取景框中心为锚点缩放，视觉上更自然
+            const cx = (BOX / 2 - offsetX) / scale;
+            const cy = (BOX / 2 - offsetY) / scale;
+            zoom = Number(zoomEl.value);
+            scale = base * zoom;
+            offsetX = BOX / 2 - cx * scale;
+            offsetY = BOX / 2 - cy * scale;
+            clamp();
+            paint();
+          });
+
+          modal.querySelector('#crop-ok').addEventListener('click', async (event) => {
+            const button = event.currentTarget;
+            button.disabled = true;
+            try {
+              const canvas = document.createElement('canvas');
+              canvas.width = OUT;
+              canvas.height = OUT;
+              canvas.getContext('2d').drawImage(
+                img,
+                -offsetX / scale, -offsetY / scale, BOX / scale, BOX / scale,
+                0, 0, OUT, OUT);
+              const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+              if (!blob) throw new Error('裁剪失败');
+              await uploadAvatar(new File([blob], 'avatar.png', { type: 'image/png' }));
+              URL.revokeObjectURL(url);
+              close();
+            } catch (err) {
+              toast(`裁剪失败：${err.message}`, 'error');
+              button.disabled = false;
+            }
+          });
+        },
+      });
+    }
+
     fileInput.addEventListener('change', async (event) => {
       const file = (event.target.files || [])[0];
       event.target.value = '';
@@ -144,13 +266,9 @@ export default {
         return;
       }
       try {
-        const uploaded = await api.upload(file);
-        pendingAvatar = uploaded.url;
-        paintPreview(pendingAvatar);
-        $('#btn-clear-avatar').disabled = false;
-        statusLabel.textContent = '头像已上传，记得点「保存修改」';
+        await openCropper(file);          // 需求④：先自己选范围，再上传裁剪结果
       } catch (err) {
-        toast(`上传失败：${err.message}`, 'error');
+        toast(`打开裁剪失败：${err.message}`, 'error');
       }
     });
 

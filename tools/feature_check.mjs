@@ -10,6 +10,7 @@
      5 帖子点击范围   6 帖子配图   7 用户资料页
    ========================================================================== */
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -861,7 +862,12 @@ async function feature7(cdp) {
   const { nodeId } = await cdp.send('DOM.querySelector',
     { nodeId: root.nodeId, selector: '#avatar-file' });
   await cdp.send('DOM.setFileInputFiles', { files: [avatarFile], nodeId });
-  await sleep(1600);
+  // 本批需求④ 起：选完文件会先弹出裁剪框，要确认「裁剪并上传」才真的上传
+  await waitFor(cdp, `!!document.querySelector('#crop-ok')`);
+  await sleep(400);
+  await cdp.eval(`document.querySelector('#crop-ok').click()`);
+  await waitFor(cdp, `!document.querySelector('#crop-ok')`);
+  await sleep(1200);
 
   const afterUpload = await cdp.eval(`
     (() => ({
@@ -4271,6 +4277,160 @@ async function feature37(cdp) {
   }
 }
 
+/* ================================================================ 功能㊳ 头像可自行选定展示范围（本批需求④） */
+// 造一张非方形的 PNG（400×200），这样"裁成正方形"才有意义
+const CRC_TABLE = (() => {
+  const table = new Int32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c;
+  }
+  return table;
+})();
+function crc32(buf) {
+  let c = -1;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ -1) >>> 0;
+}
+function makePng(w, h) {
+  
+  const raw = Buffer.alloc((w * 3 + 1) * h);
+  for (let y = 0; y < h; y++) {
+    raw[y * (w * 3 + 1)] = 0;                       // filter: none
+    for (let x = 0; x < w; x++) {
+      const i = y * (w * 3 + 1) + 1 + x * 3;
+      raw[i] = x % 256;
+      raw[i + 1] = y % 256;
+      raw[i + 2] = 120;
+    }
+  }
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length, 0);
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body), 0);
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8;   // bit depth
+  ihdr[9] = 2;   // color type: truecolor
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+async function feature38(cdp) {
+  console.log('\n===== 功能㊳ 头像可自行选定展示范围（本批需求④）=====');
+
+  const avatarFile = path.join(WORK, 'f38-avatar-400x200.png');
+  fs.writeFileSync(avatarFile, makePng(400, 200));
+
+  const token = await login('buyer1', '123456', 'buyer');
+  const before = (await api('GET', '/api/auth/me', { token })).data.user.avatar;
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go('/profile');
+  await waitFor(cdp, `!!document.querySelector('#avatar-file')`);
+  await sleep(500);
+
+  // 真的选一个文件（CDP 的 DOM.setFileInputFiles）
+  await cdp.send('DOM.enable');
+  const doc = await cdp.send('DOM.getDocument', { depth: -1 });
+  const node = await cdp.send('DOM.querySelector',
+    { nodeId: doc.root.nodeId, selector: '#avatar-file' });
+  await cdp.send('DOM.setFileInputFiles',
+    { nodeId: node.nodeId, files: [avatarFile] });
+
+  await waitFor(cdp, `!!document.querySelector('#crop-box')`);
+  await sleep(500);
+  const opened = await cdp.eval(`
+    (() => {
+      const img = document.querySelector('#crop-img');
+      const box = document.querySelector('#crop-box');
+      return {
+        hasBox: !!box,
+        boxSize: box ? Math.round(box.getBoundingClientRect().width) : 0,
+        natural: img ? { w: img.naturalWidth, h: img.naturalHeight } : null,
+        hasZoom: !!document.querySelector('#crop-zoom'),
+        hint: /正方形就是最终的头像/.test(document.body.innerText),
+      };
+    })()`);
+  check('需求④：选完图片会打开裁剪框（正方形取景框 + 缩放滑块 + 说明）',
+    opened.hasBox && opened.boxSize > 0 && opened.hasZoom && opened.hint,
+    JSON.stringify(opened));
+  check('需求④：原图读到的是非方形图（400×200，裁剪才有意义）',
+    opened.natural && opened.natural.w === 400 && opened.natural.h === 200,
+    JSON.stringify(opened.natural));
+
+  // 拖动：位置应该跟着变
+  const beforeDrag = await cdp.eval(`
+    (() => { const i = document.querySelector('#crop-img'); return { left: i.style.left, w: i.style.width }; })()`);
+  await cdp.eval(`
+    (() => {
+      const box = document.querySelector('#crop-box');
+      const opts = (x, y) => ({ bubbles: true, clientX: x, clientY: y, pointerId: 1 });
+      box.dispatchEvent(new PointerEvent('pointerdown', opts(150, 150)));
+      box.dispatchEvent(new PointerEvent('pointermove', opts(110, 150)));
+      box.dispatchEvent(new PointerEvent('pointerup', opts(110, 150)));
+    })()`);
+  await sleep(300);
+  const afterDrag = await cdp.eval(`
+    (() => { const i = document.querySelector('#crop-img'); return { left: i.style.left, w: i.style.width }; })()`);
+  check('需求④：拖动取景框里的图片能改变位置',
+    afterDrag.left !== beforeDrag.left, `${beforeDrag.left} → ${afterDrag.left}`);
+
+  // 缩放：图片尺寸应该变大
+  await cdp.eval(`
+    (() => {
+      const z = document.querySelector('#crop-zoom');
+      z.value = '2';
+      z.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+  await sleep(300);
+  const afterZoom = await cdp.eval(`
+    (() => { const i = document.querySelector('#crop-img'); return { w: parseFloat(i.style.width) }; })()`);
+  check('需求④：缩放滑块能把图片放大',
+    afterZoom.w > parseFloat(beforeDrag.w), `宽 ${beforeDrag.w} → ${afterZoom.w}px`);
+  await cdp.shot(path.join(SHOT_DIR, 'f38-avatar-crop.png'));
+
+  // 裁剪并上传 → 产物必须是 512×512 的正方形
+  await cdp.eval(`document.querySelector('#crop-ok').click()`);
+  await waitFor(cdp, `!document.querySelector('#crop-box')`);
+  await waitFor(cdp, `(document.querySelector('#avatar-preview img')?.naturalWidth || 0) > 0`);
+  await sleep(600);
+  const cropped = await cdp.eval(`
+    (() => {
+      const img = document.querySelector('#avatar-preview img');
+      return {
+        w: img?.naturalWidth || 0, h: img?.naturalHeight || 0,
+        src: (img?.getAttribute('src') || '').slice(0, 12),
+        status: document.querySelector('#pf-status')?.innerText.trim() || '',
+      };
+    })()`);
+  check('需求④：裁剪结果被上传并立刻预览，且是正方形（512×512）',
+    cropped.w === 512 && cropped.h === 512 && cropped.src.includes('/uploads/'),
+    JSON.stringify(cropped));
+  check('需求④：上传后提示「记得点保存修改」',
+    /保存修改/.test(cropped.status), cropped.status);
+
+  // 保存后接口里的头像也换了
+  await cdp.eval(`document.querySelector('#btn-save').click()`);
+  await sleep(1200);
+  const after = (await api('GET', '/api/auth/me', { token })).data.user.avatar;
+  check('需求④：保存后接口里的头像是裁剪后的那张（与原图不同）',
+    !!after && after !== before, `${before} → ${after}`);
+
+  // 收尾：恢复成原来的头像，别把演示账号改花
+  await api('PUT', '/api/auth/profile', { token, body: { avatar: before || '' } });
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -4310,6 +4470,7 @@ const GROUPS = {
   35: { title: '动态监控时间线排版对齐（本批需求①）', fn: feature35 },
   36: { title: '举报记录选定删除（本批需求②）', fn: feature36 },
   37: { title: '广场列表配图缩略图（本批需求③）', fn: feature37 },
+  38: { title: '头像可自行选定展示范围（本批需求④）', fn: feature38 },
 };
 
 async function main() {
