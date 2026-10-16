@@ -47,9 +47,12 @@ export function orderCardHtml(order, side = 'buyer') {
   // 而不是调用方传进来的默认值——我的订单页把两侧合成一页后，这个区别很关键
   // （取消订单只有买家有、删除记录各删各的）。
   const myRole = order.my_role || side;
-  const other = myRole === 'buyer'
-    ? `卖家：${esc(order.seller_nickname || '')}`
-    : `买家：${esc(order.buyer_nickname || '')}`;
+  // 本批需求⑤：这里的「买家 / 卖家」用户名可以点，点了直接进与 TA 的私信
+  const otherId = myRole === 'buyer' ? order.seller_id : order.buyer_id;
+  const otherNick = myRole === 'buyer' ? order.seller_nickname : order.buyer_nickname;
+  const otherLabel = myRole === 'buyer' ? '卖家' : '买家';
+  const other = `${esc(otherLabel)}：<span class="user-link" data-msg-user="${otherId}"
+    title="点这里给 TA 发私信">${esc(otherNick || '')}</span>`;
   const roleBadge = myRole === 'buyer'
     ? '<span class="badge badge-info role-flag">我是买家</span>'
     : '<span class="badge badge-warn role-flag">我是卖家</span>';
@@ -103,7 +106,7 @@ export function orderCardHtml(order, side = 'buyer') {
       <div style="flex:1;min-width:0">
         <div class="strong">${esc(snap.name || '（商品已删除）')}</div>
         ${order.product_code ? `<div class="small muted mt-0" style="letter-spacing:.04em;user-select:all">编号 ${esc(order.product_code)}</div>` : ''}
-        <div class="small muted mt-0">${esc(other)}　·　${esc(fmtTime(order.created_at))}</div>
+        <div class="small muted mt-0">${other}　·　${esc(fmtTime(order.created_at))}</div>
         <div class="small muted">自提点：${esc(order.meet_place?.name || '未指定')}</div>
         ${order.trade_note ? `<div class="small muted">交易说明：${esc(order.trade_note)}</div>` : ''}
         ${waitingHint}

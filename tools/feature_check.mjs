@@ -4431,6 +4431,109 @@ async function feature38(cdp) {
   await api('PUT', '/api/auth/profile', { token, body: { avatar: before || '' } });
 }
 
+/* ================================================================ 功能㊴ 订单卡上点用户名跳私信（本批需求⑤） */
+async function feature39(cdp) {
+  console.log('\n===== 功能㊴ 我的订单里点买家/卖家用户名跳私信（本批需求⑤）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const sellerId = (await api('GET', '/api/auth/me', { token: sellerToken })).data.user.id;
+  const buyerId = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user.id;
+  const sellerName = (await api('GET', '/api/auth/me', { token: sellerToken })).data.user.nickname;
+  const buyerName = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user.nickname;
+
+  // 备一笔「我买到的」和一笔「我卖出的」：都用测试商品，跑完删掉
+  const mk = async (token, name) => (await api('POST', '/api/products', {
+    token,
+    body: { name, price: 13, category_id: 1, subcategory_id: 1, condition: '九成新',
+            description: '点用户名跳私信用', default_place_id: 2, images: [] },
+  })).data.id;
+  const pForBuyer = await mk(sellerToken, '自动化测试：订单点卖家名');
+  await api('POST', '/api/orders',
+    { token: buyerToken, body: { product_id: pForBuyer, meet_place_id: 2 } });
+  const pForSeller = await mk(buyerToken, '自动化测试：订单点买家名');
+  await api('POST', '/api/orders',
+    { token: sellerToken, body: { product_id: pForSeller, meet_place_id: 2 } });
+
+  // ---- 买家侧：点「卖家：xxx」 ----
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go('/orders?side=buyer');
+  await waitFor(cdp, `[...document.querySelectorAll('#list-area [data-msg-user]')]
+    .some(el => el.dataset.msgUser === '${sellerId}')`);
+  await sleep(500);
+  const buyerCard = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#list-area [data-msg-user="${sellerId}"]');
+      if (!el) return { found: false };
+      const card = el.closest('.card');
+      return {
+        found: true,
+        text: el.innerText.trim(),
+        inCard: card ? card.innerText.includes('订单号') : false,
+        cursor: getComputedStyle(el).cursor,
+        title: el.getAttribute('title') || '',
+      };
+    })()`);
+  check('需求⑤：买家订单卡上「卖家：xxx」是可点的用户名（带提示与手型光标）',
+    buyerCard.found && buyerCard.text === sellerName && buyerCard.inCard
+    && buyerCard.cursor === 'pointer' && /私信/.test(buyerCard.title),
+    JSON.stringify(buyerCard));
+
+  await cdp.eval(`document.querySelector('#list-area [data-msg-user="${sellerId}"]').click()`);
+  await waitFor(cdp, `location.hash === '#/messages?to=${sellerId}'`);
+  await waitFor(cdp, `!!document.querySelector('#chat-area .chat-box')`);
+  await sleep(800);
+  const chat = await cdp.eval(`
+    (() => ({
+      hash: location.hash,
+      peer: document.querySelector('#chat-area .chat-head [data-user]')?.dataset.user || '',
+      peerName: document.querySelector('#chat-area .chat-head b')?.innerText.trim() || '',
+      hasInput: !!document.querySelector('#msg-input'),
+    }))()`);
+  check('需求⑤：点完直接进了与那个卖家的私信界面（对方正确、有输入框）',
+    chat.peer === String(sellerId) && chat.peerName === sellerName && chat.hasInput,
+    JSON.stringify(chat));
+  await cdp.shot(path.join(SHOT_DIR, 'f39-order-msg.png'));
+
+  // ---- 卖家侧：点「买家：xxx」 ----
+  await cdp.loginAs('seller1', '123456', 'seller');
+  await cdp.go('/orders?side=seller');
+  await waitFor(cdp, `[...document.querySelectorAll('#list-area [data-msg-user]')]
+    .some(el => el.dataset.msgUser === '${buyerId}')`);
+  await sleep(500);
+  const sellerCard = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#list-area [data-msg-user="${buyerId}"]');
+      return el ? { text: el.innerText.trim(), label: el.parentElement.innerText.trim().slice(0, 6) } : null;
+    })()`);
+  check('需求⑤：卖家订单卡上显示的是「买家：xxx」且可点',
+    sellerCard && sellerCard.text === buyerName && sellerCard.label.includes('买家'),
+    JSON.stringify(sellerCard));
+
+  await cdp.eval(`document.querySelector('#list-area [data-msg-user="${buyerId}"]').click()`);
+  await waitFor(cdp, `location.hash === '#/messages?to=${buyerId}'`);
+  await waitFor(cdp, `!!document.querySelector('#chat-area .chat-box')`);
+  await sleep(600);
+  const chat2 = await cdp.eval(`
+    (() => {
+      const head = document.querySelector('#chat-area .chat-head');
+      return {
+        hash: location.hash,
+        head: head ? head.textContent : '',
+        hasInput: !!document.querySelector('#msg-input'),
+      };
+    })()`);
+  check('需求⑤：卖家点买家名同样进入私信，且对方是这个买家',
+    chat2.hash === `#/messages?to=${buyerId}` && chat2.head.includes(buyerName)
+    && chat2.hasInput === true, JSON.stringify(chat2));
+
+  // 清理测试商品（含其订单）
+  for (const pid of [pForBuyer, pForSeller]) {
+    await api('DELETE', `/api/products/${pid}`, { token: sellerToken }).catch(() => null);
+    await api('DELETE', `/api/products/${pid}`, { token: buyerToken }).catch(() => null);
+  }
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -4471,6 +4574,7 @@ const GROUPS = {
   36: { title: '举报记录选定删除（本批需求②）', fn: feature36 },
   37: { title: '广场列表配图缩略图（本批需求③）', fn: feature37 },
   38: { title: '头像可自行选定展示范围（本批需求④）', fn: feature38 },
+  39: { title: '订单卡点用户名跳私信（本批需求⑤）', fn: feature39 },
 };
 
 async function main() {

@@ -115,6 +115,13 @@ export default {
       listArea.querySelectorAll('[data-act]').forEach(btn =>
         btn.addEventListener('click', () => handle(btn.dataset.act, btn.dataset.id)));
 
+      // 本批需求⑤：点订单卡上的「买家 / 卖家」用户名 → 直接进与 TA 的私信
+      listArea.querySelectorAll('[data-msg-user]').forEach(el =>
+        el.addEventListener('click', (event) => {
+          event.stopPropagation();
+          location.hash = `#/messages?to=${el.dataset.msgUser}`;
+        }));
+
       renderPagination(pager, {
         page: data.page,
         pages: Math.max(1, Math.ceil(data.total / data.page_size)),
