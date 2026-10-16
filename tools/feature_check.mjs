@@ -1118,6 +1118,9 @@ async function feature10(cdp) {
   // ---- 4. 管理后台：行内展示 + 按编号搜索 ----
   await cdp.loginAs('admin', '123456', 'admin');
   await cdp.go('/admin?tab=products');
+  // 管理后台是懒加载模块：等列表与搜索框真的渲染出来再取值（否则会读到 null）
+  await waitFor(cdp, `!!document.querySelector('#ad-keyword') && !!document.querySelector('#ad-list')`);
+  await sleep(600);
   const adminView = await cdp.eval(`
     (() => {
       // 管理后台商品列表的容器是 #ad-list（不是前台的 #list-area）
@@ -3909,6 +3912,120 @@ async function feature33(cdp) {
   check('需求⑦：解除拉黑后又能看到 TA 的商品', afterUnblock >= 1, `卡片 ${afterUnblock}`);
 }
 
+/* ================================================================ 功能㉞ 我的关注 / 我的拉黑入口（新批需求⑧） */
+async function feature34(cdp) {
+  console.log('\n===== 功能㉞ 用户小框里的「我的关注 / 我的拉黑」（需求⑧）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const sellerId = (await api('GET', '/api/auth/me', { token: sellerToken })).data.user.id;
+  const sellerName = (await api('GET', '/api/auth/me', { token: sellerToken })).data.user.nickname;
+
+  // 先准备状态：关注 +（稍后）拉黑
+  await api('POST', `/api/follows/${sellerId}`, { token: buyerToken });
+  await api('DELETE', `/api/blocks/${sellerId}`, { token: buyerToken }).catch(() => null);
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go('/home');
+  await waitFor(cdp, `!!document.querySelector('#user-menu')`);
+  await sleep(400);
+
+  // ---- 小框里的两个入口 ----
+  await cdp.eval(`document.querySelector('#user-menu').click()`);
+  await waitFor(cdp, `!!document.querySelector('.dropdown')`);
+  await sleep(300);
+  const menu = await cdp.eval(`
+    (() => {
+      const items = [...document.querySelectorAll('.dropdown .dd-item')];
+      return {
+        labels: items.map(x => x.innerText.replace(/\\s+/g, ' ').trim()),
+        follows: !!document.querySelector('.dropdown [data-go="#/follows"]'),
+        blocks: !!document.querySelector('.dropdown [data-go="#/blocks"]'),
+      };
+    })()`);
+  check('需求⑧：右上角用户小框里有「我的关注」与「我的拉黑」两个入口',
+    menu.follows && menu.blocks
+    && menu.labels.some(t => t.includes('我的关注'))
+    && menu.labels.some(t => t.includes('我的拉黑')),
+    JSON.stringify(menu).slice(0, 200));
+
+  // ---- 我的关注：列表 + 取消 ----
+  await cdp.eval(`document.querySelector('.dropdown [data-go="#/follows"]').click()`);
+  await waitFor(cdp, `location.hash === '#/follows' && !!document.querySelector('#social-list')`);
+  await waitFor(cdp, `document.body.innerText.includes('${sellerName}')`);
+  await sleep(500);
+  const followPage = await cdp.eval(`
+    (() => ({
+      title: document.querySelector('.page-head h1')?.innerText.trim() || '',
+      items: document.querySelectorAll('#social-list .social-item').length,
+      text: document.querySelector('#social-list')?.innerText.replace(/\\n/g, ' ').slice(0, 120) || '',
+      hasCancel: !!document.querySelector('#social-list [data-cancel]'),
+    }))()`);
+  check('需求⑧：「我的关注」页列出我关注的人，并可直接取消',
+    followPage.title === '我的关注' && followPage.items >= 1
+    && followPage.text.includes(sellerName) && followPage.hasCancel,
+    JSON.stringify(followPage).slice(0, 200));
+  await cdp.shot(path.join(SHOT_DIR, 'f34-follows.png'));
+
+  await cdp.eval(`document.querySelector('#social-list [data-cancel]').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
+  await waitFor(cdp, `document.querySelectorAll('#social-list .social-item').length === 0`);
+  await sleep(400);
+  const afterCancel = await cdp.eval(`
+    (() => ({
+      items: document.querySelectorAll('#social-list .social-item').length,
+      empty: /还没有关注任何人/.test(document.getElementById('social-list')?.innerText || ''),
+    }))()`);
+  check('需求⑧：取消关注后列表里就没有 TA 了',
+    afterCancel.items === 0 && afterCancel.empty, JSON.stringify(afterCancel));
+
+  // ---- 我的拉黑：列表 + 解除 ----
+  await api('POST', `/api/blocks/${sellerId}`, { token: buyerToken });
+  await cdp.go('/blocks');
+  await waitFor(cdp, `document.body.innerText.includes('${sellerName}')`);
+  await sleep(600);
+  const blockPage = await cdp.eval(`
+    (() => ({
+      title: document.querySelector('.page-head h1')?.innerText.trim() || '',
+      items: document.querySelectorAll('#social-list .social-item').length,
+      hint: document.querySelector('.page-head .muted')?.innerText || '',
+      text: document.querySelector('#social-list')?.innerText.replace(/\\n/g, ' ').slice(0, 120) || '',
+    }))()`);
+  check('需求⑧：「我的拉黑」页列出被我拉黑的人，并写清拉黑的后果',
+    blockPage.title === '我的拉黑' && blockPage.items >= 1
+    && blockPage.text.includes(sellerName)
+    && /看不到/.test(blockPage.hint) && /私信/.test(blockPage.hint),
+    JSON.stringify(blockPage).slice(0, 240));
+
+  await cdp.eval(`document.querySelector('#social-list [data-cancel]').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
+  await waitFor(cdp, `document.querySelectorAll('#social-list .social-item').length === 0`);
+  await sleep(500);
+  const afterUnblock = await cdp.eval(`
+    /还没有拉黑任何人/.test(document.getElementById('social-list')?.innerText || '')`);
+  const stillBlocked = (await api('GET', '/api/blocks/mine', { token: buyerToken })).data.total;
+  check('需求⑧：在「我的拉黑」里解除后列表清空，后端也真的解除了',
+    afterUnblock === true && stillBlocked === 0,
+    `前端空=${afterUnblock}；后端剩 ${stillBlocked}`);
+
+  // ---- 管理员不该看到这两个入口（关注/拉黑是普通用户的功能）----
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/home');
+  await waitFor(cdp, `!!document.querySelector('#user-menu')`);
+  await sleep(400);
+  await cdp.eval(`document.querySelector('#user-menu').click()`);
+  await waitFor(cdp, `!!document.querySelector('.dropdown')`);
+  const adminMenu = await cdp.eval(`
+    (() => ({
+      follows: !!document.querySelector('.dropdown [data-go="#/follows"]'),
+      blocks: !!document.querySelector('.dropdown [data-go="#/blocks"]'),
+    }))()`);
+  check('需求⑧：管理员的小框里不出现这两个入口',
+    adminMenu.follows === false && adminMenu.blocks === false, JSON.stringify(adminMenu));
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -3944,6 +4061,7 @@ const GROUPS = {
   31: { title: '评论引用(@)与举报（新批需求⑤）', fn: feature31 },
   32: { title: '评论区点用户名跳主页（新批需求⑥）', fn: feature32 },
   33: { title: '关注 / 拉黑（新批需求⑦）', fn: feature33 },
+  34: { title: '我的关注 / 我的拉黑（新批需求⑧）', fn: feature34 },
 };
 
 async function main() {
