@@ -1793,6 +1793,40 @@ async function feature16(cdp) {
     check('在「涉及商家」明细里点一行会跳到该卖家的商品主页，并关掉弹窗',
       false, '当前没有进行中的交易，拿不到可点的行');
   }
+
+  // ---- 需求①（本轮）：明细弹窗要一屏看全，不出现滚动条 ----
+  // 原来弹窗只有 460px 宽，6 列表格被挤得疯狂换行，内容高到 578~706px，
+  // 矮一点的屏幕必然出滚动条。改成 920px 宽 + 键值两列 + 头尾固定后，
+  // 下面这四个视口（含 1280x700 这种很矮的窗口）都应完全不滚动。
+  await cdp.go('/admin?tab=trades');
+  await waitFor(cdp, `document.querySelectorAll('.stat-card[data-stat]').length > 0`);
+  await sleep(900);
+  for (const [w, h] of [[1920, 1080], [1440, 900], [1366, 768], [1280, 700]]) {
+    await cdp.send('Emulation.setDeviceMetricsOverride',
+      { width: w, height: h, deviceScaleFactor: 1, mobile: false });
+    await sleep(350);
+    for (const kind of ['pending', 'sellers', 'longest', 'today']) {
+      await cdp.eval(`document.querySelector('.stat-card[data-stat="${kind}"]').click()`);
+      await waitFor(cdp, `!!document.querySelector('.modal-mask .modal.detail')`);
+      await sleep(420);
+      const m = await cdp.eval(`
+        (() => {
+          const modal = document.querySelector('.modal-mask .modal');
+          const body = modal.querySelector('.modal-body');
+          return {
+            width: Math.round(modal.getBoundingClientRect().width),
+            modalOverflow: modal.scrollHeight - modal.clientHeight,
+            bodyOverflow: body ? body.scrollHeight - body.clientHeight : -1,
+          };
+        })()`);
+      check(`视口 ${w}x${h}：${kind} 明细弹窗无需滚动、且足够宽`,
+        m.bodyOverflow === 0 && m.modalOverflow === 0 && m.width >= 880,
+        `宽=${m.width} 弹窗溢出=${m.modalOverflow} 内容区溢出=${m.bodyOverflow}`);
+      await cdp.eval(`document.querySelector('.modal-mask [data-close]')?.click()`);
+      await sleep(220);
+    }
+  }
+  await cdp.send('Emulation.clearDeviceMetricsOverride');
 }
 
 /* ================================================================ 功能⑰ 动态监控条目详情（需求②） */

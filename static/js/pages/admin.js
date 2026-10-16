@@ -306,8 +306,8 @@ async function renderTrades(panel) {
   /* ---------------- 动态监控：单条日志详情（需求②）---------------- */
   const ROLE_TEXT = { buyer: '买家', seller: '卖家', admin: '管理员', '': '—' };
 
-  function kvLines(pairs) {
-    return `<div class="kv-list">${pairs.filter(Boolean).map(([k, v]) =>
+  function kvLines(pairs, cols = 1) {
+    return `<div class="kv-list${cols > 1 ? ' cols-2' : ''}">${pairs.filter(Boolean).map(([k, v]) =>
       `<div class="kv"><span class="kv-k">${esc(k)}</span><span class="kv-v">${v}</span></div>`).join('')}</div>`;
   }
 
@@ -327,8 +327,7 @@ async function renderTrades(panel) {
         + `　<span class="badge badge-gray">${esc(ROLE_TEXT[actor.role] ?? actor.role ?? '—')}</span>`],
       ['精确时间', `<b>${esc(log.created_at)}</b>`
         + (log.ago_text ? `　<span class="muted small">${esc(log.ago_text)}</span>` : '')],
-      ['摘要', esc(log.summary || '—')],
-    ]));
+    ], 2) + kvLines([['摘要', esc(log.summary || '—')]]));
 
     if (order) {
       blocks.push(`<h4 class="detail-h">相关交易</h4>` + kvLines([
@@ -342,7 +341,7 @@ async function renderTrades(panel) {
         ['下单时间', `${esc(order.created_at)}　<span class="muted small">${esc(order.ago_text || '')}</span>`],
         order.finished_at ? ['完成/取消时间', esc(order.finished_at)] : null,
         order.trade_note ? ['交易说明', esc(order.trade_note)] : null,
-      ]));
+      ], 2));
     }
 
     if (product) {
@@ -354,7 +353,7 @@ async function renderTrades(panel) {
         ['成色 / 分类', `${esc(product.condition || '—')}　·　${esc(product.category_name || '—')}`],
         ['卖家', esc(product.seller_nickname || '')],
         ['浏览量', `👁 ${product.views ?? 0}`],
-      ]));
+      ], 2));
     }
 
     if (extra && extra.kind === 'review') {
@@ -363,7 +362,7 @@ async function renderTrades(panel) {
         ['评价人', esc(extra.reviewer || '')],
         ['被评人', esc(extra.reviewee || '')],
         ['内容', esc(extra.content || '（未填写）')],
-      ]));
+      ], 2));
     }
 
     if (extra && extra.kind === 'report') {
@@ -372,7 +371,7 @@ async function renderTrades(panel) {
         ['举报人', esc(extra.reporter || '')],
         ['处理状态', esc(extra.status)],
         ['举报理由', esc(extra.reason || '—')],
-      ]));
+      ], 2));
     }
 
     if (extra && extra.kind === 'missing') {
@@ -398,6 +397,7 @@ async function renderTrades(panel) {
     }
     openModal({
       title: d.log?.action_text || '操作日志',
+      size: 'detail',
       body: logDetailBody(d),
       footer: '<button class="btn" data-close>关闭</button>',
       onMount(modal, close) {
@@ -480,7 +480,7 @@ async function renderTrades(panel) {
   function longestDetail(o) {
     const line = (k, v) => `<div class="kv"><span class="kv-k">${esc(k)}</span><span class="kv-v">${v}</span></div>`;
     return `
-      <div class="kv-list">
+      <div class="kv-list cols-2">
         ${line('订单号', esc(o.order_no))}
         ${line('商品', `<span class="strong">${esc(o.product_name || '（商品已删除）')}</span>`
           + (o.product_code ? ` <span class="muted small">${esc(o.product_code)}</span>` : ''))}
@@ -510,17 +510,34 @@ async function renderTrades(panel) {
       return;
     }
 
+    // 明细弹窗要「一屏看全、不出滚动条」，所以列表类明细必须有个行数上限——
+    // 行数不封顶的话内容高度就无上限，再宽的弹窗也终会溢出。
+    // 每行实测约 55px，取 6 行 ⇒ 内容区约 330px，连 1280x700 这种矮窗口也放得下。
+    // 这几张卡本来就是概览，完整列表在「交易管理」页签（带搜索与分页）。
+    const DETAIL_ROWS = 6;
+    let list = data.list || [];
+    let hidden = 0;
+    if (data.type !== 'longest' && list.length > DETAIL_ROWS) {
+      hidden = list.length - DETAIL_ROWS;
+      list = list.slice(0, DETAIL_ROWS);
+    }
+
     let body;
     if (data.type === 'longest') {
       body = data.order ? longestDetail(data.order) : emptyHtml('当前没有进行中的交易', '✅');
-    } else if (!data.list.length) {
+    } else if (!list.length) {
       body = emptyHtml(data.type === 'today' ? '今天还没有新订单' : '没有符合条件的记录', '📭');
     } else {
-      body = data.type === 'sellers' ? sellersTable(data.list) : rowsTable(data.list);
+      body = (data.type === 'sellers' ? sellersTable(list) : rowsTable(list))
+        + (hidden
+          ? `<div class="row mt-8 muted small">仅列出前 ${DETAIL_ROWS} 条，另有 ${hidden} 条——`
+            + `完整列表请到「交易管理」页签（可搜索）</div>`
+          : '');
     }
 
     openModal({
       title: data.title || '明细',
+      size: 'detail',
       body: `<div class="muted small mb-8">${esc(data.subtitle || '')}</div>${body}`,
       footer: '<button class="btn" data-close>关闭</button>',
       onMount(modal, close) {

@@ -45,12 +45,12 @@ export function toast(message, type = 'ok', timeout = 2500) {
 }
 
 /* ------------------------------------------------------------------ Modal */
-export function openModal({ title, body, footer, wide = false, onMount }) {
+export function openModal({ title, body, footer, wide = false, size = '', onMount }) {
   const root = document.getElementById('modal-root');
   const mask = document.createElement('div');
   mask.className = 'modal-mask';
   mask.innerHTML = `
-    <div class="modal ${wide ? 'wide' : ''}">
+    <div class="modal ${wide ? 'wide' : ''} ${size}">
       <div class="modal-head">${esc(title || '')}</div>
       <div class="modal-body">${body || ''}</div>
       <div class="modal-foot">${footer || '<button class="btn" data-close>关闭</button>'}</div>

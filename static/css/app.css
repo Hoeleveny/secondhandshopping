@@ -319,6 +319,8 @@
 .kv:last-child { border-bottom: none; }
 .kv-k { color: var(--text-muted); font-size: 12px; letter-spacing: .05em; }
 .kv-v { min-width: 0; overflow-wrap: anywhere; }
+/* 两列排的键值明细：行数多时纵向省一半，一屏就能看全（明细弹窗里用） */
+.kv-list.cols-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 26px; }
 
 /* ---------------------------------------------------------------- 好评率徽标（需求③） */
 .rating-badge { letter-spacing: .04em; cursor: help; }
@@ -449,6 +451,22 @@
   width: 100%; max-width: 460px; max-height: 88vh; overflow-y: auto; animation: modalIn .2s ease;
 }
 .modal.wide { max-width: 720px; }
+/* 明细类弹窗（交易管理的状态卡下钻、动态监控的日志详情）：
+   内容多是表格与键值对，460px 太挤、会逼出滚动条，所以单独给一档更宽的尺寸，
+   并把头尾固定、只让内容区滚动——真的放不下时滚动条也只出现在内容区。 */
+.modal.detail {
+  max-width: 920px; max-height: 88vh; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.modal.detail .modal-head { flex: none; }
+.modal.detail .modal-foot { flex: none; }
+.modal.detail .modal-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+/* 明细里省着用纵向空间，让常见数据量一屏看得下 */
+.modal.detail .detail-h { margin: 8px 0 2px; }
+.modal.detail .kv { padding: 2px 0; }
+.modal.detail .table th, .modal.detail .table td { padding: 5px 9px; }
+.modal.detail .table { font-size: 13px; }
+.modal.detail .kv-list + .kv-list { margin-top: 0; }
 @keyframes modalIn { from { transform: translateY(14px) scale(.98); opacity: 0; } to { transform: none; opacity: 1; } }
 .modal-head {
   padding: 16px 20px 10px; font-family: var(--font-serif);
