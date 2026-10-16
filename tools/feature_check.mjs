@@ -4534,6 +4534,115 @@ async function feature39(cdp) {
   }
 }
 
+/* ================================================================ 功能㊵ 评论里 @ 到的人可点（本批需求②） */
+async function feature40(cdp) {
+  console.log('\n===== 功能㊵ 评论里 @昵称 可点进主页（本批需求②）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const seller = (await api('GET', '/api/auth/me', { token: sellerToken })).data.user;
+  const buyer = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+
+  const post = (await api('POST', '/api/posts', {
+    token: buyerToken,
+    body: { title: '自动化测试：@可点', content: '验证 @ 渲染', tag: '闲聊' },
+  })).data;
+  const mentioned = (await api('POST', `/api/posts/${post.id}/comments`, {
+    token: buyerToken,
+    body: { content: `自动化测试：@${seller.nickname} 你来看看这个` },
+  })).data;
+  const unknown = (await api('POST', `/api/posts/${post.id}/comments`, {
+    token: buyerToken,
+    body: { content: '自动化测试：@查无此人 你好' },
+  })).data;
+  const mine = (await api('POST', `/api/posts/${post.id}/comments`, {
+    token: sellerToken,
+    body: { content: `自动化测试：@${buyer.nickname} 收到` },
+  })).data;
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go(`/post/${post.id}`);
+  await waitFor(cdp, `!!document.querySelector('#comment-list .mention')`);
+  await sleep(500);
+
+  const rendered = await cdp.eval(`
+    (() => {
+      const items = [...document.querySelectorAll('#comment-list .comment-item')];
+      const read = (id) => {
+        const el = items.find(x => x.dataset.comment === String(id));
+        if (!el) return null;
+        const m = el.querySelector('.mention');
+        return {
+          text: el.querySelector('.cm-body') ? el.querySelector('.cm-body').innerText : '',
+          mentions: el.querySelectorAll('.mention').length,
+          mentionText: m ? m.innerText : '',
+          uid: m ? m.dataset.user : '',
+          cursor: m ? getComputedStyle(m).cursor : '',
+        };
+      };
+      return { mentioned: read(${mentioned.id}), unknown: read(${unknown.id}), mine: read(${mine.id}) };
+    })()`);
+  check('需求②：@ 到的人渲染成可点链接（带 data-user 与手型光标）',
+    rendered.mentioned && rendered.mentioned.mentions === 1
+    && rendered.mentioned.mentionText === `@${seller.nickname}`
+    && rendered.mentioned.uid === String(seller.id)
+    && rendered.mentioned.cursor === 'pointer',
+    JSON.stringify(rendered.mentioned));
+  check('需求②：@ 的文字本身仍然看得见（正文没被吃掉）',
+    rendered.mentioned && rendered.mentioned.text.includes(`@${seller.nickname}`)
+    && rendered.mentioned.text.includes('你来看看这个'),
+    rendered.mentioned ? rendered.mentioned.text.slice(0, 60) : 'null');
+  check('需求②：@ 不存在的名字不生成链接，只是普通文字',
+    rendered.unknown && rendered.unknown.mentions === 0
+    && rendered.unknown.text.includes('@查无此人'),
+    JSON.stringify(rendered.unknown));
+  check('需求②：别人（卖家）评论里 @ 我，同样渲染成链接',
+    rendered.mine && rendered.mine.uid === String(buyer.id),
+    JSON.stringify(rendered.mine));
+  await cdp.shot(path.join(SHOT_DIR, 'f40-mention.png'));
+
+  // 点一下 → 进 TA 的主页
+  await cdp.eval(`document.querySelector('#comment-list .mention').click()`);
+  await waitFor(cdp, `location.hash === '#/seller/${seller.id}'`);
+  await sleep(700);
+  const page = await cdp.eval(`
+    (() => ({ hash: location.hash, hasName: document.body.innerText.includes('${seller.nickname}') }))()`);
+  check('需求②：点 @ 到的用户名会跳到 TA 的个人主页',
+    page.hash === `#/seller/${seller.id}` && page.hasName, JSON.stringify(page));
+
+  // 评价下的评论同样可点
+  const p = (await api('POST', '/api/products', {
+    token: sellerToken,
+    body: { name: '自动化测试：@评价评论', price: 9, category_id: 1, subcategory_id: 1,
+            condition: '九成新', description: 'x', default_place_id: 2, images: [] },
+  })).data;
+  const order = (await api('POST', '/api/orders',
+    { token: buyerToken, body: { product_id: p.id, meet_place_id: 2 } })).data;
+  await api('PATCH', `/api/orders/${order.id}/confirm`, { token: sellerToken });
+  await api('PATCH', `/api/orders/${order.id}/complete`, { token: buyerToken });
+  const review = (await api('POST', '/api/reviews', {
+    token: buyerToken, body: { order_id: order.id, rating: 5, content: '自动化测试：评价' },
+  })).data;
+  await api('POST', `/api/reviews/${review.id}/comments`, {
+    token: sellerToken, body: { content: `自动化测试：@${buyer.nickname} 谢谢` },
+  });
+
+  await cdp.go(`/product/${p.id}`);
+  await waitFor(cdp, `!!document.querySelector('[data-rev-comments="${review.id}"]')`);
+  await sleep(400);
+  await cdp.eval(`document.querySelector('[data-rev-comments="${review.id}"]').click()`);
+  await waitFor(cdp, `!!document.querySelector('[data-rev-box="${review.id}"] .mention')`);
+  await sleep(300);
+  const rcMention = await cdp.eval(`
+    (() => {
+      const m = document.querySelector('[data-rev-box="${review.id}"] .mention');
+      return { uid: m ? m.dataset.user : '', text: m ? m.innerText : '' };
+    })()`);
+  check('需求②：评价下的评论里 @ 到的人也渲染成可点链接',
+    rcMention.uid === String(buyer.id) && rcMention.text === `@${buyer.nickname}`,
+    JSON.stringify(rcMention));
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -4575,6 +4684,7 @@ const GROUPS = {
   37: { title: '广场列表配图缩略图（本批需求③）', fn: feature37 },
   38: { title: '头像可自行选定展示范围（本批需求④）', fn: feature38 },
   39: { title: '订单卡点用户名跳私信（本批需求⑤）', fn: feature39 },
+  40: { title: '评论里@到的人可点（本批需求②）', fn: feature40 },
 };
 
 async function main() {

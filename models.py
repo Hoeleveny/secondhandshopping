@@ -450,6 +450,8 @@ class ReviewComment(db.Model):
     review_id = db.Column(db.BigInteger, db.ForeignKey("reviews.id"), nullable=False)
     author_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
     content = db.Column(db.Text, nullable=False)
+    # 2026-10-16：内容里 @ 到的人（[{id, nickname}]）
+    mentions = db.Column(db.JSON)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
     author = db.relationship("User")
@@ -461,6 +463,7 @@ class ReviewComment(db.Model):
             "author_id": self.author_id,
             "author_nickname": self.author.nickname if self.author else None,
             "content": self.content,
+            "mentions": self.mentions or [],
             "created_at": _dt(self.created_at),
         }
 
@@ -636,6 +639,8 @@ class PostComment(db.Model):
     post_id = db.Column(db.BigInteger, db.ForeignKey("posts.id"), nullable=False)
     author_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
     content = db.Column(db.Text, nullable=False)
+    # 2026-10-16：内容里 @ 到的人（[{id, nickname}]），前端据此渲染成可点链接
+    mentions = db.Column(db.JSON)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
     author = db.relationship("User")
@@ -647,6 +652,7 @@ class PostComment(db.Model):
             "author_id": self.author_id,
             "author_nickname": self.author.nickname if self.author else None,
             "content": self.content,
+            "mentions": self.mentions or [],
             "created_at": _dt(self.created_at),
         }
 

@@ -4,7 +4,7 @@
 import { api } from '../api.js';
 import { store } from '../store.js';
 import { ensureMeta, ensurePlaces } from '../data.js';
-import { reviewItemHtml } from '../components.js';
+import { reviewItemHtml, commentTextHtml } from '../components.js';
 import {
   confirmDialog, emptyHtml, esc, fmtPrice, fmtTime, go, imgUrl,
   loadingHtml, openModal, ratingBadgeHtml, statusFlagHtml, toast,
@@ -93,7 +93,7 @@ export default {
               <b>${esc(c.author_nickname || '')}</b>
               <span class="muted small">${esc(fmtTime(c.created_at))}</span>
             </div>
-            <div class="rc-body">${esc(c.content)}</div>
+            <div class="rc-body">${commentTextHtml(c.content, c.mentions)}</div>
             <div class="cm-actions">
               <button class="btn btn-ghost btn-sm" data-rc-reply="${c.id}"
                       data-nick="${esc(c.author_nickname || '')}">回复</button>

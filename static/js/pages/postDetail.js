@@ -5,6 +5,7 @@ import { api } from '../api.js';
 import { store } from '../store.js';
 import { ensureMeta } from '../data.js';
 import { liveUpdate } from '../live.js';
+import { commentTextHtml } from '../components.js';
 import { confirmDialog, emptyHtml, esc, fmtTime, openModal, toast } from '../ui.js';
 
 async function renderPost(root, ctx) {
@@ -33,7 +34,7 @@ async function renderPost(root, ctx) {
             <b class="user-link" data-user="${c.author_id}" title="查看 TA 的主页">${esc(c.author_nickname || '')}</b>
             <span>${esc(fmtTime(c.created_at))}</span>
           </div>
-          <div class="cm-body">${esc(c.content)}</div>
+          <div class="cm-body">${commentTextHtml(c.content, c.mentions)}</div>
           <div class="cm-actions">
             <button class="btn btn-ghost btn-sm" data-reply="${c.id}"
                     data-nick="${esc(c.author_nickname || '')}">回复</button>

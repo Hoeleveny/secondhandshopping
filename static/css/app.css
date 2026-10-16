@@ -538,6 +538,9 @@
 .cm-head { display: flex; align-items: center; gap: 10px; font-size: 13px; }
 .cm-head span { color: var(--text-muted); font-size: 12px; letter-spacing: .04em; }
 .cm-actions { display: flex; gap: 6px; margin-top: 4px; }
+/* 2026-10-16：评论里 @ 到的人渲染成可点链接 */
+.mention { color: var(--primary); font-weight: 600; cursor: pointer; }
+.mention:hover { text-decoration: underline; }
 .rc-input { margin-top: 10px; }
 .rc-input .textarea { flex: 1; }
 

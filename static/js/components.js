@@ -120,6 +120,23 @@ export function orderCardHtml(order, side = 'buyer') {
   </div>`;
 }
 
+/* ---------------------------------------------------------------- 评论正文（@ 可点） */
+/**
+ * 评论正文渲染：内容里 @ 到的人（后端解析后存在 mentions 里）渲染成**可点链接**，
+ * 点一下进 TA 的主页。没有 mentions 时就是普通文本（老数据/未 @ 人时行为不变）。
+ */
+export function commentTextHtml(content, mentions) {
+  let html = esc(content || '');
+  (mentions || []).forEach(m => {
+    const nick = esc(m.nickname || '');
+    if (!nick) return;
+    const needle = `@${nick}`;
+    html = html.split(needle).join(
+      `<span class="user-link mention" data-user="${m.id}" title="查看 TA 的主页">${needle}</span>`);
+  });
+  return html;
+}
+
 /* ---------------------------------------------------------------- 帖子条目 */
 export function postItemHtml(post, options = {}) {
   const tagClass = { 安利: '', 避雷: 'badge-danger', 闲聊: 'badge-gray', 求助: 'badge-info' };

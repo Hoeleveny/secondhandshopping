@@ -12,6 +12,7 @@ from config import Config
 from extensions import db
 from models import Order, Review, ReviewComment, ORDER_DONE
 from api.social import hidden_author_ids
+from mentions import parse_mentions
 
 bp = Blueprint("reviews", __name__, url_prefix="/api")
 
@@ -154,7 +155,8 @@ def create_review_comment(rid: int):
     if len(content) > 500:
         return fail("评论内容不能超过 500 个字")
 
-    comment = ReviewComment(review_id=review.id, author_id=user.id, content=content)
+    comment = ReviewComment(review_id=review.id, author_id=user.id, content=content,
+                            mentions=parse_mentions(content))
     db.session.add(comment)
     db.session.commit()
     return ok(comment.to_dict(), msg="评论已发布")

@@ -9,6 +9,7 @@ from config import Config
 from extensions import db
 from models import Post, PostComment, PostImage, PostLike  # noqa: F401
 from api.social import hidden_author_ids
+from mentions import parse_mentions
 
 bp = Blueprint("posts", __name__, url_prefix="/api")
 
@@ -159,7 +160,8 @@ def create_comment(pid: int):
     if not content:
         return fail("评论内容不能为空")
 
-    comment = PostComment(post_id=post.id, author_id=user.id, content=content[:2000])
+    comment = PostComment(post_id=post.id, author_id=user.id, content=content[:2000],
+                          mentions=parse_mentions(content))
     db.session.add(comment)
     db.session.commit()
     return ok(comment.to_dict(), msg="评论成功")

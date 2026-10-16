@@ -1828,6 +1828,68 @@ def main() -> int:
     check("卖家删的是自己那一侧，不报错也不影响买家侧数据",
           r.get("code") == 0, str(r)[:150])
 
+    # ---------------- 本批需求②：@昵称落库 ----------------
+    section("本批需求② @昵称落库（可点）")
+    _st, r = call("GET", "/api/auth/me", token=seller_token)
+    _at_seller = (r.get("data") or {}).get("user") or {}
+    _at_seller_id = _at_seller.get("id")
+    _seller_nick = _at_seller.get("nickname")
+    _st, r = call("GET", "/api/auth/me", token=token)
+    _at_me = (r.get("data") or {}).get("user") or {}
+    _at_me_id = _at_me.get("id")
+    _at_me_nick = _at_me.get("nickname")
+
+    _st, r = call("POST", "/api/posts", token=token,
+                  body={"title": "冒烟测试-@落库", "content": "验证 mentions", "tag": "闲聊"})
+    _at_post = (r.get("data") or {}).get("id")
+    _st, r = call("GET", f"/api/sellers/{_at_seller_id}")
+    _seller_nick = ((r.get("data") or {}).get("seller") or {}).get("nickname")
+
+    _st, r = call("POST", f"/api/posts/{_at_post}/comments", token=token,
+                  body={"content": f"冒烟测试：@{_seller_nick} 你看这个"})
+    _at_c = r.get("data") or {}
+    check("需求②：评论里 @ 到的人会落库成 mentions（id + 当时昵称）",
+          (r.get("code") == 0
+           and [m["id"] for m in (_at_c.get("mentions") or [])] == [_at_seller_id]),
+          str(_at_c.get("mentions"))[:150])
+
+    _st, r = call("POST", f"/api/posts/{_at_post}/comments", token=token,
+                  body={"content": "冒烟测试：@根本不存在的人 你好"})
+    check("需求②：@ 不存在的名字不影响发布，也不产生 mentions",
+          r.get("code") == 0 and not (r.get("data") or {}).get("mentions"),
+          str((r.get("data") or {}).get("mentions")))
+
+    _st, r = call("POST", f"/api/posts/{_at_post}/comments", token=token,
+                  body={"content": f"冒烟测试：@{_seller_nick} 和 @{_seller_nick} 重复 @ 同一个人"})
+    _m = (r.get("data") or {}).get("mentions") or []
+    check("需求②：同一个人被 @ 多次只落一条", len(_m) == 1, str(_m))
+
+    _st, r = call("GET", f"/api/posts/{_at_post}/comments")
+    _one = next((x for x in (r.get("data") or []) if x["id"] == _at_c.get("id")), {})
+    check("需求②：评论列表接口也带出 mentions（前端据此渲染可点链接）",
+          [m["id"] for m in (_one.get("mentions") or [])] == [_at_seller_id],
+          str(_one.get("mentions"))[:120])
+
+    # 评价评论同样支持
+    _st, r = call("POST", "/api/products", token=seller_token,
+                  body={"name": "冒烟测试-@落库商品", "price": 11, "category_id": 1,
+                        "subcategory_id": 1, "condition": "九成新",
+                        "description": "@落库", "default_place_id": 2, "images": []})
+    _at_p = (r.get("data") or {}).get("id")
+    _st, r = call("POST", "/api/orders", token=token,
+                  body={"product_id": _at_p, "meet_place_id": 2})
+    _at_o = (r.get("data") or {}).get("id")
+    call("PATCH", f"/api/orders/{_at_o}/confirm", token=seller_token)
+    call("PATCH", f"/api/orders/{_at_o}/complete", token=token)
+    _st, r = call("POST", "/api/reviews", token=token,
+                  body={"order_id": _at_o, "rating": 5, "content": "冒烟测试：评价正文"})
+    _at_rev = (r.get("data") or {}).get("id")
+    _st, r = call("POST", f"/api/reviews/{_at_rev}/comments", token=seller_token,
+                  body={"content": f"冒烟测试：@{_at_me_nick} 谢谢"})
+    check("需求②：评价下的评论同样落 mentions",
+          [m["id"] for m in ((r.get("data") or {}).get("mentions") or [])] == [_at_me_id],
+          str((r.get("data") or {}).get("mentions"))[:150])
+
     # ---------------- 本批需求②：举报记录可选定删除 ----------------
     section("本批需求② 举报记录选定删除")
 
