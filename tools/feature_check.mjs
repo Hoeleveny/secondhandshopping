@@ -493,12 +493,17 @@ async function feature4(cdp) {
   const orderRes = await api('POST', '/api/orders',
     { token: buyerToken, body: { product_id: pidC, meet_place_id: 1 } });
   const orderId = orderRes.data.id;
+  // 需求③：下单只是意向，卖家确认后才进「待完成」，也才能完成交易
+  await api('PATCH', `/api/orders/${orderId}/confirm`, { token: sellerToken });
   await api('PATCH', `/api/orders/${orderId}/complete`, { token: buyerToken });
 
   // 再造一条「待完成」订单，用于验证它没有删除按钮
   const nameD = `自动化测试：进行中订单-${Date.now() % 100000}`;
   const pidD = await makeProduct(nameD, 44.0, sellerToken);
-  await api('POST', '/api/orders', { token: buyerToken, body: { product_id: pidD, meet_place_id: 1 } });
+  const pendingRes = await api('POST', '/api/orders',
+    { token: buyerToken, body: { product_id: pidD, meet_place_id: 1 } });
+  // 需求③：卖家确认后才是「待完成」，界面上才该没有「删除记录」
+  await api('PATCH', `/api/orders/${pendingRes.data.id}/confirm`, { token: sellerToken });
 
   await cdp.loginAs('buyer1', '123456', 'buyer');
   await cdp.go('/orders?status=pending');
@@ -1218,8 +1223,11 @@ async function feature11(cdp) {
   const order = (await api('POST', '/api/orders', {
     token: buyerToken, body: { product_id: prod.id, meet_place_id: 2 },
   })).data || {};
+  check('需求③：下单后先是一笔「待卖家确认」的意向',
+    order.status === 'awaiting' && !!order.id, JSON.stringify({ id: order.id, status: order.status }));
+  await api('PATCH', `/api/orders/${order.id}/confirm`, { token: sellerToken });
   check('测试交易已就绪（商品已售 + 待完成订单）',
-    order.status === 'pending' && !!order.id, JSON.stringify({ id: order.id, status: order.status }));
+    order.status === 'awaiting' && !!order.id, JSON.stringify({ id: order.id, status: order.status }));
 
   // ---- 1. 页签与页面结构 ----
   await cdp.loginAs('admin', '123456', 'admin');
@@ -1504,6 +1512,7 @@ async function feature13(cdp) {
     const o = (await api('POST', '/api/orders', {
       token: buyerToken, body: { product_id: p.id, meet_place_id: 2 },
     })).data;
+    await api('PATCH', `/api/orders/${o.id}/confirm`, { token: sellerToken });  // 需求③
     await api('PATCH', `/api/orders/${o.id}/complete`, { token: buyerToken });
     await api('POST', '/api/reviews', {
       token: buyerToken, body: { order_id: o.id, rating, content: '自动化测试：好评率' },
@@ -1680,21 +1689,31 @@ async function feature15(cdp) {
   await cdp.eval(`document.querySelector('[data-del-conv]').click()`);
   await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
   await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
-  await waitFor(cdp, `document.querySelectorAll('#conv-list [data-uid]').length === 0`);
+  // 注意：不能断言「列表一项都不剩」——这个测试账号还可能有别的会话（比如管理员的平台通知），
+  // 要断言的是「与对方这条」没了。我在这上面栽过（封禁通知一进来，这条断言就挂了）。
+  await waitFor(cdp, `![...document.querySelectorAll('#conv-list [data-uid]')]
+    .some(el => el.dataset.uid === ${JSON.stringify(String(sellerId))})`);
   await sleep(500);
   const afterDel = await cdp.eval(`
-    (() => ({
-      convItems: document.querySelectorAll('#conv-list [data-uid]').length,
-      chatEmpty: /从左侧选择一个会话/.test(document.querySelector('#chat-area')?.innerText || ''),
-    }))()`);
-  check('确认删除后会话从列表消失、聊天区回到空态',
-    afterDel.convItems === 0 && afterDel.chatEmpty, JSON.stringify(afterDel));
+    (() => {
+      const items = [...document.querySelectorAll('#conv-list [data-uid]')];
+      return {
+        stillPeers: items.filter(el => el.dataset.uid === ${JSON.stringify(String(sellerId))}).length,
+        total: items.length,
+        chatEmpty: /从左侧选择一个会话/.test(document.querySelector('#chat-area')?.innerText || ''),
+      };
+    })()`);
+  check('确认删除后与对方的会话从列表消失、聊天区回到空态',
+    afterDel.stillPeers === 0 && afterDel.chatEmpty, JSON.stringify(afterDel));
 
   await cdp.go('/messages');
   await waitFor(cdp, `!!document.querySelector('#conv-list')`);
   await sleep(700);
-  const afterReload = await cdp.eval(`document.querySelectorAll('#conv-list [data-uid]').length`);
-  check('刷新后仍是已删除状态（后端记住了，不是只改前端）', afterReload === 0, `列表 ${afterReload} 项`);
+  const afterReload = await cdp.eval(`
+    [...document.querySelectorAll('#conv-list [data-uid]')]
+      .filter(el => el.dataset.uid === ${JSON.stringify(String(sellerId))}).length`);
+  check('刷新后仍是已删除状态（后端记住了，不是只改前端）',
+    afterReload === 0, `与对方的会话仍显示 ${afterReload} 项`);
 
   // ---- 对方完全不受影响 ----
   const peerSeen = (await api('GET', `/api/messages/with/${accId}`, { token: sellerToken }))
@@ -1707,9 +1726,12 @@ async function feature15(cdp) {
     body: { receiver_id: accId, content: '自动化测试：删除后对方又说话' },
   });
   await cdp.go('/messages');
-  await waitFor(cdp, `document.querySelectorAll('#conv-list [data-uid]').length > 0`);
-  const revived = await cdp.eval(`document.querySelectorAll('#conv-list [data-uid]').length`);
-  check('对方再发消息后会话重新出现在我的列表', revived > 0, `列表 ${revived} 项`);
+  await waitFor(cdp, `[...document.querySelectorAll('#conv-list [data-uid]')]
+    .some(el => el.dataset.uid === ${JSON.stringify(String(sellerId))})`);
+  const revived = await cdp.eval(`
+    [...document.querySelectorAll('#conv-list [data-uid]')]
+      .filter(el => el.dataset.uid === ${JSON.stringify(String(sellerId))}).length`);
+  check('对方再发消息后会话重新出现在我的列表', revived === 1, `与对方的会话 ${revived} 项`);
 }
 
 /* ================================================================ 功能⑯ 交易管理状态卡下钻（需求①） */
@@ -1848,6 +1870,7 @@ async function feature17(cdp) {
   const order = (await api('POST', '/api/orders', {
     token: buyerToken, body: { product_id: product.id, meet_place_id: 2 },
   })).data;
+  await api('PATCH', `/api/orders/${order.id}/confirm`, { token: sellerToken });  // 需求③
   await api('PATCH', `/api/orders/${order.id}/complete`, { token: buyerToken });
   await api('POST', '/api/reviews', {
     token: buyerToken,
@@ -1921,6 +1944,7 @@ async function feature18(cdp) {
   const order = (await api('POST', '/api/orders', {
     token: buyerToken, body: { product_id: product.id, meet_place_id: 2 },
   })).data;
+  await api('PATCH', `/api/orders/${order.id}/confirm`, { token: sellerToken });  // 需求③
   await api('PATCH', `/api/orders/${order.id}/complete`, { token: buyerToken });
   await api('POST', '/api/reviews', {
     token: buyerToken, body: { order_id: order.id, rating: 5, content: '自动化测试：筛选' },
@@ -2281,7 +2305,11 @@ async function feature21(cdp) {
   const order = (await api('POST', '/api/orders', {
     token: buyerToken, body: { product_id: product.id, meet_place_id: 2 },
   })).data;
-  check('已备好一笔进行中的交易', order.status === 'pending', JSON.stringify(order.id));
+  check('需求③：下单后先是「待卖家确认」的意向', order.status === 'awaiting',
+    JSON.stringify(order.id));
+  // 需求③：卖家确认之后才是「进行中」的交易，卡片上才出现收尾按钮
+  await api('PATCH', `/api/orders/${order.id}/confirm`, { token: sellerToken });
+  check('卖家确认接单后进入进行中', true, '');
 
   const clickCardAct = (act) => cdp.eval(`
     (() => {
@@ -2778,6 +2806,7 @@ async function feature25(cdp) {
   const order = (await api('POST', '/api/orders', {
     token: buyerToken, body: { product_id: product.id, meet_place_id: 2 },
   })).data;
+  await api('PATCH', `/api/orders/${order.id}/confirm`, { token: sellerToken });  // 需求③
   const pendingCount = (await api('GET', '/api/orders/updates',
     { token: sellerToken })).data.count;
   check('别人在我的订单上操作后，接口能算出未读数', pendingCount >= 1, `未读=${pendingCount}`);
@@ -2932,6 +2961,8 @@ async function feature26(cdp) {
   const order = (await api('POST', '/api/orders', {
     token: otherToken, body: { product_id: product.id, meet_place_id: 2 },
   })).data;
+  // 需求③：让「卖家」（buyer1 自己）确认接单，订单才进「待完成」，商品才算锁定
+  await api('PATCH', `/api/orders/${order.id}/confirm`, { token: buyerToken });
 
   await cdp.go('/orders?side=seller');
   await waitFor(cdp, `document.querySelectorAll('#list-area .card').length > 0`);
@@ -3289,6 +3320,150 @@ async function feature28(cdp) {
   await cdp.eval(`document.querySelector('.modal-mask [data-close]').click()`);
 }
 
+/* ================================================================ 功能㉙ 卖家确认才锁定商品（新批需求③） */
+async function feature29(cdp) {
+  console.log('\n===== 功能㉙ 下单只是意向、卖家确认才锁定（需求③）=====');
+
+  async function ensureAccount(username, password) {
+    try {
+      return await login(username, password, 'buyer');
+    } catch {
+      await api('POST', '/api/auth/register', { body: { username, password } });
+      return login(username, password, 'buyer');
+    }
+  }
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const otherToken = await ensureAccount('acc_buyer', '1234');
+
+  const mk = async (name) => (await api('POST', '/api/products', {
+    token: sellerToken,
+    body: { name, price: 15, category_id: 1, subcategory_id: 1, condition: '九成新',
+            description: '确认流程用', default_place_id: 2, images: [] },
+  })).data;
+
+  // 两个买家对同一件商品各提一个意向
+  const p1 = await mk('自动化测试：确认流程');
+  const o1 = (await api('POST', '/api/orders',
+    { token: buyerToken, body: { product_id: p1.id, meet_place_id: 2 } })).data;
+  const o2 = (await api('POST', '/api/orders',
+    { token: otherToken, body: { product_id: p1.id, meet_place_id: 2 } })).data;
+  check('需求③：下单后商品仍在售、订单是「待卖家确认」',
+    o1.status === 'awaiting'
+    && (await api('GET', `/api/products/${p1.id}`)).data.status === 'on_sale',
+    JSON.stringify({ order: o1.status }));
+
+  // ---- 买家视角：只有「撤回意向」 ----
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go('/orders?status=awaiting');
+  await waitFor(cdp, `document.querySelectorAll('#list-area .card').length > 0`);
+  await sleep(500);
+  const buyerCard = await cdp.eval(`
+    (() => {
+      const card = [...document.querySelectorAll('#list-area .card')]
+        .find(c => c.innerText.includes('自动化测试：确认流程'));
+      if (!card) return { found: false };
+      return {
+        found: true,
+        status: card.querySelector('.badge:not(.role-flag)')?.innerText.trim() || '',
+        acts: [...card.querySelectorAll('[data-act]')].map(b => b.innerText.trim()),
+        hint: /等卖家确认/.test(card.innerText),
+      };
+    })()`);
+  check('需求③：买家看到的意向单标着「待卖家确认」、带撤回按钮与等待提示',
+    buyerCard.found && buyerCard.status === '待卖家确认'
+    && buyerCard.acts.some(t => t.includes('撤回意向'))
+    && !buyerCard.acts.some(t => t.includes('确认完成'))
+    && buyerCard.hint,
+    JSON.stringify(buyerCard));
+
+  // ---- 卖家视角：确认 / 拒绝 ----
+  await cdp.loginAs('seller1', '123456', 'seller');
+  // 带上时序参数：同一个 hash 不会被重新渲染（踩过的坑），加一个变化的查询参数强制刷新
+  await cdp.go(`/orders?side=seller&status=awaiting&_=${Date.now()}`);
+  await waitFor(cdp, `document.querySelectorAll('#list-area .card').length > 0`);
+  await sleep(500);
+  const clickCard = (act, oid) => cdp.eval(`
+    (() => {
+      // 用订单 id 定位按钮，比按商品名找卡片稳（名字可能重复、列表可能分页）
+      const b = document.querySelector('#list-area [data-act="${act}"][data-id="${oid}"]');
+      if (!b) return false;
+      b.click();
+      return true;
+    })()`);
+  const sellerCard = await cdp.eval(`
+    (() => {
+      const b = document.querySelector('#list-area [data-act="confirm"][data-id="${o1.id}"]');
+      const card = b ? b.closest('.card') : null;
+      if (!card) return { found: false };
+      return { found: true, acts: [...card.querySelectorAll('[data-act]')].map(x => x.innerText.trim()) };
+    })()`);
+  check('需求③：卖家看到的意向单有「确认交易」与「拒绝」两个按钮',
+    sellerCard.found && sellerCard.acts.some(t => t.includes('确认交易'))
+    && sellerCard.acts.some(t => t.includes('拒绝')),
+    JSON.stringify(sellerCard.acts));
+  await cdp.shot(path.join(SHOT_DIR, 'f29-intent-seller.png'));
+
+  // 取消确认 → 数据不变
+  await clickCard('confirm', o1.id);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  await cdp.eval(`document.querySelector('.modal-mask [data-cancel]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  await sleep(600);
+  const stillAwaiting = (await api('GET', `/api/orders/${o1.id}`, { token: buyerToken })).data.status;
+  const stillOnSale = (await api('GET', `/api/products/${p1.id}`)).data.status;
+  check('需求③：取消确认时订单与商品都没变',
+    stillAwaiting === 'awaiting' && stillOnSale === 'on_sale',
+    `订单=${stillAwaiting}；商品=${stillOnSale}`);
+
+  // 真正确认 → 商品锁定 + 另一个意向自动取消
+  await clickCard('confirm', o1.id);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  await sleep(1200);
+  const locked = (await api('GET', `/api/products/${p1.id}`)).data.status;
+  const confirmed = (await api('GET', `/api/orders/${o1.id}`, { token: buyerToken })).data.status;
+  const otherOrder = (await api('GET', `/api/orders/${o2.id}`, { token: otherToken })).data.status;
+  check('需求③：确认后商品被锁定（已售）、该单转「待完成」',
+    locked === 'sold' && confirmed === 'pending', `商品=${locked}；订单=${confirmed}`);
+  check('需求③：同一商品上其他买家的意向自动取消',
+    otherOrder === 'canceled', `另一个意向=${otherOrder}`);
+
+  // 商品锁定后买家详情页显示不可购买（注意要用买家身份看——卖家看到的是「这是我发布的商品」）
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go(`/product/${p1.id}`);
+  await waitFor(cdp, `!!document.querySelector('#action-bar')`);
+  await sleep(500);
+  const detailBar = await cdp.eval(`document.querySelector('#action-bar').innerText.replace(/\\n/g, ' ')`);
+  check('需求③：商品详情页显示已被买走（不能再下单）',
+    /已被买走|暂不可购买/.test(detailBar), detailBar.slice(0, 90));
+
+  // ---- 拒绝流程：另一件商品 ----
+  const p2 = await mk('自动化测试：拒绝流程');
+  const o3 = (await api('POST', '/api/orders',
+    { token: buyerToken, body: { product_id: p2.id, meet_place_id: 2 } })).data;
+  await cdp.loginAs('seller1', '123456', 'seller');   // 别忘了切回卖家视角
+  await cdp.go(`/orders?side=seller&status=awaiting&_=${Date.now()}`);
+  await waitFor(cdp, `document.querySelectorAll('#list-area .card').length > 0`);
+  await sleep(600);
+  const rejected = await clickCard('reject', o3.id);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  await sleep(1000);
+  const afterReject = (await api('GET', `/api/orders/${o3.id}`, { token: buyerToken })).data.status;
+  const stillSellable = (await api('GET', `/api/products/${p2.id}`)).data.status;
+  check('需求③：拒绝后该单取消，但商品仍在售（别人还能买）',
+    rejected === true && afterReject === 'canceled' && stillSellable === 'on_sale',
+    `点了拒绝=${rejected}；订单=${afterReject}；商品=${stillSellable}`);
+
+  const retry = await api('POST', '/api/orders',
+    { token: buyerToken, body: { product_id: p2.id, meet_place_id: 2 } });
+  check('需求③：被拒绝后买家可以重新提交意向', retry.code === 0, JSON.stringify(retry.msg));
+  if (retry.code === 0) await api('PATCH', `/api/orders/${retry.data.id}/cancel`, { token: buyerToken });
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -3319,6 +3494,7 @@ const GROUPS = {
   26: { title: '页面状态自动更新（新批需求⑧）', fn: feature26 },
   27: { title: '用户管理 + 封禁（新批需求①）', fn: feature27 },
   28: { title: '动态监控删除选定记录（新批需求②）', fn: feature28 },
+  29: { title: '卖家确认才锁定商品（新批需求③）', fn: feature29 },
 };
 
 async function main() {

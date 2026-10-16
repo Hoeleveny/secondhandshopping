@@ -198,8 +198,8 @@ CREATE TABLE `orders` (
   `seller_id`        BIGINT UNSIGNED NOT NULL COMMENT '冗余，便于查卖出订单',
   `price`            DECIMAL(10,2)   NOT NULL COMMENT '成交价',
   `product_snapshot` JSON            NOT NULL COMMENT '商品快照（名称/图/分类/成色），商品删除后仍可显示',
-  `status`           ENUM('pending','done','canceled') NOT NULL DEFAULT 'pending'
-                                     COMMENT '待完成/已完成/已取消',
+  `status`           ENUM('awaiting','pending','done','canceled') NOT NULL DEFAULT 'awaiting'
+                                     COMMENT '待卖家确认(意向)/待完成/已完成/已取消（迁移 013）',
   `trade_note`       VARCHAR(255)    NULL COMMENT '交易说明',
   `meet_place_id`    BIGINT UNSIGNED NULL COMMENT '约定自提点',
   `buyer_lng`        DECIMAL(10,7)   NULL COMMENT '买家位置 GCJ-02',

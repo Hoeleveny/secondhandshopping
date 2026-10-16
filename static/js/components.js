@@ -33,7 +33,9 @@ export function bindProductCards(root) {
 }
 
 /* ---------------------------------------------------------------- 订单卡 */
-const ORDER_STATUS = { pending: '待完成', done: '已完成', canceled: '已取消' };
+const ORDER_STATUS = {
+  awaiting: '待卖家确认', pending: '待完成', done: '已完成', canceled: '已取消',
+};
 
 export function orderCardHtml(order, side = 'buyer') {
   const snap = order.product || {};
@@ -52,6 +54,15 @@ export function orderCardHtml(order, side = 'buyer') {
     ? '<span class="badge badge-info role-flag">我是买家</span>'
     : '<span class="badge badge-warn role-flag">我是卖家</span>';
   const ops = [];
+  // 新批需求③：下单只是「购买意向」，要等卖家确认才锁定商品
+  if (order.status === 'awaiting') {
+    if (myRole === 'seller') {
+      ops.push(`<button class="btn btn-primary btn-sm" data-act="confirm" data-id="${order.id}">✅ 确认交易</button>`);
+      ops.push(`<button class="btn btn-danger btn-sm" data-act="reject" data-id="${order.id}">✖ 拒绝</button>`);
+    } else {
+      ops.push(`<button class="btn btn-sm" data-act="cancel" data-id="${order.id}">撤回意向</button>`);
+    }
+  }
   if (order.status === 'pending') {
     if (myRole === 'buyer') {
       ops.push(`<button class="btn btn-primary btn-sm" data-act="complete" data-id="${order.id}">确认完成</button>`);
@@ -65,11 +76,18 @@ export function orderCardHtml(order, side = 'buyer') {
   if (order.status === 'done') {
     ops.push(`<button class="btn btn-sm" data-act="review" data-id="${order.id}">⭐ 评价</button>`);
   }
-  // 功能④ / 需求⑥：买卖双方各自可以删掉自己那一侧的订单记录（待完成的不行）
-  if (order.status !== 'pending') {
+  // 功能④ / 需求⑥：买卖双方各自可以删掉自己那一侧的订单记录（进行中的不行）
+  if (!['awaiting', 'pending'].includes(order.status)) {
     ops.push(`<button class="btn btn-danger btn-sm" data-act="del-order" data-id="${order.id}">删除记录</button>`);
   }
   ops.push(`<button class="btn btn-ghost btn-sm" data-act="product" data-id="${order.product_id}">查看商品</button>`);
+
+  // 进行中的单子给一句状态说明，免得用户不知道在等谁
+  const waitingHint = order.status === 'awaiting'
+    ? (myRole === 'seller'
+      ? '<div class="small muted mt-8">⏳ 买家已提交购买意向，确认后商品才会锁定给对方</div>'
+      : '<div class="small muted mt-8">⏳ 已提交购买意向，等卖家确认；确认前商品仍可能被别人买走</div>')
+    : '';
 
   return `
   <div class="card" style="padding:14px 16px">
@@ -88,6 +106,7 @@ export function orderCardHtml(order, side = 'buyer') {
         <div class="small muted mt-0">${esc(other)}　·　${esc(fmtTime(order.created_at))}</div>
         <div class="small muted">自提点：${esc(order.meet_place?.name || '未指定')}</div>
         ${order.trade_note ? `<div class="small muted">交易说明：${esc(order.trade_note)}</div>` : ''}
+        ${waitingHint}
       </div>
       <div class="text-right">
         <div class="price">${fmtPrice(order.price)}</div>

@@ -23,7 +23,7 @@ from extensions import db
 from models import (
     CampusPlace, Category, Message, OperationLog, Order, Post, Product, Report,
     Review, Subcategory, User, _dt,
-    ORDER_CANCELED, ORDER_DONE, ORDER_PENDING,
+    ORDER_AWAITING, ORDER_CANCELED, ORDER_DONE, ORDER_PENDING,
     PRODUCT_DELETED, PRODUCT_OFF_SHELF, PRODUCT_ON_SALE, PRODUCT_SOLD,
     ROLE_ADMIN,
 )
@@ -79,7 +79,8 @@ def admin_orders():
 
     q = Order.query
     if status != "all":
-        if status not in (ORDER_PENDING, ORDER_DONE, ORDER_CANCELED):
+        # 需求③起多了「待卖家确认」（意向）这一档，管理端也能单看这一档
+        if status not in (ORDER_AWAITING, ORDER_PENDING, ORDER_DONE, ORDER_CANCELED):
             return fail("状态取值不合法")
         q = q.filter(Order.status == status)
     if seller_id:

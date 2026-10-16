@@ -16,6 +16,7 @@ const SIDE_TABS = [
 
 const STATUS_TABS = [
   { key: 'all', label: '全部' },
+  { key: 'awaiting', label: '待卖家确认' },
   { key: 'pending', label: '待完成' },
   { key: 'done', label: '已完成' },
   { key: 'canceled', label: '已取消' },
@@ -130,6 +131,37 @@ export default {
       const order = loaded.find(o => String(o.id) === String(id));
       const myRole = order?.my_role || side;
 
+      // 新批需求③：卖家确认接单（确认之后才锁定商品）
+      if (act === 'confirm') {
+        const sure = await confirmDialog({
+          title: '确认接单并锁定商品？',
+          message: '确认后这一单转为「待完成」、商品锁定给对方；同一件商品上其他买家的购买意向'
+            + '会自动取消，并私信告知他们。',
+          okText: '确认交易',
+        });
+        if (!sure) return;
+        try {
+          await api.patch(`/api/orders/${id}/confirm`);
+          toast('已确认交易并锁定商品');
+          load();
+        } catch (err) { toast(err.message, 'error'); }
+        return;
+      }
+
+      if (act === 'reject') {
+        const sure = await confirmDialog({
+          title: '拒绝这一单购买意向？', danger: true, okText: '拒绝',
+          message: '拒绝后这一单取消，商品仍然在售（别人还能继续下单），平台会私信告知买家。',
+        });
+        if (!sure) return;
+        try {
+          await api.patch(`/api/orders/${id}/reject`);
+          toast('已拒绝这一单，商品仍在售');
+          load();
+        } catch (err) { toast(err.message, 'error'); }
+        return;
+      }
+
       if (act === 'complete') {
         const sure = await confirmDialog({
           title: '确认交易已完成？',
@@ -146,14 +178,19 @@ export default {
       }
 
       if (act === 'cancel') {
+        // 需求③：还没被卖家确认的「意向」只是撤回，商品根本没被锁过
+        const isIntent = order?.status === 'awaiting';
         const sure = await confirmDialog({
-          title: '确认取消订单？', danger: true, okText: '取消订单', cancelText: '再想想',
-          message: '取消后订单变为「已取消」，商品会自动恢复为「在售」，别人可以再次购买。',
+          title: isIntent ? '撤回这条购买意向？' : '确认取消订单？',
+          danger: true, okText: isIntent ? '撤回意向' : '取消订单', cancelText: '再想想',
+          message: isIntent
+            ? '撤回后这一单取消；商品本来就没被锁定，其他人照样可以下单。'
+            : '取消后订单变为「已取消」，商品会自动恢复为「在售」，别人可以再次购买。',
         });
         if (!sure) return;
         try {
-          await api.patch(`/api/orders/${id}/cancel`);
-          toast('订单已取消，商品已恢复在售');
+          const res = await api.patch(`/api/orders/${id}/cancel`);
+          toast(res?.msg || (isIntent ? '已撤回购买意向' : '订单已取消，商品已恢复在售'));
           load();
         } catch (err) { toast(err.message, 'error'); }
         return;

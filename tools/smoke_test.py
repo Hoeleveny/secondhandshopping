@@ -384,17 +384,33 @@ def main() -> int:
                        body={"product_id": p1, "trade_note": "下午四点图书馆见",
                              "meet_place_id": 2})
     order_id = (res.get("data") or {}).get("id")
-    check("下单成功并生成待完成订单",
+    check("需求③：下单只生成「待卖家确认」的购买意向",
           res.get("code") == 0 and bool(order_id)
-          and (res.get("data") or {}).get("status") == "pending", str(res)[:200])
+          and (res.get("data") or {}).get("status") == "awaiting", str(res)[:200])
 
     status, res = call("GET", f"/api/products/{p1}")
-    check("下单后商品立即变「已售」",
-          (res.get("data") or {}).get("status") == "sold", str(res)[:150])
+    check("需求③：卖家确认之前商品仍在售（没有被锁住）",
+          (res.get("data") or {}).get("status") == "on_sale", str(res)[:150])
 
     status, res = call("POST", "/api/orders", token=buyer1,
                        body={"product_id": p1, "meet_place_id": 2})
-    check("已售商品他人无法再下单（一物一件）", res.get("code") != 0, str(res)[:150])
+    _other_order = (res.get("data") or {}).get("id")
+    check("需求③：同一件商品允许多个买家同时表达购买意向",
+          res.get("code") == 0 and bool(_other_order), str(res)[:150])
+
+    status, res = call("PATCH", f"/api/orders/{order_id}/confirm", token=seller_token)
+    check("需求③：卖家确认接单后订单转「待完成」",
+          res.get("code") == 0 and (res.get("data") or {}).get("status") == "pending",
+          str(res)[:200])
+    status, res = call("GET", f"/api/products/{p1}")
+    check("需求③：确认之后商品才变「已售」（锁定）",
+          (res.get("data") or {}).get("status") == "sold", str(res)[:150])
+    status, res = call("GET", f"/api/orders/{_other_order}", token=buyer1)
+    check("需求③：同一商品上其余还没被确认的意向自动取消",
+          (res.get("data") or {}).get("status") == "canceled", str(res)[:150])
+    status, res = call("POST", "/api/orders", token=buyer1,
+                       body={"product_id": p1, "meet_place_id": 2})
+    check("商品被锁定后他人无法再下单（一物一件）", res.get("code") != 0, str(res)[:150])
 
     status, res = call("GET", "/api/orders/mine?status=pending", token=token)
     mine_ids = [o["id"] for o in (res.get("data") or {}).get("list", [])]
@@ -426,17 +442,24 @@ def main() -> int:
     # 需求⑥：订单新状态红点（未读式：别人在我订单上的新动作）
     status, res = call("GET", "/api/orders/updates", token=seller_token)
     _upd = res.get("data") or {}
-    check("需求⑥：卖家能查到订单红点未读数（别人下单后 ≥1）",
+    check("需求⑥：卖家能查到订单红点未读数（买家提交意向后 ≥1）",
           status == 200 and _upd.get("count", 0) >= 1 and "latest_id" in _upd,
           str(_upd)[:150])
+
+    # 先把买家侧清零，再让买家**自己**下一单 —— 自己的操作不该提醒自己
+    call("POST", "/api/orders/updates/seen", body={}, token=token)
+    _p_own = _new_product("冒烟-红点自测商品", 5.0)
+    call("POST", "/api/orders", token=token, body={"product_id": _p_own, "meet_place_id": 2})
     _b = call("GET", "/api/orders/updates", token=token)[1].get("data") or {}
-    check("需求⑥：自己下的单不提醒自己（买家侧未读为 0）", _b.get("count") == 0, str(_b)[:120])
+    check("需求⑥：自己下的单不提醒自己（买家侧未读仍为 0）", _b.get("count") == 0, str(_b)[:120])
+
+    _buyer_before = _b.get("count")
     status, res = call("POST", "/api/orders/updates/seen", body={}, token=seller_token)
     _after = call("GET", "/api/orders/updates", token=seller_token)[1].get("data") or {}
+    _buyer_after = (call("GET", "/api/orders/updates", token=token)[1].get("data") or {}).get("count")
     check("需求⑥：看过订单后卖家的红点清零，且不影响买家那侧",
-          res.get("code") == 0 and _after.get("count") == 0
-          and (call("GET", "/api/orders/updates", token=token)[1].get("data") or {}).get("count") == 0,
-          f"清零后={_after.get('count')}")
+          res.get("code") == 0 and _after.get("count") == 0 and _buyer_after == _buyer_before,
+          f"卖家清零后={_after.get('count')}；买家 {_buyer_before} -> {_buyer_after}")
     status, res = call("GET", "/api/orders/updates")
     check("需求⑥：未登录不能查订单红点", status == 401, str(status))
 
@@ -968,6 +991,11 @@ def main() -> int:
     order = (_res.get("data") or {})
 
     status, res = call("DELETE", f"/api/orders/{order['id']}/record", token=token)
+    check("「待卖家确认」的意向也不能直接删记录", res.get("code") != 0, str(res)[:180])
+
+    # 需求③：要卖家确认之后才进入「待完成」
+    call("PATCH", f"/api/orders/{order['id']}/confirm", token=seller_token)
+    status, res = call("DELETE", f"/api/orders/{order['id']}/record", token=token)
     check("「待完成」订单不能删除记录", res.get("code") != 0, str(res)[:180])
 
     call("PATCH", f"/api/orders/{order['id']}/complete", token=token)
@@ -1206,11 +1234,15 @@ def main() -> int:
           _has_log("product_off", tp.get("name") or "×"), str(r)[:120])
     call("PATCH", f"/api/products/{tp['id']}/status", token=seller_token, body={"status": "on_sale"})
 
-    # 下单 → 进行中的交易
+    # 下单 → 卖家确认 → 进行中的交易（需求③：确认后才锁定）
     _st, r = call("POST", "/api/orders", token=token,
                   body={"product_id": tp["id"], "meet_place_id": 2})
     order_a = (r.get("data") or {}).get("id")
-    check("下单后日志里出现「下单」", _has_log("order_create", tp.get("product_code") or "×"),
+    check("下单后日志里出现「提交购买意向」",
+          _has_log("order_create", tp.get("product_code") or "×"), str(r)[:120])
+    _st, r = call("PATCH", f"/api/orders/{order_a}/confirm", token=seller_token)
+    check("卖家确认接单后日志里出现「卖家确认接单」",
+          r.get("code") == 0 and _has_log("order_confirm", tp.get("product_code") or "×"),
           str(r)[:120])
 
     _st, r = call("GET", "/api/admin/orders", token=admin_token)
@@ -1249,10 +1281,11 @@ def main() -> int:
     check("强制取消留下了可区分的日志（admin_order_cancel）",
           _has_log("admin_order_cancel", "管理员强制取消"), "")
 
-    # 管理员标记完成
+    # 管理员标记完成（需求③：先由卖家确认接单，才进待完成）
     _st, r = call("POST", "/api/orders", token=token,
                   body={"product_id": tp["id"], "meet_place_id": 2})
     order_b = (r.get("data") or {}).get("id")
+    call("PATCH", f"/api/orders/{order_b}/confirm", token=seller_token)
     _st, r = call("PATCH", f"/api/orders/{order_b}/complete", token=admin_token)
     check("管理员可标记交易完成", r.get("code") == 0, str(r)[:150])
     _st, r = call("GET", f"/api/products/{tp['id']}")
@@ -1545,6 +1578,7 @@ def main() -> int:
     _st, r = call("POST", "/api/orders", token=buyer1,
                   body={"product_id": rate_p1, "meet_place_id": 2})
     rate_o1 = (r.get("data") or {})["id"]
+    call("PATCH", f"/api/orders/{rate_o1}/confirm", token=seller_token)   # 需求③：卖家确认
     call("PATCH", f"/api/orders/{rate_o1}/complete", token=buyer1)
     _st, r = call("POST", "/api/reviews", token=buyer1,
                   body={"order_id": rate_o1, "rating": 5, "content": "冒烟测试：好评"})
@@ -1577,6 +1611,7 @@ def main() -> int:
     _st, r = call("POST", "/api/orders", token=buyer1,
                   body={"product_id": rate_p2, "meet_place_id": 2})
     rate_o2 = (r.get("data") or {})["id"]
+    call("PATCH", f"/api/orders/{rate_o2}/confirm", token=seller_token)   # 需求③：卖家确认
     call("PATCH", f"/api/orders/{rate_o2}/complete", token=buyer1)
     call("POST", "/api/reviews", token=buyer1,
          body={"order_id": rate_o2, "rating": 2, "content": "冒烟测试：差评"})
@@ -1751,7 +1786,10 @@ def main() -> int:
         _pid = (rr.get("data") or {})["id"]
         _s, rr = call("POST", "/api/orders", token=token,
                       body={"product_id": _pid, "meet_place_id": 2})
-        return _pid, (rr.get("data") or {})["id"]
+        _oid = (rr.get("data") or {})["id"]
+        # 需求③：下单只是意向，这里替卖家确认一下，让它进入「待完成」
+        call("PATCH", f"/api/orders/{_oid}/confirm", token=seller_token)
+        return _pid, _oid
 
     _sp, _so = _trade("冒烟-卖家收尾商品", 22.0)
     _st, r = call("PATCH", f"/api/orders/{_so}/complete", token=seller_token)

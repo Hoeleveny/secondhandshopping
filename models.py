@@ -295,6 +295,8 @@ class ProductWant(db.Model):
 
 # ---------------------------------------------------------------- 6. 订单
 ORDER_PENDING, ORDER_DONE, ORDER_CANCELED = "pending", "done", "canceled"
+# 新批需求③：下单只是「购买意向」，卖家确认后才锁定商品
+ORDER_AWAITING = "awaiting"
 
 
 class Order(db.Model):
@@ -308,8 +310,8 @@ class Order(db.Model):
     price = db.Column(db.Numeric(10, 2), nullable=False)
     product_snapshot = db.Column(db.JSON, nullable=False)
     status = db.Column(
-        db.Enum("pending", "done", "canceled", name="order_status_enum"),
-        nullable=False, default=ORDER_PENDING,
+        db.Enum("awaiting", "pending", "done", "canceled", name="order_status_enum"),
+        nullable=False, default=ORDER_AWAITING,
     )
     trade_note = db.Column(db.String(255))
     meet_place_id = db.Column(db.BigInteger, db.ForeignKey("campus_places.id"))
@@ -329,7 +331,7 @@ class Order(db.Model):
     seller = db.relationship("User", foreign_keys=[seller_id])
     meet_place = db.relationship("CampusPlace")
 
-    STATUS_TEXT = {"pending": "待完成", "done": "已完成", "canceled": "已取消"}
+    STATUS_TEXT = {"awaiting": "待卖家确认", "pending": "待完成", "done": "已完成", "canceled": "已取消"}
 
     def to_dict(self, viewer_id: int | None = None) -> dict:
         """viewer_id 用于隐私控制：仅「待完成」订单的买卖双方能看到精确位置。"""
@@ -663,7 +665,9 @@ class OperationLog(db.Model):
         "product_off": "下架商品",
         "product_delete": "删除商品",
         "product_purge": "彻底删除商品",
-        "order_create": "下单",
+        "order_create": "提交购买意向",
+        "order_confirm": "卖家确认接单",
+        "order_reject": "卖家拒绝接单",
         "order_complete": "完成交易",
         "order_cancel": "取消交易",
         "order_record_delete": "删除订单记录",

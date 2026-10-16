@@ -18,14 +18,14 @@ from api.common import (
 from config import Config
 from extensions import db
 from models import (
-    CampusPlace, OperationLog, Order, Product, User,
-    ORDER_CANCELED, ORDER_DONE, ORDER_PENDING,
+    CampusPlace, Message, OperationLog, Order, Product, User,
+    ORDER_AWAITING, ORDER_CANCELED, ORDER_DONE, ORDER_PENDING,
     PRODUCT_ON_SALE, PRODUCT_SOLD, ROLE_ADMIN,
 )
 
 bp = Blueprint("orders", __name__, url_prefix="/api")
 
-STATUSES = (ORDER_PENDING, ORDER_DONE, ORDER_CANCELED)
+STATUSES = (ORDER_AWAITING, ORDER_PENDING, ORDER_DONE, ORDER_CANCELED)
 
 
 def product_snapshot(product: Product) -> dict:
@@ -85,17 +85,13 @@ def create_order():
 
     trade_note = (body.get("trade_note") or "").strip()[:255]
 
-    # 条件更新：只有仍为「在售」时才抢得到这件商品
-    affected = (
-        db.session.query(Product)
-        .filter(Product.id == product.id, Product.status == PRODUCT_ON_SALE)
-        .update({Product.status: PRODUCT_SOLD}, synchronize_session=False)
-    )
-    if affected == 0:
-        db.session.rollback()
-        return fail("手慢了一步，该商品已被他人买走", 409)
+    # 新批需求③：下单只是「意向」，不锁商品；但同一个买家对同一件商品不能堆多条意向
+    dup = Order.query.filter(
+        Order.product_id == product.id, Order.buyer_id == user.id,
+        Order.status.in_((ORDER_AWAITING, ORDER_PENDING))).first()
+    if dup is not None:
+        return fail("你已经对这件商品提交过购买意向，等卖家确认即可", 409)
 
-    db.session.refresh(product)
     order = Order(
         order_no="PENDING",
         product_id=product.id,
@@ -103,7 +99,7 @@ def create_order():
         seller_id=product.seller_id,
         price=product.price,
         product_snapshot=product_snapshot(product),
-        status=ORDER_PENDING,
+        status=ORDER_AWAITING,
         trade_note=trade_note or None,
         meet_place_id=place.id,
     )
@@ -113,10 +109,11 @@ def create_order():
     import audit
 
     audit.record("order_create", "order", order.id,
-                 f"下单「{product.name}」（{product.product_code}，¥{order.price}）")
+                 f"提交购买意向「{product.name}」（{product.product_code}，¥{order.price}）"
+                 "，等待卖家确认")
     db.session.commit()
 
-    return ok(order.to_dict(user.id), msg="下单成功，请与卖家约定时间自提")
+    return ok(order.to_dict(user.id), msg="已提交购买意向，等卖家确认后商品才会锁定")
 
 
 @bp.get("/orders/updates")
@@ -203,6 +200,7 @@ def my_orders():
 
     counts = {
         "all": Order.query.filter(*visible).count(),
+        ORDER_AWAITING: Order.query.filter(*visible, Order.status == ORDER_AWAITING).count(),
         ORDER_PENDING: Order.query.filter(*visible, Order.status == ORDER_PENDING).count(),
         ORDER_DONE: Order.query.filter(*visible, Order.status == ORDER_DONE).count(),
         ORDER_CANCELED: Order.query.filter(*visible, Order.status == ORDER_CANCELED).count(),
@@ -230,6 +228,7 @@ def sold_orders():
 
     counts = {
         "all": Order.query.filter(*visible).count(),
+        ORDER_AWAITING: Order.query.filter(*visible, Order.status == ORDER_AWAITING).count(),
         ORDER_PENDING: Order.query.filter(*visible, Order.status == ORDER_PENDING).count(),
         ORDER_DONE: Order.query.filter(*visible, Order.status == ORDER_DONE).count(),
         ORDER_CANCELED: Order.query.filter(*visible, Order.status == ORDER_CANCELED).count(),
@@ -283,6 +282,110 @@ def complete_order(oid: int):
     return ok(order.to_dict(user.id), msg="交易已完成，别忘了评价对方")
 
 
+@bp.patch("/orders/<int:oid>/confirm")
+@login_required
+def confirm_order(oid: int):
+    """卖家确认接单（新批需求③）：**确认之后才锁定商品**。
+
+    口径：买家下单只是「意向」（awaiting），商品仍在售、别人也能下单；
+    卖家确认其中一单后，这一单转「待完成」并用条件更新把商品锁成已售，
+    同一商品上其余还挂着的意向自动取消并私信告知买家。
+    """
+    order, error = _visible_order(oid)
+    if error:
+        return fail(error, 403 if "无权" in error else 404)
+
+    user = current_user()
+    if order.seller_id != user.id and user.role != ROLE_ADMIN:
+        return fail("只有卖家可以确认交易", 403)
+    if order.status != ORDER_AWAITING:
+        return fail("这一单现在不是「待卖家确认」状态", 409)
+
+    import audit
+
+    product = Product.query.get(order.product_id)
+    pname = product.name if product else "商品已删除"
+    now = datetime.now()
+
+    # 商品已经不在售（被别人确认走了 / 被下架 / 被删）→ 这一单没法成交，直接作废
+    if product is None or product.status != PRODUCT_ON_SALE:
+        order.status = ORDER_CANCELED
+        order.finished_at = now
+        db.session.add(Message(
+            sender_id=user.id, receiver_id=order.buyer_id,
+            content=(f"【交易提醒】你意向购买的「{pname}」已经不在售，"
+                     f"你的意向已自动取消。")[:Message.MAX_LENGTH]))
+        audit.record("order_reject", "order", order.id,
+                     f"确认失败自动取消：{order.order_no}「{pname}」已不在售")
+        db.session.commit()
+        return fail("该商品已不在售，这一单已自动取消", 409)
+
+    # 条件更新：只有仍为「在售」时才锁得住
+    affected = (
+        db.session.query(Product)
+        .filter(Product.id == product.id, Product.status == PRODUCT_ON_SALE)
+        .update({Product.status: PRODUCT_SOLD}, synchronize_session=False)
+    )
+    if affected == 0:
+        db.session.rollback()
+        return fail("手慢了一步，该商品已被别的交易锁定", 409)
+
+    order.status = ORDER_PENDING
+    db.session.flush()
+
+    # 其余还挂着的意向：自动取消 + 私信告知（需求③ 口径）
+    others = Order.query.filter(
+        Order.product_id == product.id, Order.id != order.id,
+        Order.status == ORDER_AWAITING).all()
+    for other in others:
+        other.status = ORDER_CANCELED
+        other.finished_at = now
+        db.session.add(Message(
+            sender_id=user.id, receiver_id=other.buyer_id,
+            content=(f"【交易提醒】你意向购买的「{pname}」已被卖家确认给其他买家，"
+                     f"你的购买意向已自动取消。")[:Message.MAX_LENGTH]))
+
+    audit.record(
+        "order_confirm", "order", order.id,
+        f"{'管理员代为' if user.role == ROLE_ADMIN else '卖家'}确认接单 {order.order_no}"
+        f"「{pname}」（{product.product_code}），商品已锁定"
+        + (f"；另有 {len(others)} 个购买意向自动取消" if others else ""),
+        role=user.role,
+    )
+    db.session.commit()
+    return ok(order.to_dict(user.id), msg="已确认交易并锁定商品，请与买家约定自提时间")
+
+
+@bp.patch("/orders/<int:oid>/reject")
+@login_required
+def reject_order(oid: int):
+    """卖家拒绝这一单意向（新批需求③）：商品不受影响，仍是别人可以买的在售商品。"""
+    order, error = _visible_order(oid)
+    if error:
+        return fail(error, 403 if "无权" in error else 404)
+
+    user = current_user()
+    if order.seller_id != user.id and user.role != ROLE_ADMIN:
+        return fail("只有卖家可以拒绝交易", 403)
+    if order.status != ORDER_AWAITING:
+        return fail("这一单现在不是「待卖家确认」状态", 409)
+
+    import audit
+
+    product = Product.query.get(order.product_id)
+    pname = product.name if product else "商品已删除"
+    order.status = ORDER_CANCELED
+    order.finished_at = datetime.now()
+    db.session.add(Message(
+        sender_id=user.id, receiver_id=order.buyer_id,
+        content=(f"【交易提醒】卖家没有接受你对「{pname}」的购买意向，"
+                 f"这一单已取消，你可以看看别的商品。")[:Message.MAX_LENGTH]))
+    audit.record("order_reject", "order", order.id,
+                 f"卖家拒绝接单 {order.order_no}「{pname}」", role=user.role)
+    db.session.commit()
+    return ok(order.to_dict(user.id), msg="已拒绝这一单，商品仍在售")
+
+
 @bp.patch("/orders/<int:oid>/cancel")
 @login_required
 def cancel_order(oid: int):
@@ -293,27 +396,34 @@ def cancel_order(oid: int):
     user = current_user()
     if order.buyer_id != user.id and user.role != ROLE_ADMIN:
         return fail("只有买家可以取消订单", 403)
-    if order.status != ORDER_PENDING:
-        return fail("只有「待完成」的订单可以取消", 409)
+    # 需求③起：还没被卖家确认的「意向」也能由买家自己撤掉（此时商品没被锁，无需恢复）
+    if order.status not in (ORDER_AWAITING, ORDER_PENDING):
+        return fail("只有「待卖家确认」或「待完成」的订单可以取消", 409)
 
+    was_pending = order.status == ORDER_PENDING
     order.status = ORDER_CANCELED
     order.finished_at = datetime.now()
-    # 商品恢复在售（若期间已被管理员下架，则保持下架，不强行上架）
-    db.session.query(Product).filter(
-        Product.id == order.product_id, Product.status == PRODUCT_SOLD
-    ).update({Product.status: PRODUCT_ON_SALE}, synchronize_session=False)
+    # 商品恢复在售（仅当这一单确实锁过商品；若期间已被管理员下架，则保持下架，不强行上架）
+    if was_pending:
+        db.session.query(Product).filter(
+            Product.id == order.product_id, Product.status == PRODUCT_SOLD
+        ).update({Product.status: PRODUCT_ON_SALE}, synchronize_session=False)
     import audit
 
     product = Product.query.get(order.product_id)
+    if was_pending:
+        _summary = (f"{'管理员强制取消' if user.role == ROLE_ADMIN else '取消交易'} "
+                    f"{order.order_no}「{product.name if product else '商品已删除'}」")
+    else:
+        _summary = (f"撤回购买意向 {order.order_no}"
+                    f"「{product.name if product else '商品已删除'}」")
     audit.record(
         "admin_order_cancel" if user.role == ROLE_ADMIN else "order_cancel",
-        "order", order.id,
-        f"{'管理员强制' if user.role == ROLE_ADMIN else ''}取消交易 {order.order_no}"
-        f"「{product.name if product else '商品已删除'}」，商品已恢复在售",
-        role=user.role,
+        "order", order.id, _summary, role=user.role,
     )
     db.session.commit()
-    return ok(order.to_dict(user.id), msg="订单已取消，商品已恢复在售")
+    return ok(order.to_dict(user.id),
+              msg="订单已取消，商品已恢复在售" if was_pending else "已撤回购买意向")
 
 
 @bp.delete("/orders/<int:oid>/record")
@@ -331,8 +441,8 @@ def delete_order_record(oid: int):
     user = current_user()
     if order.buyer_id != user.id and order.seller_id != user.id and user.role != ROLE_ADMIN:
         return fail("只有交易双方可以删除自己的订单记录", 403)
-    if order.status == ORDER_PENDING:
-        return fail("「待完成」的订单不能删除记录，请先确认完成或取消订单", 409)
+    if order.status in (ORDER_AWAITING, ORDER_PENDING):
+        return fail("「待卖家确认」或「待完成」的订单不能删除记录，请先取消或完成", 409)
     # 需求⑥：买卖双方各自「只对自己隐藏」，互不影响
     if user.id == order.seller_id:
         if order.seller_deleted:
