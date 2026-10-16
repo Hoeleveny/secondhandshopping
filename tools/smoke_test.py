@@ -1312,9 +1312,31 @@ def main() -> int:
           f"{_d.get('total')} 条")
 
     _d = _logs_q(user_id=_my_id, page_size=50)
-    check("按**动作发起人**筛选：结果发起人全为该用户",
+    check("按**动作发起人**（按 id）筛选：结果发起人全为该用户",
           bool(_d.get("list")) and all(x["user_id"] == _my_id for x in _d["list"]),
           f"{_d.get('total')} 条")
+
+    # 需求②：发起人改成自由输入，按「姓名 / 账号 / 编号」都能筛
+    # 注意别用 _my_id —— 那是 buyer1 的 id，而这里的 token 是主测试账号，两者不是同一个人
+    _token_user = (call("GET", "/api/auth/me", token=token)[1].get("data") or {}).get("user") or {}
+    _token_id, _token_nick = _token_user.get("id"), _token_user.get("nickname")
+    _d = _logs_q(user=_token_nick, page_size=50)
+    check("按**发起人姓名**筛选：命中这个人自己的操作",
+          bool(_d.get("list")) and all(x["user_id"] == _token_id for x in _d["list"]),
+          f"{_token_nick} -> {_d.get('total')} 条")
+    _d = _logs_q(user=_token_nick[:1], page_size=50)
+    check("发起人支持**只填一部分**（模糊匹配）",
+          _d.get("total", 0) > 0
+          and all(_token_nick[:1] in (x.get("nickname") or "")
+                  or _token_nick[:1] in (x.get("username") or "")
+                  for x in _d["list"]),
+          f"{_token_nick[:1]} -> {_d.get('total')} 条")
+    _d = _logs_q(user=str(_token_id), page_size=50)
+    check("发起人填**纯数字**时按用户编号精确筛（不会把 buyer2/seller2 也带进来）",
+          bool(_d.get("list")) and all(x["user_id"] == _token_id for x in _d["list"]),
+          f"id={_token_id} -> {_d.get('total')} 条")
+    _d = _logs_q(user="绝对不会有的发起人zzz", page_size=50)
+    check("发起人填不存在的名字时结果为空", _d.get("total") == 0, str(_d.get("total")))
 
     _pcode = tp.get("product_code")
     _d = _logs_q(product=_pcode, page_size=50)

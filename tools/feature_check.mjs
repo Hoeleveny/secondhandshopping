@@ -1936,11 +1936,46 @@ async function feature18(cdp) {
   const options = await cdp.eval(`
     (() => ({
       actions: [...document.querySelectorAll('#lg-action option')].map(o => o.value),
-      actors: [...document.querySelectorAll('#lg-user option')].map(o => o.textContent.trim()),
+      userIsInput: document.getElementById('lg-user')?.tagName === 'INPUT',
+      userHint: document.getElementById('lg-user')?.getAttribute('placeholder') || '',
+      datalist: [...document.querySelectorAll('#lg-user-list option')].map(o => o.value),
     }))()`);
-  check('「动作」与「发起人」下拉有可选项（来自库里真实出现过的记录）',
-    options.actions.length > 1 && options.actors.length > 1,
-    JSON.stringify({ actions: options.actions.length, actors: options.actors.slice(0, 4) }));
+  check('「动作」是下拉且有可选项（来自库里真实出现过的记录）',
+    options.actions.length > 1, JSON.stringify({ actions: options.actions.length }));
+  check('「动作发起人」改成了可自由输入的输入框（需求②），并带候选列表',
+    options.userIsInput && /姓名|账号|编号/.test(options.userHint),
+    JSON.stringify({ input: options.userIsInput, hint: options.userHint }));
+
+  // 需求②：按姓名/账号输入筛选，结果应当只剩这个人
+  const actorName = options.datalist[0];
+  if (actorName) {
+    await cdp.eval(`
+      (() => {
+        const el = document.getElementById('lg-user');
+        el.value = ${JSON.stringify(actorName)};
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      })()`);
+    await sleep(1100);
+    const byUser = await cdp.eval(`
+      (() => ({
+        items: document.querySelectorAll('#lg-list .tl-item').length,
+        who: [...new Set([...document.querySelectorAll('#lg-list .tl-who')].map(e => e.innerText.trim()))],
+        empty: !!document.querySelector('#lg-list .empty'),
+      }))()`);
+    check('按发起人姓名筛选后，时间线里只剩这个人的动作',
+      byUser.items > 0 && byUser.who.length > 0 && byUser.who.every(n => n.includes(actorName)),
+      `填「${actorName}」-> ${byUser.items} 条，出现的人=${JSON.stringify(byUser.who)}`);
+    // 清掉，别影响后面的断言
+    await cdp.eval(`
+      (() => {
+        const el = document.getElementById('lg-user');
+        el.value = '';
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      })()`);
+    await sleep(900);
+  } else {
+    check('按发起人姓名筛选后，时间线里只剩这个人的动作', false, '候选列表为空（库里没有操作日志）');
+  }
 
   const before = await cdp.eval(`document.querySelectorAll('#lg-list .tl-item').length`);
 

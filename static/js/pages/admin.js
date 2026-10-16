@@ -266,7 +266,8 @@ async function renderTrades(panel) {
         </div>
         <div class="form-row">
           <label>动作发起人</label>
-          <select class="select" id="lg-user"><option value="">全部发起人</option></select>
+          <input class="input" id="lg-user" list="lg-user-list" placeholder="姓名 / 账号 / 编号，可只填一部分">
+          <datalist id="lg-user-list"></datalist>
         </div>
         <div class="form-row">
           <label>商品（名称 / 编号）</label>
@@ -687,7 +688,7 @@ async function renderTrades(panel) {
     let data;
     try {
       data = await api.get(`/api/admin/logs${qs({
-        action: logAction, user_id: logUser, product: logProduct,
+        action: logAction, user: logUser, product: logProduct,
         order_no: logOrder, date_from: logFrom, date_to: logTo,
         page: logPage, page_size: 20,
       })}`);
@@ -704,13 +705,15 @@ async function renderTrades(panel) {
         + data.actions.map(a => `<option value="${esc(a.action)}">${esc(a.text)}</option>`).join('');
       actionSel.value = current || 'all';
     }
-    const userSel = panel.querySelector('#lg-user');
-    if (data.actors) {
-      const current = userSel.value;
-      userSel.innerHTML = `<option value="">全部发起人</option>`
-        + data.actors.map(a =>
-            `<option value="${a.id}">${esc(a.nickname || a.username || '')}</option>`).join('');
-      userSel.value = current;
+    // 需求②：发起人改成自由输入，这里把库里出现过的发起人塞进候选列表（可点选可手输）
+    const userList = panel.querySelector('#lg-user-list');
+    if (userList && data.actors) {
+      userList.innerHTML = data.actors.map(a => {
+        const name = a.nickname || a.username || '';
+        const hint = [a.username ? `@${a.username}` : '', a.id ? `编号 ${a.id}` : '']
+          .filter(Boolean).join(' · ');
+        return `<option value="${esc(name)}">${esc(hint)}</option>`;
+      }).join('');
     }
 
     if (!data.list.length) {
@@ -771,12 +774,8 @@ async function renderTrades(panel) {
     logPage = 1;
     loadLogs();
   });
-  panel.querySelector('#lg-user').addEventListener('change', (e) => {
-    logUser = e.target.value;
-    logPage = 1;
-    loadLogs();
-  });
   const readLogFilters = () => {
+    logUser = panel.querySelector('#lg-user').value.trim();
     logProduct = panel.querySelector('#lg-product').value.trim();
     logOrder = panel.querySelector('#lg-order').value.trim();
     logFrom = panel.querySelector('#lg-from').value;
@@ -787,13 +786,20 @@ async function renderTrades(panel) {
     readLogFilters();
     loadLogs();
   });
-  ['#lg-product', '#lg-order'].forEach((sel) =>
-    panel.querySelector(sel).addEventListener('keydown', (event) => {
+  ['#lg-user', '#lg-product', '#lg-order'].forEach((sel) => {
+    const el = panel.querySelector(sel);
+    el.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') {
         readLogFilters();
         loadLogs();
       }
-    }));
+    });
+    // 从候选列表里点选后立即生效，不用再按「筛选」
+    el.addEventListener('change', () => {
+      readLogFilters();
+      loadLogs();
+    });
+  });
   panel.querySelector('#lg-reset').addEventListener('click', () => {
     ['#lg-product', '#lg-order', '#lg-from', '#lg-to'].forEach((sel) => {
       panel.querySelector(sel).value = '';

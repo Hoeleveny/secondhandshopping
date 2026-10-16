@@ -350,6 +350,7 @@ def admin_logs():
     date_from = arg_str("date_from")
     date_to = arg_str("date_to")
     user_id = arg_int("user_id")
+    user_q = arg_str("user")
     product = arg_str("product")
     order_no = arg_str("order_no")
 
@@ -377,6 +378,21 @@ def admin_logs():
 
     if user_id:
         q = q.filter(OperationLog.user_id == user_id)
+
+    if user_q:
+        # 需求②：按「动作发起人」自由输入筛选——姓名（昵称）/ 账号 / 纯数字时按用户编号。
+        if user_q.isdigit():
+            # 纯数字＝用户编号，必须**精确**匹配：若也走模糊，填 "2" 会把 buyer2/seller2 一起带进来
+            q = q.filter(OperationLog.user_id == int(user_q))
+        else:
+            # 日志里存的是当时的 username 快照，昵称得回 users 表查，所以两头都匹配
+            like = f"%{user_q}%"
+            conds = [OperationLog.username.like(like)]
+            uids = [u.id for u in User.query.filter(
+                or_(User.nickname.like(like), User.username.like(like))).limit(300)]
+            if uids:
+                conds.append(OperationLog.user_id.in_(uids))
+            q = q.filter(or_(*conds))
 
     if order_no:
         oids = [o.id for o in
