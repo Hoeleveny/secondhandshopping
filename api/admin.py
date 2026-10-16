@@ -25,6 +25,7 @@ from models import (
     Review, Subcategory, User, _dt,
     ORDER_CANCELED, ORDER_DONE, ORDER_PENDING,
     PRODUCT_DELETED, PRODUCT_OFF_SHELF, PRODUCT_ON_SALE, PRODUCT_SOLD,
+    ROLE_ADMIN,
 )
 from backup import dump_all, load_all
 from rating import seller_rating
@@ -927,8 +928,158 @@ def reset_demo():
 @bp.get("/users")
 @admin_required
 def user_list():
+    """用户管理列表（新批需求①）：支持关键字与封禁状态筛选，并带出各人的内容统计。"""
     page, size = paginate_args(20)
-    total = User.query.count()
-    items = (User.query.order_by(User.id).offset((page - 1) * size).limit(size).all())
-    return ok({"list": [u.to_dict() for u in items], "total": total,
-               "page": page, "page_size": size})
+    keyword = arg_str("keyword")
+    status = arg_str("status") or "all"          # all / normal / banned
+
+    banned_cond = or_(
+        User.ban_forever.is_(True),
+        and_(User.banned_until.isnot(None), User.banned_until > datetime.now()),
+    )
+
+    q = User.query
+    if keyword:
+        like = f"%{keyword}%"
+        q = q.filter(or_(User.username.like(like), User.nickname.like(like)))
+    if status == "banned":
+        q = q.filter(banned_cond)
+    elif status == "normal":
+        q = q.filter(~banned_cond)
+
+    total = q.count()
+    items = q.order_by(User.id).offset((page - 1) * size).limit(size).all()
+    return ok({
+        "list": [_user_row(u) for u in items], "total": total,
+        "page": page, "page_size": size, "status": status,
+        "counts": {"all": User.query.count(),
+                   "banned": User.query.filter(banned_cond).count()},
+    })
+
+
+def _user_row(user: User) -> dict:
+    """用户管理列表/详情用的行：资料 + 内容与信用统计。"""
+    data = user.to_dict()
+    data["product_count"] = Product.query.filter(
+        Product.seller_id == user.id, Product.status != PRODUCT_DELETED).count()
+    data["on_sale"] = Product.query.filter_by(
+        seller_id=user.id, status=PRODUCT_ON_SALE).count()
+    data["order_count"] = Order.query.filter(
+        or_(Order.buyer_id == user.id, Order.seller_id == user.id)).count()
+    data["post_count"] = Post.query.filter(
+        Post.author_id == user.id, Post.status == "normal").count()
+    data["review_count"] = Review.query.filter_by(reviewee_id=user.id).count()
+    data["rating"] = seller_rating(user.id)
+    return data
+
+
+@bp.get("/users/<int:uid>")
+@admin_required
+def user_detail(uid: int):
+    """单个用户的详细信息（新批需求①）：资料 + 统计 + 最近发布的内容 + 最近动作。"""
+    user = User.query.get(uid)
+    if user is None:
+        return fail("用户不存在", 404)
+
+    data = _user_row(user)
+    data["seller_code"] = f"{(user.seller_seq or 0):04d}" if user.seller_seq else None
+    data["products"] = [{
+        "id": p.id, "name": p.name, "price": float(p.price), "status": p.status,
+        "status_text": p.STATUS_TEXT.get(p.status, p.status),
+        "product_code": p.product_code, "views": p.views, "created_at": _dt(p.created_at),
+    } for p in Product.query.filter(Product.seller_id == uid, Product.status != PRODUCT_DELETED)
+        .order_by(Product.created_at.desc()).limit(8)]
+    data["posts"] = [{
+        "id": p.id, "title": p.title, "tag": p.tag, "status": p.status,
+        # comment_count / like_count 不是列，是 to_dict 里算出来的，别当列用（踩过）
+        "comment_count": len(p.comments), "like_count": len(p.likes),
+        "created_at": _dt(p.created_at),
+    } for p in Post.query.filter_by(author_id=uid).order_by(Post.created_at.desc()).limit(6)]
+    data["orders"] = [{
+        "id": o.id, "order_no": o.order_no, "status": o.status,
+        "status_text": o.STATUS_TEXT.get(o.status, o.status), "price": float(o.price),
+        "my_role": "buyer" if o.buyer_id == uid else "seller",
+        "created_at": _dt(o.created_at),
+    } for o in Order.query.filter(or_(Order.buyer_id == uid, Order.seller_id == uid))
+        .order_by(Order.created_at.desc()).limit(6)]
+    data["logs"] = [log.to_dict() for log in
+                    OperationLog.query.filter_by(user_id=uid)
+                    .order_by(OperationLog.id.desc()).limit(10)]
+    # 收到的举报：对象是 TA 的商品或帖子
+    pids = [p.id for p in Product.query.filter_by(seller_id=uid).all()]
+    post_ids = [p.id for p in Post.query.filter_by(author_id=uid).all()]
+    data["reports_against"] = Report.query.filter(or_(
+        Report.product_id.in_(pids or [-1]), Report.post_id.in_(post_ids or [-1]))).count()
+    data["reports_by"] = Report.query.filter_by(reporter_id=uid).count()
+    return ok(data)
+
+
+@bp.post("/users/<int:uid>/ban")
+@admin_required
+def ban_user(uid: int):
+    """封禁用户（新批需求①）：时长可选天数或永久，必须填原因，结果私信告知用户。"""
+    admin = current_user()
+    user = User.query.get(uid)
+    if user is None:
+        return fail("用户不存在", 404)
+    if user.role == ROLE_ADMIN:
+        return fail("管理员账号不能被封禁", 403)
+    if user.id == admin.id:
+        return fail("不能封禁自己", 403)
+
+    body = json_body()
+    reason = (body.get("reason") or "").strip()
+    if not reason:
+        return fail("请填写封禁原因")
+    forever = bool(body.get("forever"))
+    try:
+        days = int(body.get("days") or 0)
+    except (TypeError, ValueError):
+        days = 0
+    if not forever and days <= 0:
+        return fail("请选择封禁时长（天数），或勾选永久封禁")
+    if days > 3650:
+        return fail("封禁天数过大（最多 3650 天，永久请勾选永久封禁）")
+
+    now = datetime.now()
+    user.ban_forever = forever
+    user.banned_until = None if forever else now + timedelta(days=days)
+    user.ban_reason = reason[:200]
+    user.banned_at = now
+    user.banned_by = admin.id
+
+    how = "永久封禁" if forever else f"{days} 天（解封时间 {user.banned_until:%Y-%m-%d %H:%M}）"
+    db.session.add(Message(
+        sender_id=admin.id, receiver_id=user.id,
+        content=(f"【平台通知】你的账号已被{how}。原因：{reason}。"
+                 f"封禁期间无法登录与发布内容，到期会自动解封，如有疑问请联系管理员。"
+                 )[:Message.MAX_LENGTH]))
+    audit.record("user_ban", "user", user.id,
+                 f"封禁用户「{user.nickname}」（{how}）：{reason}")
+    db.session.commit()
+    return ok(_user_row(user), msg=f"已{how}：{user.nickname}")
+
+
+@bp.post("/users/<int:uid>/unban")
+@admin_required
+def unban_user(uid: int):
+    """提前解封（新批需求①）。"""
+    admin = current_user()
+    user = User.query.get(uid)
+    if user is None:
+        return fail("用户不存在", 404)
+    if not user.is_banned:
+        return fail("该用户当前没有被封禁", 409)
+
+    user.ban_forever = False
+    user.banned_until = None
+    user.ban_reason = None
+    user.banned_at = None
+    user.banned_by = None
+    db.session.add(Message(
+        sender_id=admin.id, receiver_id=user.id,
+        content=("【平台通知】你的账号已解封，可以正常登录与使用了。请遵守社区规范，谢谢。"
+                 )[:Message.MAX_LENGTH]))
+    audit.record("user_unban", "user", user.id, f"解封用户「{user.nickname}」")
+    db.session.commit()
+    return ok(_user_row(user), msg=f"已解封：{user.nickname}")

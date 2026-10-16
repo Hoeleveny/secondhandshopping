@@ -1,16 +1,17 @@
 /* ==========================================================================
    M10 管理后台
-   五个页签：商品管理 / 交易管理 / 举报审核 / 基础数据 / 数据管理（备份·恢复·重置）
+   六个页签：商品管理 / 用户管理 / 交易管理 / 举报审核 / 基础数据 / 数据管理
    ========================================================================== */
 import { api, qs } from '../api.js';
 import { ensureCategories, ensureMeta, ensurePlaces, invalidateCatalog } from '../data.js';
 import {
-  confirmDialog, emptyHtml, esc, fmtPrice, fmtTime, loadingHtml,
-  openModal, renderPagination, toast,
+  avatarHtml, confirmDialog, emptyHtml, esc, fmtPrice, fmtTime, loadingHtml,
+  openModal, ratingBadgeHtml, renderPagination, toast,
 } from '../ui.js';
 
 const TABS = [
   { key: 'products', label: '商品管理', icon: '📦' },
+  { key: 'users', label: '用户管理', icon: '👥' },
   { key: 'trades', label: '交易管理', icon: '🧾' },
   { key: 'reports', label: '举报审核', icon: '🚩' },
   { key: 'base', label: '基础数据', icon: '🗂️' },
@@ -55,6 +56,7 @@ export default {
     function renderTab() {
       stopTradesTimer();   // 切页签先停掉上一个页面的自动刷新
       if (tab === 'products') return renderProducts(panel);
+      if (tab === 'users') return renderUsers(panel);
       if (tab === 'trades') return renderTrades(panel);
       if (tab === 'reports') return renderReports(panel);
       if (tab === 'base') return renderBaseData(panel);
@@ -306,11 +308,6 @@ async function renderTrades(panel) {
 
   /* ---------------- 动态监控：单条日志详情（需求②）---------------- */
   const ROLE_TEXT = { buyer: '买家', seller: '卖家', admin: '管理员', '': '—' };
-
-  function kvLines(pairs, cols = 1) {
-    return `<div class="kv-list${cols > 1 ? ' cols-2' : ''}">${pairs.filter(Boolean).map(([k, v]) =>
-      `<div class="kv"><span class="kv-k">${esc(k)}</span><span class="kv-v">${v}</span></div>`).join('')}</div>`;
-  }
 
   function logDetailBody(d) {
     const log = d.log || {};
@@ -826,6 +823,309 @@ async function renderTrades(panel) {
     loadTrades(true);
     loadLogs(true);
   }, 5000);
+}
+
+/* 键值明细渲染（模块级：管理后台里多处复用，包括用户详情弹窗） */
+function kvLines(pairs, cols = 1) {
+  return `<div class="kv-list${cols > 1 ? ' cols-2' : ''}">${pairs.filter(Boolean).map(([k, v]) =>
+    `<div class="kv"><span class="kv-k">${esc(k)}</span><span class="kv-v">${v}</span></div>`).join('')}</div>`;
+}
+
+/* ================================================================ 用户管理（新批需求①） */
+async function renderUsers(panel) {
+  let page = 1;
+  let keyword = '';
+  let status = 'all';
+
+  panel.innerHTML = `
+    <div class="card mb-8">
+      <div class="row-between mb-8">
+        <h3 style="margin:0">用户管理</h3>
+        <span class="muted small">可查看用户主页与详细信息，并封禁 / 解封账号（到期自动解封）</span>
+      </div>
+      <div class="form-grid">
+        <div class="form-row">
+          <label>搜索用户</label>
+          <input class="input" id="u-keyword" placeholder="昵称 / 用户名，可只填一部分">
+        </div>
+        <div class="form-row">
+          <label>状态</label>
+          <select class="select" id="u-status">
+            <option value="all">全部</option>
+            <option value="normal">正常</option>
+            <option value="banned">已封禁</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>&nbsp;</label>
+          <div class="row" style="gap:8px">
+            <button class="btn btn-primary" id="u-search">搜索</button>
+            <button class="btn" id="u-reset">重置</button>
+          </div>
+        </div>
+      </div>
+      <div class="muted small" id="u-summary"></div>
+    </div>
+    <div class="card" id="u-list">${loadingHtml()}</div>
+    <div class="pagination" id="u-pager"></div>`;
+
+  async function load() {
+    const box = panel.querySelector('#u-list');
+    box.innerHTML = loadingHtml();
+    let data;
+    try {
+      data = await api.get(`/api/admin/users${qs({ keyword, status, page, page_size: 15 })}`);
+    } catch (err) {
+      box.innerHTML = emptyHtml(`加载失败：${err.message}`, '😵');
+      return;
+    }
+    panel.querySelector('#u-summary').textContent =
+      `共 ${data.counts.all} 位用户，其中被封禁 ${data.counts.banned} 位`;
+
+    if (!data.list.length) {
+      box.innerHTML = emptyHtml(keyword ? '没有匹配的用户' : '暂无用户', '👥');
+      renderPagination(panel.querySelector('#u-pager'),
+        { page: 1, pages: 1, total: 0, onGo: () => {} });
+      return;
+    }
+
+    box.innerHTML = `
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr>
+            <th>用户</th><th>注册时间</th><th>商品</th><th>订单</th><th>帖子</th>
+            <th>收到评价</th><th>好评率</th><th>状态</th><th>操作</th>
+          </tr></thead>
+          <tbody>
+            ${data.list.map(u => `
+              <tr class="clickable-row" data-uid="${u.id}" title="点击查看这位用户的详细信息">
+                <td>
+                  <div class="row" style="gap:8px;align-items:center">
+                    ${avatarHtml(u, 30)}
+                    <span class="strong">${esc(u.nickname)}</span>
+                    <span class="muted small">@${esc(u.username)}</span>
+                    ${u.role === 'admin' ? '<span class="badge badge-gray">管理员</span>' : ''}
+                  </div>
+                </td>
+                <td class="muted small">${esc(fmtTime(u.created_at))}</td>
+                <td>${u.on_sale} 在售 / ${u.product_count} 总</td>
+                <td>${u.order_count} 笔</td>
+                <td>${u.post_count} 篇</td>
+                <td>${u.review_count} 条</td>
+                <td>${ratingBadgeHtml(u.rating)}</td>
+                <td>${u.banned
+                  ? `<span class="badge badge-danger">${u.ban.forever
+                      ? '永久封禁' : `封禁至 ${esc((u.ban.until || '').slice(5, 16))}`}</span>`
+                  : '<span class="badge badge-info">正常</span>'}</td>
+                <td>
+                  <div class="ops">
+                    <button class="btn btn-sm" data-detail="${u.id}">详情</button>
+                    ${u.role === 'admin' ? ''
+                      : (u.banned
+                        ? `<button class="btn btn-sm" data-unban="${u.id}"
+                             data-name="${esc(u.nickname)}">解封</button>`
+                        : `<button class="btn btn-danger btn-sm" data-ban="${u.id}"
+                             data-name="${esc(u.nickname)}">封禁</button>`)}
+                  </div>
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+
+    // 整行可点看详情；行内按钮自己处理（stopPropagation）
+    box.querySelectorAll('tr[data-uid]').forEach(tr =>
+      tr.addEventListener('click', (event) => {
+        if (event.target.closest('[data-detail],[data-ban],[data-unban]')) return;
+        openUserDetail(tr.dataset.uid, load);
+      }));
+    box.querySelectorAll('[data-detail]').forEach(btn =>
+      btn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openUserDetail(btn.dataset.detail, load);
+      }));
+    box.querySelectorAll('[data-ban]').forEach(btn =>
+      btn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openBanDialog(btn.dataset.ban, btn.dataset.name, load);
+      }));
+    box.querySelectorAll('[data-unban]').forEach(btn =>
+      btn.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        const sure = await confirmDialog({
+          title: `解封「${btn.dataset.name}」？`, okText: '解封',
+          message: '解封后对方可以立即登录并使用，平台会私信告知对方。',
+        });
+        if (!sure) return;
+        try {
+          await api.post(`/api/admin/users/${btn.dataset.unban}/unban`);
+          toast('已解封');
+          load();
+        } catch (err) { toast(err.message, 'error'); }
+      }));
+
+    renderPagination(panel.querySelector('#u-pager'), {
+      page: data.page,
+      pages: Math.max(1, Math.ceil(data.total / data.page_size)),
+      total: data.total,
+      onGo: (target) => { page = target; load(); },
+    });
+  }
+
+  const readFilters = () => {
+    keyword = panel.querySelector('#u-keyword').value.trim();
+    status = panel.querySelector('#u-status').value;
+    page = 1;
+  };
+  panel.querySelector('#u-search').addEventListener('click', () => { readFilters(); load(); });
+  panel.querySelector('#u-status').addEventListener('change', () => { readFilters(); load(); });
+  panel.querySelector('#u-keyword').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { readFilters(); load(); }
+  });
+  panel.querySelector('#u-reset').addEventListener('click', () => {
+    panel.querySelector('#u-keyword').value = '';
+    panel.querySelector('#u-status').value = 'all';
+    keyword = '';
+    status = 'all';
+    page = 1;
+    load();
+  });
+
+  await load();
+}
+
+async function openUserDetail(uid, refresh) {
+  let d;
+  try {
+    d = await api.get(`/api/admin/users/${uid}`);
+  } catch (err) {
+    toast(`加载用户详情失败：${err.message}`, 'error');
+    return;
+  }
+
+  const ban = d.ban;
+  const blocks = [];
+  blocks.push(`<h4 class="detail-h">用户信息</h4>
+    <div class="row" style="gap:12px;align-items:center;margin-bottom:8px">
+      ${avatarHtml(d, 52)}
+      <div>
+        <div class="strong" style="font-size:16px">${esc(d.nickname)}
+          ${d.role === 'admin' ? '<span class="badge badge-gray">管理员</span>' : ''}
+          ${d.banned ? '<span class="badge badge-danger">已封禁</span>' : ''}</div>
+        <div class="muted small">@${esc(d.username)}　${esc(d.bio || '未填写简介')}</div>
+      </div>
+    </div>
+    <div class="kv-list cols-2">
+      ${kvLines([
+        ['用户编号', String(d.id)],
+        ['卖家编号', esc(d.seller_code || '未分配')],
+        ['注册时间', esc(fmtTime(d.created_at))],
+        ['好评率', ratingBadgeHtml(d.rating)],
+        ['在售 / 商品总数', `${d.on_sale} / ${d.product_count}`],
+        ['参与订单', `${d.order_count} 笔`],
+        ['发帖', `${d.post_count} 篇`],
+        ['收到评价', `${d.review_count} 条`],
+        ['被举报次数', String(d.reports_against)],
+        ['发起举报', `${d.reports_by} 次`],
+      ])}
+    </div>`);
+
+  if (ban) {
+    blocks.push(`<h4 class="detail-h">封禁信息</h4>` + kvLines([
+      ['封禁时间', esc(ban.banned_at || '—')],
+      ['封禁时长', ban.forever ? '<b>永久封禁</b>'
+        : `解封时间 ${esc(ban.until || '—')}（剩余约 ${Math.ceil((ban.left_minutes || 0) / 60)} 小时）`],
+      ['封禁原因', esc(ban.reason || '—')],
+    ]));
+  }
+
+  blocks.push(`<h4 class="detail-h">最近发布的商品（${d.products.length}）</h4>`
+    + (d.products.length ? `<div class="table-wrap"><table class="table">
+        <thead><tr><th>商品</th><th>编号</th><th>价格</th><th>状态</th><th>浏览</th></tr></thead>
+        <tbody>${d.products.map(p => `<tr class="clickable-row" data-goto="#/product/${p.id}">
+          <td>${esc(p.name)}</td><td class="muted small">${esc(p.product_code || '—')}</td>
+          <td>${fmtPrice(p.price)}</td><td>${esc(p.status_text)}</td><td>👁 ${p.views}</td>
+        </tr>`).join('')}</tbody></table></div>`
+      : '<div class="muted small">还没有发布商品</div>'));
+
+  blocks.push(`<h4 class="detail-h">最近发帖（${d.posts.length}）</h4>`
+    + (d.posts.length ? `<div class="table-wrap"><table class="table">
+        <thead><tr><th>标题</th><th>标签</th><th>赞 / 评</th><th>时间</th></tr></thead>
+        <tbody>${d.posts.map(p => `<tr class="clickable-row" data-goto="#/post/${p.id}">
+          <td>${esc(p.title)}</td><td>${esc(p.tag)}</td>
+          <td>${p.like_count} / ${p.comment_count}</td>
+          <td class="muted small">${esc(fmtTime(p.created_at))}</td>
+        </tr>`).join('')}</tbody></table></div>`
+      : '<div class="muted small">还没有发帖</div>'));
+
+  blocks.push(`<h4 class="detail-h">最近动作（${d.logs.length}）</h4>`
+    + (d.logs.length ? `<div class="timeline">${d.logs.map(l => `
+        <div class="tl-item">
+          <span class="tl-time muted small">${esc(fmtTime(l.created_at))}</span>
+          <span class="tl-action">${esc(l.action_text)}</span>
+          <span class="tl-summary muted">${esc(l.summary)}</span>
+        </div>`).join('')}</div>`
+      : '<div class="muted small">没有操作记录</div>'));
+
+  openModal({
+    title: `用户详情：${d.nickname}`,
+    size: 'detail',
+    body: blocks.join(''),
+    footer: `${d.role === 'admin' ? '' : (ban
+      ? `<button class="btn btn-primary" data-unban="${d.id}">解封</button>`
+      : `<button class="btn btn-danger" data-ban="${d.id}">封禁用户</button>`)}
+      <button class="btn" data-close>关闭</button>`,
+    onMount(modal, close) {
+      modal.querySelectorAll('[data-goto]').forEach(el =>
+        el.addEventListener('click', () => { close(); location.hash = el.dataset.goto; }));
+      modal.querySelector('[data-ban]')?.addEventListener('click', () => {
+        close();
+        openBanDialog(d.id, d.nickname, refresh);
+      });
+      modal.querySelector('[data-unban]')?.addEventListener('click', async () => {
+        close();
+        const sure = await confirmDialog({
+          title: `解封「${d.nickname}」？`, okText: '解封',
+          message: '解封后对方可以立即登录并使用，平台会私信告知对方。',
+        });
+        if (!sure) return;
+        try {
+          await api.post(`/api/admin/users/${d.id}/unban`);
+          toast('已解封');
+          if (refresh) refresh();
+        } catch (err) { toast(err.message, 'error'); }
+      });
+    },
+  });
+}
+
+function openBanDialog(uid, nickname, refresh) {
+  openFormModal({
+    title: `封禁「${nickname}」`,
+    submitText: '确认封禁',
+    successMsg: '已封禁，并私信告知对方',
+    fields: [
+      { key: 'duration', label: '封禁时长', type: 'select', required: true,
+        options: [['1', '1 天'], ['3', '3 天'], ['7', '7 天'], ['30', '30 天'],
+                  ['forever', '永久封禁'], ['custom', '自定义天数']]
+          .map(([v, t]) => `<option value="${v}">${t}</option>`).join('') },
+      { key: 'days', label: '自定义天数（选了「自定义天数」才需要填）', type: 'number',
+        placeholder: '例如 15' },
+      { key: 'reason', label: '封禁原因（会私信告知对方）', type: 'textarea', required: true,
+        maxlength: 200, placeholder: '例如：多次发布虚假商品信息' },
+    ],
+    submit: (values) => {
+      const body = { reason: values.reason };
+      if (values.duration === 'forever') body.forever = true;
+      else if (values.duration === 'custom') body.days = Number(values.days || 0);
+      else body.days = Number(values.duration);
+      if (!body.forever && (!body.days || body.days <= 0)) {
+        return Promise.reject(new Error('请填写自定义天数，或改选固定时长 / 永久封禁'));
+      }
+      return api.post(`/api/admin/users/${uid}/ban`, body);
+    },
+    done: refresh,
+  });
 }
 
 /* ================================================================ 举报审核 */

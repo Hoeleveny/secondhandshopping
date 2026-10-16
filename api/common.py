@@ -58,6 +58,10 @@ def login_required(fn):
         user = current_user()
         if user is None:
             return fail("请先登录", 401)
+        # 新批需求①：被封禁的用户只剩「浏览」——GET 放行，其余写操作一律拒绝。
+        # 封禁是"全面封禁"口径：被封的人登不进来，这是给「封禁前已登录的旧 token」兜底。
+        if user.is_banned and request.method != "GET":
+            return fail("账号已被封禁，无法进行该操作", 403)
         return fn(*args, **kwargs)
 
     return wrapper

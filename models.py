@@ -35,6 +35,12 @@ class User(db.Model):
     bio = db.Column(db.String(100))
     # 需求⑥：订单红点的已读游标——已看到的最大订单操作日志 id（迁移 011）
     orders_seen_log_id = db.Column(db.BigInteger)
+    # 新批需求①：用户封禁（迁移 012）。口径＝全面封禁、到期自动解封
+    banned_until = db.Column(db.DateTime)
+    ban_forever = db.Column(db.Boolean, nullable=False, default=False)
+    ban_reason = db.Column(db.String(200))
+    banned_at = db.Column(db.DateTime)
+    banned_by = db.Column(db.BigInteger)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
     # ---- 业务方法 ----
@@ -43,6 +49,29 @@ class User(db.Model):
 
     def check_password(self, raw: str) -> bool:
         return bcrypt.check_password_hash(self.password_hash, raw)
+
+    @property
+    def is_banned(self) -> bool:
+        """是否处于封禁中：永久封禁，或封禁到期时间还没到（到期即自动解封）。"""
+        if self.ban_forever:
+            return True
+        return bool(self.banned_until and self.banned_until > datetime.now())
+
+    def ban_info(self) -> dict | None:
+        """给前端看的封禁信息（未封禁返回 None）。"""
+        if not self.is_banned:
+            return None
+        left = None
+        if not self.ban_forever and self.banned_until:
+            seconds = int((self.banned_until - datetime.now()).total_seconds())
+            left = max(0, seconds // 60)          # 剩余分钟数
+        return {
+            "forever": bool(self.ban_forever),
+            "until": _dt(self.banned_until) if self.banned_until else None,
+            "left_minutes": left,
+            "reason": self.ban_reason or "",
+            "banned_at": _dt(self.banned_at) if self.banned_at else None,
+        }
 
     @property
     def is_admin(self) -> bool:
@@ -62,6 +91,9 @@ class User(db.Model):
         if with_credit:
             data["credit"] = float(self.credit or 0)
             data["created_at"] = _dt(self.created_at)
+            # 新批需求①：封禁状态（只有带 credit 的"完整视图"才带，列表接口用它显示状态）
+            data["banned"] = self.is_banned
+            data["ban"] = self.ban_info()
         return data
 
 
@@ -641,6 +673,8 @@ class OperationLog(db.Model):
         "report_dismiss": "驳回举报",
         "admin_order_cancel": "管理员强制取消交易",
         "admin_order_complete": "管理员标记交易完成",
+        "user_ban": "封禁用户",
+        "user_unban": "解封用户",
     }
 
     id = db.Column(db.BigInteger, primary_key=True)

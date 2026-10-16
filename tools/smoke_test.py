@@ -1790,6 +1790,84 @@ def main() -> int:
     check("卖家删的是自己那一侧，不报错也不影响买家侧数据",
           r.get("code") == 0, str(r)[:150])
 
+    # ---------------- 新批需求①：用户管理 + 封禁 ----------------
+    section("新批需求① 用户管理 + 封禁")
+
+    _st, r = call("POST", "/api/auth/register",
+                  body={"username": "acc_buyer", "password": "1234"})
+    if r.get("code") != 0:
+        _st, r = call("POST", "/api/auth/login",
+                      body={"username": "acc_buyer", "password": "1234"})
+    _acc_token = (r.get("data") or {}).get("token")
+    _acc_id = ((r.get("data") or {}).get("user") or {}).get("id")
+    # 上一次跑挂了也不影响这次：先把可能残留的封禁解掉
+    call("POST", f"/api/admin/users/{_acc_id}/unban", body={}, token=admin_token)
+
+    _st, r = call("GET", "/api/admin/users?page_size=50", token=admin_token)
+    _users = r.get("data") or {}
+    _u0 = (_users.get("list") or [{}])[0]
+    check("用户管理列表带出内容统计与封禁状态",
+          bool(_users.get("list")) and "product_count" in _u0 and "banned" in _u0
+          and "counts" in _users,
+          f"{_users.get('total')} 位用户 counts={_users.get('counts')}")
+    _st, r = call("GET", "/api/admin/users?keyword=acc_buyer", token=admin_token)
+    check("用户管理支持按关键字搜索", (r.get("data") or {}).get("total") == 1,
+          f"命中 {(r.get('data') or {}).get('total')} 位")
+    _st, r = call("GET", f"/api/admin/users/{_acc_id}", token=admin_token)
+    _d = r.get("data") or {}
+    check("用户详情含资料、统计与最近内容/动作",
+          "rating" in _d and "products" in _d and "posts" in _d and "logs" in _d
+          and "reports_against" in _d,
+          str(sorted(_d.keys()))[:150])
+
+    _st, r = call("POST", f"/api/admin/users/{_acc_id}/ban", body={"days": 3},
+                  token=admin_token)
+    check("封禁必须填原因", r.get("code") != 0, str(r)[:120])
+    _st, r = call("POST", f"/api/admin/users/{_acc_id}/ban", body={"reason": "冒烟：违规"},
+                  token=admin_token)
+    check("封禁必须给时长或选永久", r.get("code") != 0, str(r)[:120])
+    _admin_uid = ((call("GET", "/api/auth/me", token=admin_token)[1].get("data") or {})
+                  .get("user") or {}).get("id")
+    _st, r = call("POST", f"/api/admin/users/{_admin_uid}/ban",
+                  body={"days": 1, "reason": "冒烟：试试"}, token=admin_token)
+    check("管理员账号不能被封禁", r.get("code") != 0, str(r)[:120])
+
+    _st, r = call("POST", f"/api/admin/users/{_acc_id}/ban",
+                  body={"days": 3, "reason": "冒烟：发布违规内容"}, token=admin_token)
+    check("封禁成功并返回封禁信息与解封时间",
+          r.get("code") == 0 and (r.get("data") or {}).get("banned") is True
+          and ((r.get("data") or {}).get("ban") or {}).get("until"),
+          str((r.get("data") or {}).get("ban"))[:160])
+    _st, r = call("POST", "/api/auth/login", body={"username": "acc_buyer", "password": "1234"})
+    check("被封禁后不能登录（提示含原因）",
+          r.get("code") != 0 and "封禁" in (r.get("msg") or ""), str(r)[:150])
+    _st, r = call("POST", "/api/posts", token=_acc_token,
+                  body={"title": "冒烟：被封还想发帖", "content": "x", "tag": "闲聊"})
+    check("被封禁后写操作被拒", r.get("code") != 0, str(r)[:120])
+    _st, r = call("GET", "/api/products?page_size=1", token=_acc_token)
+    check("被封禁后仍能浏览（GET 放行）", r.get("code") == 0, str(r)[:120])
+    _convs = call("GET", "/api/messages/conversations", token=_acc_token)[1].get("data") or []
+    check("封禁会私信告知用户",
+          any("封禁" in ((m.get("last_message") or {}).get("content") or "") for m in _convs), "")
+    _d = _logs_q(action="user_ban", page_size=3)
+    check("封禁动作进操作日志（动态监控可查）",
+          bool(_d.get("list")) and _d["list"][0]["action_text"] == "封禁用户",
+          str((_d.get("list") or [{}])[0].get("summary"))[:120])
+    _st, r = call("GET", "/api/admin/users?status=banned", token=admin_token)
+    check("可按「已封禁」状态筛选",
+          (r.get("data") or {}).get("counts", {}).get("banned", 0) >= 1,
+          str((r.get("data") or {}).get("counts")))
+
+    _st, r = call("POST", f"/api/admin/users/{_acc_id}/unban", body={}, token=admin_token)
+    check("解封成功", r.get("code") == 0 and (r.get("data") or {}).get("banned") is False,
+          str(r)[:120])
+    _st, r = call("POST", "/api/auth/login", body={"username": "acc_buyer", "password": "1234"})
+    check("解封后可以重新登录", r.get("code") == 0, str(r)[:120])
+    _st, r = call("POST", f"/api/admin/users/{_acc_id}/unban", body={}, token=admin_token)
+    check("重复解封被拒", r.get("code") != 0, str(r)[:120])
+    _d = _logs_q(action="user_unban", page_size=3)
+    check("解封动作也进操作日志", bool(_d.get("list")), str(_d.get("total")))
+
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 

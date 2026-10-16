@@ -75,6 +75,13 @@ def login():
     if user is None or not user.check_password(password):
         return fail("用户名或密码错误", 401)
 
+    # 新批需求①：被封禁的账号不能登录（到期自动解封；管理员不可被封禁，所以不在此列）
+    if user.is_banned:
+        info = user.ban_info() or {}
+        tip = "永久封禁" if info.get("forever") else f"解封时间 {info.get('until') or '—'}"
+        extra = f"，原因：{info.get('reason')}" if info.get("reason") else ""
+        return fail(f"该账号已被封禁（{tip}）{extra}", 403)
+
     if role == ROLE_ADMIN:
         if user.role != ROLE_ADMIN:
             return fail("该账号不是管理员，无法以管理员身份登录", 403)

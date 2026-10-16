@@ -2958,6 +2958,202 @@ async function feature26(cdp) {
   check('需求⑧：离开页面后定时器会被清掉（页面上已没有这些容器）', leftPolling === 0, `残留容器=${leftPolling}`);
 }
 
+/* ================================================================ 功能㉗ 用户管理 + 封禁（新批需求①） */
+async function feature27(cdp) {
+  console.log('\n===== 功能㉗ 管理员「用户管理」与封禁（需求①）=====');
+
+  async function ensureAccount(username, password) {
+    try {
+      return await login(username, password, 'buyer');
+    } catch {
+      await api('POST', '/api/auth/register', { body: { username, password } });
+      return login(username, password, 'buyer');
+    }
+  }
+  const adminToken = await login('admin', '123456', 'admin');
+  const victimToken = await ensureAccount('acc_buyer', '1234');
+  const victim = (await api('GET', '/api/auth/me', { token: victimToken })).data.user;
+  // 先确保它没被封（上一次跑挂了也不影响这次）
+  await api('POST', `/api/admin/users/${victim.id}/unban`, { token: adminToken, body: {} })
+    .catch(() => null);
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=users');
+  await waitFor(cdp, `document.querySelectorAll('#u-list tbody tr').length > 0`);
+  await sleep(600);
+
+  const tabInfo = await cdp.eval(`
+    (() => ({
+      tab: !!document.querySelector('[data-tab="users"]'),
+      active: document.querySelector('[data-tab="users"]')?.classList.contains('active') || false,
+      headers: [...document.querySelectorAll('#u-list thead th')].map(t => t.innerText.trim()),
+      rows: document.querySelectorAll('#u-list tbody tr').length,
+      summary: document.querySelector('#u-summary')?.innerText.trim() || '',
+    }))()`);
+  check('需求①：管理后台多了「用户管理」页签，且能列出用户与统计列',
+    tabInfo.tab && tabInfo.active && tabInfo.rows > 0
+    && tabInfo.headers.some(h => h.includes('好评率')) && /被封禁/.test(tabInfo.summary),
+    JSON.stringify(tabInfo).slice(0, 220));
+
+  // ---- 搜索 ----
+  await cdp.eval(`
+    (() => {
+      document.querySelector('#u-keyword').value = 'acc_buyer';
+      document.querySelector('#u-search').click();
+    })()`);
+  await sleep(1000);
+  const searched = await cdp.eval(`
+    (() => ({
+      rows: document.querySelectorAll('#u-list tbody tr').length,
+      text: document.querySelector('#u-list tbody')?.innerText.replace(/\\n/g, ' ').slice(0, 80) || '',
+    }))()`);
+  check('需求①：可按昵称 / 用户名搜索用户',
+    searched.rows >= 1 && /acc_buyer/.test(searched.text), JSON.stringify(searched));
+
+  // ---- 详情弹窗 ----
+  await cdp.eval(`document.querySelector('#u-list [data-detail]').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask .detail-h')`);
+  await sleep(500);
+  const detail = await cdp.eval(`
+    (() => {
+      const m = document.querySelector('.modal-mask');
+      const text = m.innerText;
+      return {
+        title: m.querySelector('.modal-head')?.innerText.trim() || '',
+        hasProfile: /用户信息/.test(text) && /注册时间/.test(text) && /好评率/.test(text),
+        hasStats: /在售/.test(text) && /参与订单/.test(text),
+        hasContent: /最近发布的商品/.test(text) && /最近发帖/.test(text) && /最近动作/.test(text),
+        hasBanBtn: !!m.querySelector('[data-ban]'),
+      };
+    })()`);
+  check('需求①：点「详情」能看用户个人信息主页与详细信息（资料 + 统计 + 最近内容与动作）',
+    detail.hasProfile && detail.hasStats && detail.hasContent,
+    JSON.stringify(detail).slice(0, 200));
+  check('需求①：详情里有「封禁用户」按钮', detail.hasBanBtn, detail.title);
+  await cdp.shot(path.join(SHOT_DIR, 'f27-user-detail.png'));
+  await cdp.eval(`document.querySelector('.modal-mask [data-close]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+
+  // ---- 封禁弹窗 ----
+  await cdp.eval(`document.querySelector('#u-list [data-ban]').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-field="duration"]')`);
+  await sleep(300);
+  const dialog = await cdp.eval(`
+    (() => {
+      const m = document.querySelector('.modal-mask');
+      return {
+        durations: [...m.querySelectorAll('[data-field="duration"] option')].map(o => o.innerText.trim()),
+        hasReason: !!m.querySelector('[data-field="reason"]'),
+      };
+    })()`);
+  check('需求①：封禁弹窗可选时长（含永久与自定义），并要求填原因',
+    dialog.durations.includes('1 天') && dialog.durations.includes('30 天')
+    && dialog.durations.includes('永久封禁') && dialog.durations.includes('自定义天数')
+    && dialog.hasReason,
+    JSON.stringify(dialog.durations));
+
+  // 不填原因直接提交 → 应被拦下
+  await cdp.eval(`document.querySelector('#fm-submit').click()`);
+  await sleep(800);
+  const blocked = await cdp.eval(`!!document.querySelector('.modal-mask [data-field="duration"]')`);
+  const stillNormal = (await api('GET', '/api/admin/users?keyword=acc_buyer',
+    { token: adminToken })).data.list[0]?.banned;
+  check('需求①：不填原因时封禁不会生效（弹窗仍在、用户仍是正常）',
+    blocked === true && stillNormal === false, JSON.stringify({ blocked, stillNormal }));
+
+  // 真正封禁：7 天 + 原因
+  await cdp.eval(`
+    (() => {
+      document.querySelector('.modal-mask [data-field="duration"]').value = '7';
+      document.querySelector('.modal-mask [data-field="reason"]').value = '自动化测试：违规内容';
+    })()`);
+  await cdp.eval(`document.querySelector('#fm-submit').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  await sleep(1200);
+
+  const afterBan = (await api('GET', '/api/admin/users?keyword=acc_buyer',
+    { token: adminToken })).data.list[0];
+  check('需求①：封禁后该用户状态变为「已封禁」且带解封时间',
+    afterBan.banned === true && afterBan.ban && afterBan.ban.forever === false
+    && !!afterBan.ban.until, JSON.stringify(afterBan.ban));
+
+  const loginTry = await api('POST', '/api/auth/login',
+    { body: { username: 'acc_buyer', password: '1234' } });
+  check('需求①：封禁后该账号登录被拒（提示原因）',
+    loginTry.code !== 0 && /封禁/.test(loginTry.msg || ''), JSON.stringify(loginTry.msg));
+
+  const writeTry = await api('POST', '/api/posts',
+    { token: victimToken, body: { title: '自动化测试：被封还想发帖', content: 'x', tag: '闲聊' } });
+  const readTry = await api('GET', '/api/products?page_size=1', { token: victimToken });
+  check('需求①：封禁期间写操作被拒、浏览仍可用',
+    writeTry.code !== 0 && readTry.code === 0,
+    `发帖 code=${writeTry.code}；浏览 code=${readTry.code}`);
+
+  const pm = (await api('GET', '/api/messages/conversations', { token: victimToken })).data;
+  check('需求①：封禁时会私信告知对方（含原因）',
+    pm.some(m => /封禁/.test((m.last_message || {}).content || '')),
+    JSON.stringify(pm.slice(0, 1)).slice(0, 160));
+
+  const logs = (await api('GET', '/api/admin/logs?action=user_ban&page_size=3',
+    { token: adminToken })).data;
+  check('需求①：封禁动作进了操作日志（动态监控可查）',
+    logs.total >= 1 && logs.list[0].action_text === '封禁用户',
+    JSON.stringify(logs.list[0] || {}).slice(0, 140));
+
+  // 列表按「已封禁」筛
+  await cdp.eval(`document.querySelector('#u-reset').click()`);
+  await sleep(900);
+  await cdp.eval(`
+    (() => {
+      const s = document.querySelector('#u-status');
+      s.value = 'banned';
+      s.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+  await sleep(1000);
+  const bannedList = await cdp.eval(`
+    (() => ({
+      rows: document.querySelectorAll('#u-list tbody tr').length,
+      text: document.querySelector('#u-list tbody')?.innerText.replace(/\\n/g, ' ') || '',
+    }))()`);
+  check('需求①：可按「已封禁」筛出被封的用户',
+    bannedList.rows >= 1 && /acc_buyer/.test(bannedList.text),
+    JSON.stringify(bannedList).slice(0, 160));
+  await cdp.shot(path.join(SHOT_DIR, 'f27-user-ban.png'));
+
+  // ---- 解封 ----
+  await cdp.eval(`document.querySelector('#u-list [data-unban]').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  await sleep(1200);
+  const afterUnban = (await api('GET', '/api/admin/users?keyword=acc_buyer',
+    { token: adminToken })).data.list[0];
+  const loginAgain = await api('POST', '/api/auth/login',
+    { body: { username: 'acc_buyer', password: '1234' } });
+  check('需求①：解封后状态恢复正常，且能重新登录',
+    afterUnban.banned === false && loginAgain.code === 0,
+    `banned=${afterUnban.banned}；登录 code=${loginAgain.code}`);
+
+  // ---- 管理员账号不能被封禁 ----
+  // 注意先把状态筛选重置回「全部」——上一段筛的是「已封禁」，管理员不会出现在里面
+  await cdp.eval(`document.querySelector('#u-reset').click()`);
+  await sleep(900);
+  await cdp.eval(`
+    (() => {
+      document.querySelector('#u-keyword').value = 'admin';
+      document.querySelector('#u-search').click();
+    })()`);
+  await sleep(1000);
+  const adminRow = await cdp.eval(`
+    (() => {
+      const row = [...document.querySelectorAll('#u-list tbody tr')]
+        .find(r => r.innerText.includes('@admin'));
+      return row ? { hasBan: !!row.querySelector('[data-ban]'), text: row.innerText.slice(0, 60) } : null;
+    })()`);
+  check('需求①：管理员账号在列表里没有「封禁」按钮',
+    adminRow && adminRow.hasBan === false, JSON.stringify(adminRow));
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -2986,6 +3182,7 @@ const GROUPS = {
   24: { title: '用户主页 + 私信入口（新批需求⑤）', fn: feature24 },
   25: { title: '订单新状态红点（新批需求⑥）', fn: feature25 },
   26: { title: '页面状态自动更新（新批需求⑧）', fn: feature26 },
+  27: { title: '用户管理 + 封禁（新批需求①）', fn: feature27 },
 };
 
 async function main() {
