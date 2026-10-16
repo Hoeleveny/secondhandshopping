@@ -19,10 +19,12 @@ export const store = {
   get isAdmin() { return this.user?.role === 'admin'; },
   get nickname() { return this.user?.nickname || ''; },
 
-  /** 普通用户可以在买家 / 卖家两个视角之间切换；管理员不行 */
-  get canSwitchView() {
-    return Boolean(this.user) && this.user.role !== 'admin';
-  },
+  /**
+   * 需求④：已取消「买家 / 卖家」身份切换——同一个账号既能买也能卖，
+   * 没有可切换的身份。`view` 现在只是「账号角色」（buyer / seller / admin），
+   * 仍有几处（如无议）在读它，所以字段保留，但不再有任何切换入口。
+   */
+  get canSwitchView() { return false; },
 
   setAuth(token, user, view) {
     this.token = token || '';
@@ -39,10 +41,8 @@ export const store = {
   },
 
   switchView(view) {
-    if (!this.canSwitchView) return;
-    this.view = view;
-    localStorage.setItem(VIEW_KEY, view);
-    this.emit();
+    // 保留空实现：老代码或旧缓存里的调用不会再造成「视角切换」的假象
+    void view;
   },
 
   clearAuth() {

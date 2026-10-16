@@ -154,14 +154,17 @@ async function checkTopbar(cdp) {
     })()`);
   check('主题切换器是顶栏最后一个子元素，且全站只有一个',
     bar.switcherCount === 1 && bar.lastIsSwitcher, JSON.stringify(bar));
-  check('原有顶栏元素顺序未变（品牌 → 滑块 → 搜索 → 右侧）',
-    bar.kids.slice(0, 4).join('|') === 'brand|view-switch|search-box|topbar-right'
-    && bar.kids.length === 5,
+  check('顶栏元素顺序（需求④ 去掉了身份滑块：品牌 → 搜索 → 右侧 → 主题切换器）',
+    bar.kids.slice(0, 3).join('|') === 'brand|search-box|topbar-right'
+    && bar.kids.length === 4,
     `实际子元素=${JSON.stringify(bar.kids)}`);
+  check('需求④：顶栏不再有「买家 / 卖家」身份滑块',
+    await cdp.eval(`!document.querySelector('#view-toggle') && !document.querySelector('.view-switch')`) === true,
+    JSON.stringify(bar.kids));
   check('三胶囊为 纸白 / 墨黑 / 米杏',
     bar.pills.join('') === '纸白墨黑米杏', JSON.stringify(bar.pills));
 
-  // 游客与管理员视角也各看一眼（管理员没有身份滑块）
+  // 游客也看一眼（需求④ 之后任何人都不再有身份滑块）
   await cdp.logout();
   await cdp.go('/home');
   const guest = await cdp.eval(`

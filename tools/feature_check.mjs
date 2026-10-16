@@ -2461,6 +2461,154 @@ async function feature22(cdp) {
   check('游客点举报会被引导去登录', true, '');
 }
 
+/* ================================================================ 功能㉓ 买卖身份合并（新批需求④） */
+async function feature23(cdp) {
+  console.log('\n===== 功能㉓ 取消买家/卖家身份切换、功能合并（需求④）=====');
+
+  async function ensureAccount(username, password) {
+    try {
+      return await login(username, password, 'buyer');
+    } catch {
+      await api('POST', '/api/auth/register', { body: { username, password } });
+      return login(username, password, 'buyer');
+    }
+  }
+
+  // ---- 1. 顶栏没有身份滑块了，菜单买卖合一 ----
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go('/home');
+  // 等菜单渲染出来再断言：否则可能读到空页面，而「没有滑块」这类否定断言在空页面上会假通过
+  await waitFor(cdp, `document.querySelectorAll('.menu-item').length > 0`);
+  await sleep(400);
+  const buyer = await cdp.eval(`
+    (() => ({
+      hasSwitch: !!document.querySelector('#view-toggle'),
+      switchDom: !!document.querySelector('.view-switch'),
+      menu: [...document.querySelectorAll('.menu-item')].map(m => m.innerText.trim()),
+    }))()`);
+  check('需求④：顶栏不再有「买家 / 卖家」身份滑块',
+    !buyer.hasSwitch && !buyer.switchDom, JSON.stringify({ hasSwitch: buyer.hasSwitch }));
+  // 注意：menu 是数组，includes(x) 是「整体精确等于 x」，这里要用 some + 子串判断
+  check('需求④：菜单买卖合一（发布商品 / 我的商品 / 我的订单同时出现，且不再有「卖出订单」）',
+    buyer.menu.some(t => t.includes('发布商品')) && buyer.menu.some(t => t.includes('我的商品'))
+    && buyer.menu.some(t => t.includes('我的订单')) && !buyer.menu.some(t => t.includes('卖出订单')),
+    JSON.stringify(buyer.menu));
+
+  // 换个「卖家」账号登录，菜单应当完全一样（不再有买家/卖家之分）
+  await cdp.loginAs('seller1', '123456', 'seller');
+  await cdp.go('/home');
+  await waitFor(cdp, `document.querySelectorAll('.menu-item').length > 0`);
+  await sleep(400);
+  const sellerMenu = await cdp.eval(`
+    [...document.querySelectorAll('.menu-item')].map(m => m.innerText.trim())`);
+  check('需求④：卖家账号与买家账号看到的菜单完全一致',
+    JSON.stringify(sellerMenu) === JSON.stringify(buyer.menu),
+    `卖家=${JSON.stringify(sellerMenu)}`);
+
+  // ---- 2. 登录页不再要求选身份 ----
+  await cdp.logout();
+  await cdp.go('/login');
+  await waitFor(cdp, `!!document.querySelector('#role-pick')`);
+  const loginUi = await cdp.eval(`
+    (() => ({
+      choices: [...document.querySelectorAll('#role-pick input')].map(i => i.value),
+      texts: [...document.querySelectorAll('#role-pick label')].map(l => l.innerText.trim()),
+    }))()`);
+  check('需求④：登录页不再有「买家 / 卖家」二选一，只保留普通用户与管理员',
+    !loginUi.choices.includes('buyer') && !loginUi.choices.includes('seller')
+    && loginUi.choices.includes('user') && loginUi.choices.includes('admin'),
+    JSON.stringify(loginUi));
+
+  const ok = await cdp.eval(`
+    (async () => {
+      const r = await fetch('/api/auth/login', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'buyer1', password: '123456' }) });
+      const j = await r.json();
+      return { code: j.code, view: j.data?.view };
+    })()`);
+  check('需求④：普通用户不选身份也能登录成功', ok.code === 0, JSON.stringify(ok));
+
+  // ---- 3. 订单页：买/卖页签 + 身份徽标 ----
+  // 造一笔「我是卖家」的单：buyer1 发布商品，另一个测试账号买下
+  const sellerToken = await login('buyer1', '123456', 'buyer');
+  const buyerToken = await ensureAccount('acc_buyer', '1234');
+  const product = (await api('POST', '/api/products', {
+    token: sellerToken,
+    body: { name: '自动化测试：身份合并用', price: 17, category_id: 1, subcategory_id: 1,
+            condition: '九成新', description: '身份合并用', default_place_id: 2, images: [] },
+  })).data;
+  await api('POST', '/api/orders', {
+    token: buyerToken, body: { product_id: product.id, meet_place_id: 2 },
+  });
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go('/orders');
+  await waitFor(cdp, `document.querySelectorAll('#side-tabs .tab').length > 0`);
+  await sleep(800);
+  const tabs = await cdp.eval(`
+    [...document.querySelectorAll('#side-tabs .tab')].map(t => t.innerText.trim())`);
+  check('需求④：「我的订单」顶部有「全部订单 / 我买到的 / 我卖出的」三个页签',
+    tabs.join('') === '全部订单我买到的我卖出的', JSON.stringify(tabs));
+
+  const allView = await cdp.eval(`
+    (() => ({
+      roles: [...new Set([...document.querySelectorAll('.role-flag')].map(e => e.innerText.trim()))],
+      cards: document.querySelectorAll('#list-area .card').length,
+    }))()`);
+  check('需求④：默认「全部订单」里每张单都标出了我在交易里的身份（我是买家 / 我是卖家）',
+    allView.cards > 0 && allView.roles.length > 0
+    && allView.roles.every(r => r === '我是买家' || r === '我是卖家'),
+    JSON.stringify({ cards: allView.cards, roles: allView.roles }));
+
+  // 切到「我卖出的」：只剩卖家身份的单，且有买家信息、没有「取消订单」
+  await cdp.eval(`[...document.querySelectorAll('#side-tabs .tab')]
+    .find(t => t.innerText.includes('我卖出的')).click()`);
+  await waitFor(cdp, `!document.querySelector('#list-area .loading')`);
+  await sleep(900);
+  const sellView = await cdp.eval(`
+    (() => ({
+      roles: [...new Set([...document.querySelectorAll('.role-flag')].map(e => e.innerText.trim()))],
+      cards: document.querySelectorAll('#list-area .card').length,
+      hash: location.hash,
+      hasBuyerLine: /买家：/.test(document.querySelector('#list-area')?.innerText || ''),
+      cancelBtns: document.querySelectorAll('#list-area [data-act="cancel"]').length,
+    }))()`);
+  check('需求④：「我卖出的」里只剩卖家身份的单，显示买家信息、且没有「取消订单」（那是买家才有的）',
+    sellView.cards > 0 && sellView.roles.join('') === '我是卖家'
+    && sellView.hasBuyerLine && sellView.cancelBtns === 0,
+    JSON.stringify(sellView));
+  check('需求④：切页签会同步到地址（可直达 / 可刷新）',
+    sellView.hash.includes('side=seller'), sellView.hash);
+  await cdp.shot(path.join(SHOT_DIR, 'f23-merged-orders.png'));
+
+  // 我买到的：只剩买家身份
+  await cdp.eval(`[...document.querySelectorAll('#side-tabs .tab')]
+    .find(t => t.innerText.includes('我买到的')).click()`);
+  await waitFor(cdp, `!document.querySelector('#list-area .loading')`);
+  await sleep(900);
+  const buyView = await cdp.eval(`
+    (() => ({
+      roles: [...new Set([...document.querySelectorAll('.role-flag')].map(e => e.innerText.trim()))],
+      cards: document.querySelectorAll('#list-area .card').length,
+    }))()`);
+  check('需求④：「我买到的」里只剩买家身份的单',
+    buyView.cards > 0 && buyView.roles.join('') === '我是买家', JSON.stringify(buyView));
+
+  // ---- 4. 老路由 #/sold 仍可用，默认落在「我卖出的」----
+  await cdp.go('/sold');
+  await waitFor(cdp, `document.querySelectorAll('#side-tabs .tab').length > 0`);
+  await sleep(800);
+  const legacy = await cdp.eval(`
+    (() => ({
+      active: document.querySelector('#side-tabs .tab.active')?.innerText.trim() || '',
+      roleFlags: [...new Set([...document.querySelectorAll('.role-flag')].map(e => e.innerText.trim()))],
+    }))()`);
+  check('需求④：老路由 #/sold 仍然能用，并默认落在「我卖出的」',
+    legacy.active.includes('我卖出的') && !legacy.roleFlags.includes('我是买家'),
+    JSON.stringify(legacy));
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -2485,6 +2633,7 @@ const GROUPS = {
   20: { title: '举报审核进详情后原路返回（需求⑤）', fn: feature20 },
   21: { title: '卖家侧交易收尾（需求⑥）', fn: feature21 },
   22: { title: '帖子举报入口（新批需求③）', fn: feature22 },
+  23: { title: '买卖身份合并（新批需求④）', fn: feature23 },
 };
 
 async function main() {

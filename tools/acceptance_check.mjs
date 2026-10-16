@@ -268,37 +268,40 @@ async function check1_2() {
 }
 
 /* ================================================================ 3
-   普通用户登录后可用滑块钮切换买家/卖家，菜单随之变化 */
+   需求④（用户 2026-10-16 明确要求，覆盖 PRD 原文）：
+   取消「买家 / 卖家」身份切换，两者功能合并 —— 登录后菜单买卖合一、无身份滑块，
+   订单页内部用「我买到的 / 我卖出的」页签区分，每张单标出我的身份 */
 async function check3() {
   await cdp.loginAs('buyer1', '123456', 'buyer');
   await cdp.go('/home');
-  const before = await cdp.eval(`
+  const shell = await cdp.eval(`
     (() => ({
       hasSwitch: !!document.querySelector('#view-toggle'),
       menuText: [...document.querySelectorAll('.menu-item')].map(m => m.innerText.trim()).join(' | '),
       avatar: document.querySelector('#user-menu')?.innerText.trim() || '',
     }))()`);
-  await cdp.eval(`document.querySelector('#view-toggle').click()`);
-  await sleep(700);
-  const after = await cdp.eval(`
+
+  await cdp.go('/orders');
+  await waitFor(cdp, `document.querySelectorAll('#side-tabs .tab').length > 0`);
+  const ordersUi = await cdp.eval(`
     (() => ({
-      menuText: [...document.querySelectorAll('.menu-item')].map(m => m.innerText.trim()).join(' | '),
-      knobMoved: document.querySelector('#view-toggle')?.classList.contains('seller'),
+      sideTabs: [...document.querySelectorAll('#side-tabs .tab')].map(t => t.innerText.trim()),
+      roleFlags: [...document.querySelectorAll('.role-flag')].map(t => t.innerText.trim()),
     }))()`);
-  await cdp.eval(`document.querySelector('#view-toggle').click()`);  // 切回
-  await sleep(500);
 
-  const passed = before.hasSwitch
-    && before.menuText.includes('我的订单') && before.menuText.includes('我的收藏')
-    && after.menuText.includes('发布商品') && after.menuText.includes('卖出订单') && after.knobMoved
-    && !after.menuText.includes('我的订单');
+  const passed = !shell.hasSwitch
+    && shell.menuText.includes('我的订单') && shell.menuText.includes('我的商品')
+    && shell.menuText.includes('发布商品') && !shell.menuText.includes('卖出订单')
+    && ordersUi.sideTabs.join('') === '全部订单我买到的我卖出的'
+    && ordersUi.roleFlags.length > 0;
 
-  record(3, '普通用户登录后可用顶栏滑块钮切换买家/卖家，菜单随之变化', passed,
-    `买家菜单「${before.menuText}」 ⇒ 卖家菜单「${after.menuText}」；滑块位移=${after.knobMoved}`);
+  record(3, '需求④：取消买家/卖家身份切换，功能合并（菜单合一 + 订单页买/卖页签 + 身份徽标）',
+    passed,
+    `身份滑块=${shell.hasSwitch}；菜单「${shell.menuText}」；订单页签=${JSON.stringify(ordersUi.sideTabs)}；徽标=${JSON.stringify([...new Set(ordersUi.roleFlags)])}`);
 }
 
 /* ================================================================ 4
-   管理员登录后不显示滑块钮 */
+   管理员是独立入口：登录页必须显式选「管理员」，登录后菜单只有管理后台与数据看板 */
 async function check4() {
   await cdp.loginAs('admin', '123456', 'admin');
   await cdp.go('/home');
@@ -317,9 +320,10 @@ async function check4() {
       return (await r.json()).code;
     })()`);
 
-  record(4, '管理员登录后顶栏不显示滑块钮，普通用户无法切到管理员',
-    !adminUi.hasSwitch && adminUi.menuText.includes('管理后台') && guard === 403,
-    `管理员滑块钮存在=${adminUi.hasSwitch}，菜单「${adminUi.menuText}」；普通用户调管理接口返回 code=${guard}`);
+  record(4, '管理员是独立入口：普通用户进不了管理后台，界面也不混在一起',
+    !adminUi.hasSwitch && adminUi.menuText.includes('管理后台')
+    && !adminUi.menuText.includes('我的订单') && guard === 403,
+    `管理员菜单「${adminUi.menuText}」；普通用户调管理接口返回 code=${guard}`);
 }
 
 /* ================================================================ 5

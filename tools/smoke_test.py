@@ -221,9 +221,23 @@ def main() -> int:
           status == 200 and (res.get("data") or {}).get("user", {}).get("username") == "smoke_buyer",
           str(res)[:200])
 
+    # 需求④：不再有「买家 / 卖家视角切换」。带了 X-View-Role 也不再影响返回（视同不存在），
+    # 而且 /api/auth/me 的 view 现在就是账号自己的角色。
     status, res = call("GET", "/api/auth/me", token=token, view="seller")
-    check("身份视角切换（X-View-Role: seller）",
-          (res.get("data") or {}).get("view") == "seller", str(res)[:200])
+    check("需求④：带 X-View-Role 也不再改变身份（视角切换已取消）",
+          (res.get("data") or {}).get("view") == "buyer", str(res)[:200])
+
+    # 需求④：普通用户登录不用再选身份；管理员必须显式选「管理员」
+    _st, res = call("POST", "/api/auth/login",
+                    body={"username": "smoke_buyer", "password": "1234"})
+    check("需求④：普通用户不选身份也能登录", res.get("code") == 0, str(res)[:150])
+    _st, res = call("POST", "/api/auth/login",
+                    body={"username": "admin", "password": "123456"})
+    check("需求④：管理员不带身份登录会被拒（避免误登后台）",
+          res.get("code") != 0, str(res)[:150])
+    _st, res = call("POST", "/api/auth/login",
+                    body={"username": "buyer1", "password": "123456", "role": "admin"})
+    check("需求④：普通用户冒充管理员登录被拒", res.get("code") != 0, str(res)[:150])
 
     status, res = call("GET", "/api/auth/me")
     check("未登录访问 /api/auth/me 返回 401", status == 401, str(res)[:150])
@@ -385,6 +399,29 @@ def main() -> int:
     status, res = call("GET", "/api/orders/mine?status=pending", token=token)
     mine_ids = [o["id"] for o in (res.get("data") or {}).get("list", [])]
     check("订单出现在「我的订单」", order_id in mine_ids, str(mine_ids)[:150])
+
+    # 需求④：买家/卖家订单页合并，靠 side 参数与 my_role 区分
+    status, res = call("GET", "/api/orders/mine?side=all&page_size=50", token=token)
+    _all = res.get("data") or {}
+    _roles = sorted({o.get("my_role") for o in _all.get("list") or []})
+    check("需求④：订单列表 side=all 能一次拿到买/卖两侧，且每条带 my_role",
+          status == 200 and _all.get("side") == "all" and bool(_roles)
+          and set(_roles) <= {"buyer", "seller"},
+          f"side=all -> {_all.get('total')} 条，角色={_roles}")
+    status, res = call("GET", "/api/orders/sold?page_size=50", token=seller_token)
+    check("需求④：卖掉这一侧仍能单独取（老接口保留，兼容既有调用）",
+          status == 200 and "list" in (res.get("data") or {}), str(res)[:120])
+    status, res = call("GET", "/api/orders/mine?side=seller&page_size=50", token=seller_token)
+    _sell = res.get("data") or {}
+    check("需求④：side=seller 返回的全是「我卖出的」",
+          bool(_sell.get("list")) and all(o.get("my_role") == "seller" for o in _sell["list"]),
+          f"{_sell.get('total')} 条")
+    status, res = call("GET", "/api/orders/mine?side=xxx", token=token)
+    check("需求④：side 取值不合法时被拒", res.get("code") != 0, str(res)[:120])
+    status, res = call("GET", "/api/orders/mine?page_size=5", token=token)
+    check("需求④：不带 side 时默认仍是买家侧（老调用不受影响）",
+          all(o.get("my_role") == "buyer" for o in (res.get("data") or {}).get("list") or []),
+          str(res)[:120])
 
     status, res = call("GET", "/api/orders/sold", token=seller_token)
     sold_ids = [o["id"] for o in (res.get("data") or {}).get("list", [])]

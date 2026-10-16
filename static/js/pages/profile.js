@@ -70,7 +70,7 @@ export default {
           </div>
           <div class="form-row">
             <label>账号身份</label>
-            <input class="input" value="${user.role === 'admin' ? '管理员' : (user.role === 'seller' ? '卖家（可切换买家视角）' : '买家（可切换卖家视角）')}" disabled>
+            <input class="input" value="${user.role === 'admin' ? '管理员' : '普通用户（既能买也能卖）'}" disabled>
           </div>
           <div class="form-row">
             <label>商家好评率</label>

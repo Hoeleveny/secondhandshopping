@@ -324,6 +324,12 @@ class Order(db.Model):
             self.status == ORDER_PENDING
             and viewer_id in (self.buyer_id, self.seller_id)
         )
+        # 需求④：一个账号既可能买也可能卖，所以要告诉前端「我在这笔交易里是谁」，
+        # 卡片据此显示徽标、也据此决定哪些按钮该出现（取消订单只有买家有）。
+        data["my_role"] = (
+            "buyer" if viewer_id == self.buyer_id
+            else ("seller" if viewer_id == self.seller_id else None)
+        )
         data["can_see_location"] = can_see_location
         if can_see_location:
             data["buyer_location"] = _loc(self.buyer_lng, self.buyer_lat)

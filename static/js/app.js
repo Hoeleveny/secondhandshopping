@@ -32,10 +32,13 @@ const M = {
 
 const MENUS = {
   guest: [M.search, M.compare, M.posts],
-  buyer: [M.search, M.compare, M.orders, M.favorites, M.swaps, M.posts],
-  seller: [M.publish, M.myProducts, M.sold, M.swaps, M.posts],
+  // 需求④：买家 / 卖家菜单合并成一套——同一个账号既能买也能卖，
+  // 所以「发布商品 / 我的商品 / 我的订单」同时出现，订单页内部再分「我买到的 / 我卖出的」。
+  user: [M.search, M.compare, M.orders, M.myProducts, M.publish, M.favorites, M.swaps, M.posts],
   admin: [M.admin, M.dashboard],
 };
+MENUS.buyer = MENUS.user;      // 兼容旧引用（老 localStorage 里的 view / 旧测试）
+MENUS.seller = MENUS.user;
 
 /* ---------------------------------------------------------------- 路由表 */
 // auth: 'any' 公开 | 'required' 需登录 | 'admin' 仅管理员
@@ -63,10 +66,11 @@ const ROUTES = [
 ];
 
 /* ---------------------------------------------------------------- 工具 */
+// 需求④：取消「买家 / 卖家」身份切换后，登录用户只有一种外壳（管理员另算）。
 function currentViewKey() {
   if (!store.isLoggedIn) return 'guest';
   if (store.isAdmin) return 'admin';
-  return store.view === 'seller' ? 'seller' : 'buyer';
+  return 'user';
 }
 
 function parseHash() {
@@ -101,21 +105,13 @@ export function go(hash) {
 
 /* ---------------------------------------------------------------- 顶栏 */
 function topbarHtml(viewKey) {
-  const switchHtml = store.canSwitchView ? `
-    <div class="view-switch">
-      <span class="vs-label ${viewKey === 'buyer' ? 'on' : ''}" data-view="buyer">买家</span>
-      <button class="switch ${viewKey === 'seller' ? 'seller' : ''}" id="view-toggle"
-              title="在买家 / 卖家视角之间切换"><span class="knob"></span></button>
-      <span class="vs-label ${viewKey === 'seller' ? 'on' : ''}" data-view="seller">卖家</span>
-    </div>` : '';
-
   const rightHtml = store.isLoggedIn ? `
     <button class="avatar-btn" id="user-menu" style="position:relative">
       <span class="avatar-dot">${store.user?.avatar
         ? `<img src="/uploads/${encodeURIComponent(store.user.avatar)}" alt="">`
         : esc(initials(store.nickname))}</span>
       <span>${esc(store.nickname)}</span>
-      <span class="muted small">${store.isAdmin ? '管理员' : (viewKey === 'seller' ? '卖家视角' : '买家视角')}</span>
+      <span class="muted small">${store.isAdmin ? '管理员' : '用户'}</span>
       <span class="badge badge-danger" id="msg-badge"
             style="display:none;position:absolute;top:-3px;left:-3px">0</span>
     </button>` : `
@@ -124,7 +120,6 @@ function topbarHtml(viewKey) {
   return `
     <header class="topbar">
       <button class="brand" id="brand-home" title="回到首页">🌿 校园二手集市</button>
-      ${switchHtml}
       <form class="search-box" id="top-search">
         <input type="text" placeholder="搜索想要的二手物品，回车搜索" id="top-search-input">
         <button type="submit">搜索</button>
@@ -138,7 +133,7 @@ function sidebarHtml(viewKey, activeMenu) {
     <button class="menu-item ${item.key === activeMenu ? 'active' : ''}" data-hash="${item.hash}">
       <span class="mi-icon">${item.icon}</span><span>${item.label}</span>
     </button>`).join('');
-  const titles = { guest: '游客浏览', buyer: '买家视角', seller: '卖家视角', admin: '管理员' };
+  const titles = { guest: '游客浏览', user: '我的集市', admin: '管理员' };
   return `<aside class="sidebar">
       <div class="menu-title">${titles[viewKey] || ''}</div>
       ${items}
@@ -169,19 +164,21 @@ function renderLoginPage(query) {
                    autocomplete="current-password" placeholder="至少 4 位">
           </div>
           <div class="form-row" id="role-row">
-            <label>登录身份<span class="req">*</span></label>
+            <label>账号类型</label>
             <div class="role-pick" id="role-pick">
-              <label><input type="radio" name="role" value="buyer" checked><span>🧑‍🎓 买家</span></label>
-              <label><input type="radio" name="role" value="seller"><span>🏪 卖家</span></label>
+              <label><input type="radio" name="role" value="user" checked><span>🧑‍🎓 普通用户</span></label>
               <label class="admin-only" style="display:none"><input type="radio" name="role" value="admin"><span>🛡️ 管理员</span></label>
+            </div>
+            <div class="muted small" style="margin-top:6px">
+              普通用户不再区分「买家 / 卖家」——同一个账号既能买也能卖。
             </div>
           </div>
           <button class="btn btn-primary btn-lg btn-block" type="submit" id="auth-submit">登 录</button>
         </form>
         <div class="auth-tip">
           演示账号（密码均为 <b>123456</b>）：<br>
-          买家 buyer1 / buyer2　卖家 seller1 / seller2 / seller3<br>
-          管理员 admin（需选「管理员」身份）
+          buyer1 / buyer2 / seller1 / seller2 / seller3（都是普通用户）<br>
+          管理员 admin（需把「账号类型」切到「管理员」）
         </div>
       </div>
     </div>`;
@@ -197,8 +194,9 @@ function renderLoginPage(query) {
       el.style.display = mode === 'login' ? '' : 'none';
     });
     if (mode === 'register') {
+      // 注册不允许选管理员
       const adminRadio = root.querySelector('input[value="admin"]');
-      if (adminRadio && adminRadio.checked) root.querySelector('input[value="buyer"]').checked = true;
+      if (adminRadio && adminRadio.checked) root.querySelector('input[value="user"]').checked = true;
     }
     root.querySelector('#auth-submit').textContent = mode === 'login' ? '登 录' : '注 册';
     root.querySelector('#f-password').setAttribute(
@@ -223,14 +221,17 @@ function renderLoginPage(query) {
     const submit = root.querySelector('#auth-submit');
     const username = root.querySelector('#f-username').value.trim();
     const password = root.querySelector('#f-password').value;
-    const role = root.querySelector('input[name="role"]:checked').value;
+    // 需求④：只有「管理员」需要显式声明；普通用户不带 role，后端按账号自身角色进
+    const picked = root.querySelector('input[name="role"]:checked').value;
 
     if (!username) { toast('请输入用户名', 'warn'); return; }
     if (password.length < 4) { toast('密码至少 4 位', 'warn'); return; }
 
     submit.disabled = true;
     try {
-      const data = await api.post(`/api/auth/${mode}`, { username, password, role });
+      const body = { username, password };
+      if (picked === 'admin') body.role = 'admin';
+      const data = await api.post(`/api/auth/${mode}`, body);
       store.setAuth(data.token, data.user, data.view);
       toast(mode === 'login' ? '登录成功' : '注册成功，已自动登录');
       go(next || (data.user.role === 'admin' ? '#/admin' : '#/home'));
@@ -266,18 +267,8 @@ function bindShellEvents() {
   // 左上角站名即「回首页」入口（左侧功能列不再单独放「首页」按钮）
   root.querySelector('#brand-home')?.addEventListener('click', () => go('#/home'));
 
-  const toggle = root.querySelector('#view-toggle');
-  if (toggle) toggle.addEventListener('click', () => {
-    store.switchView(store.view === 'seller' ? 'buyer' : 'seller');
-    toast(`已切换到${store.view === 'seller' ? '卖家' : '买家'}视角`);
-    render();
-  });
-
-  root.querySelectorAll('[data-view]').forEach(el =>
-    el.addEventListener('click', () => {
-      const target = el.dataset.view;
-      if (target !== store.view) { store.switchView(target); render(); }
-    }));
+  // 需求④：原来的「买家 ⇄ 卖家」身份滑块与标签点击都去掉了——
+  // 同一个账号既能买也能卖，没有需要切换的「身份」。
 
   const loginBtn = root.querySelector('#go-login');
   if (loginBtn) loginBtn.addEventListener('click', () => go('#/login'));
@@ -344,7 +335,7 @@ function bindShellEvents() {
 }
 
 function viewKeyLabel() {
-  return store.view === 'seller' ? '卖家视角' : '买家视角';
+  return store.isAdmin ? '管理员' : '用户';
 }
 
 /** 顶栏未读私信红点 */

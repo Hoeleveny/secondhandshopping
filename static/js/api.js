@@ -15,7 +15,7 @@ class ApiError extends Error {
 async function request(method, path, options = {}) {
   const headers = {};
   if (store.token) headers['Authorization'] = `Bearer ${store.token}`;
-  if (store.view) headers['X-View-Role'] = store.view;
+  // 需求④ 起不再发送 X-View-Role：买家/卖家是同一个账号的两种用法，没有「视角」可切。
 
   let body;
   if (options.json !== undefined) {

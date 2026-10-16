@@ -1,11 +1,17 @@
 /* ==========================================================================
-   M06 我的订单（买家）/ 卖出订单（卖家）
+   M06 我的订单（需求④：买家 / 卖家合并成一个页面）
    ========================================================================== */
 import { api, qs } from '../api.js';
 import { orderCardHtml } from '../components.js';
 import {
   confirmDialog, emptyHtml, go, openModal, renderPagination, starPicker, toast,
 } from '../ui.js';
+
+const SIDE_TABS = [
+  { key: 'all', label: '全部订单' },
+  { key: 'buyer', label: '我买到的' },
+  { key: 'seller', label: '我卖出的' },
+];
 
 const STATUS_TABS = [
   { key: 'all', label: '全部' },
@@ -14,40 +20,66 @@ const STATUS_TABS = [
   { key: 'canceled', label: '已取消' },
 ];
 
+const EMPTY_TEXT = {
+  all: '还没有任何订单',
+  buyer: '你还没有买过东西',
+  seller: '还没有人买你的商品',
+};
+
 export default {
   async render(root, ctx) {
-    const isSellerSide = ctx.path === '/sold';
-    const side = isSellerSide ? 'seller' : 'buyer';
-    const endpoint = isSellerSide ? '/api/orders/sold' : '/api/orders/mine';
-    const baseHash = isSellerSide ? '#/sold' : '#/orders';
-
+    // 需求④：买家订单页与卖出订单页合并。
+    // 老路由 #/sold 继续可用，只是默认落在「我卖出的」，老链接/书签不会失效。
+    const legacySold = ctx.path === '/sold';
+    let side = ctx.query.side || (legacySold ? 'seller' : 'all');
+    if (!SIDE_TABS.some(t => t.key === side)) side = 'all';
     let status = ctx.query.status || 'all';
     let page = Number(ctx.query.page) || 1;
 
     root.innerHTML = `
       <div class="page-head">
-        <h1>${isSellerSide ? '卖出订单' : '我的订单'}</h1>
-        <span class="muted small">${isSellerSide
-          ? '别人买了你的商品后，订单会出现在这里'
-          : '下单后与卖家当面交易，完成后记得确认并评价'}</span>
+        <h1>我的订单</h1>
+        <span class="muted small">买卖用的是同一个账号，每张单上都标了「我在这笔交易里是买家还是卖家」</span>
       </div>
-      <div class="tabs" id="tabs"></div>
+      <div class="tabs" id="side-tabs"></div>
+      <div class="tabs mt-8" id="tabs"></div>
       <div id="list-area"></div>
       <div class="pagination" id="pager"></div>`;
 
+    const sideTabsEl = root.querySelector('#side-tabs');
     const tabsEl = root.querySelector('#tabs');
     const listArea = root.querySelector('#list-area');
     const pager = root.querySelector('#pager');
+
+    // 记住这一页拿到的订单，供按钮回调判断「我在这张单里是谁」
+    let loaded = [];
+
+    function syncHash() {
+      history.replaceState(null, '', `#/orders${qs({ side, status, page })}`);
+    }
 
     async function load() {
       listArea.innerHTML = `<div class="loading"><div class="spinner"></div>加载中…</div>`;
       let data;
       try {
-        data = await api.get(`${endpoint}${qs({ status, page, page_size: 8 })}`);
+        data = await api.get(`/api/orders/mine${qs({ side, status, page, page_size: 8 })}`);
       } catch (err) {
         listArea.innerHTML = emptyHtml(`加载失败：${err.message}`, '😵');
         return;
       }
+      loaded = data.list || [];
+
+      sideTabsEl.innerHTML = SIDE_TABS.map(tab => `
+        <button class="tab ${tab.key === side ? 'active' : ''}" data-side="${tab.key}">
+          ${tab.label}
+        </button>`).join('');
+      sideTabsEl.querySelectorAll('[data-side]').forEach(btn =>
+        btn.addEventListener('click', () => {
+          side = btn.dataset.side;
+          page = 1;
+          syncHash();
+          load();
+        }));
 
       tabsEl.innerHTML = STATUS_TABS.map(tab => `
         <button class="tab ${tab.key === status ? 'active' : ''}" data-status="${tab.key}">
@@ -57,13 +89,13 @@ export default {
         btn.addEventListener('click', () => {
           status = btn.dataset.status;
           page = 1;
-          history.replaceState(null, '', `${baseHash}${qs({ status, page })}`);
+          syncHash();
           load();
         }));
 
-      listArea.innerHTML = data.list.length
-        ? data.list.map(order => orderCardHtml(order, side)).join('')
-        : emptyHtml(isSellerSide ? '还没有卖出记录' : '你还没有下过单', '📦');
+      listArea.innerHTML = loaded.length
+        ? loaded.map(order => orderCardHtml(order, order.my_role || (side === 'seller' ? 'seller' : 'buyer'))).join('')
+        : emptyHtml(EMPTY_TEXT[side] || EMPTY_TEXT.all, '📦');
 
       listArea.querySelectorAll('[data-act]').forEach(btn =>
         btn.addEventListener('click', () => handle(btn.dataset.act, btn.dataset.id)));
@@ -81,10 +113,13 @@ export default {
       if (act === 'map') { go(`#/order/${id}/map`); return; }
       if (act === 'review') { openReviewModal(id, load); return; }
 
+      const order = loaded.find(o => String(o.id) === String(id));
+      const myRole = order?.my_role || side;
+
       if (act === 'complete') {
         const sure = await confirmDialog({
           title: '确认交易已完成？',
-          message: '确认后订单变为「已完成」，就可以评价对方了。',
+          message: '确认后订单变为「已完成」，就可以评价对方了。线下交付完成后，买卖任一方确认都可以。',
           okText: '确认完成',
         });
         if (!sure) return;
@@ -110,11 +145,13 @@ export default {
         return;
       }
 
-      // 功能④：买家删除自己的订单记录
+      // 功能④ / 需求⑥：买卖双方各自可以删掉自己那一侧的订单记录（只对自己隐藏）
       if (act === 'del-order') {
         const sure = await confirmDialog({
           title: '删除这条订单记录？', danger: true, okText: '删除记录',
-          message: '删掉后你自己的订单列表里不再显示它；卖家那边的成交记录与评价都保留。',
+          message: myRole === 'seller'
+            ? '只从你的「我卖出的」里移除，买家那边不受影响；交易与评价数据都保留。'
+            : '只从你的「我买到的」里移除，卖家那边的成交记录与评价都保留。',
         });
         if (!sure) return;
         try {

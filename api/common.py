@@ -35,19 +35,18 @@ def current_user() -> User | None:
 
 
 def current_role() -> str | None:
-    """当前视角：普通用户登录时前端会带 X-View-Role 头在 buyer/seller 间切换。
+    """当前账号的角色（admin / buyer / seller）。
 
-    注意（重要设计）：买家 / 卖家只是同一个普通账号的两个「视角」，
-    二者的权限集合是相同的，真正的边界在「是不是本人数据」，
-    因此这里只用于展示默认页/菜单，不做权限拦截。
+    历史背景（需求④ 之前）：普通用户登录时前端会带 X-View-Role 头在 buyer/seller 间切换视角。
+    现在已取消身份切换——同一个账号既能买也能卖，权限集合完全相同，
+    真正的边界始终是「是不是本人数据」，而这个函数目前并没有被任何接口使用。
     """
     user = current_user()
     if not user:
         return None
     if user.role == ROLE_ADMIN:
         return ROLE_ADMIN
-    view = (request.headers.get("X-View-Role") or "").strip().lower()
-    return view if view in ("buyer", "seller") else user.role
+    return user.role if user.role in ("buyer", "seller") else ROLE_BUYER
 
 
 def login_required(fn):

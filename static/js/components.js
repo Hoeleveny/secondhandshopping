@@ -41,12 +41,19 @@ export function orderCardHtml(order, side = 'buyer') {
   const cover = snap.cover
     ? `<img src="/uploads/${encodeURIComponent(snap.cover)}" alt="">`
     : `<span style="font-size:34px">${esc(icon)}</span>`;
-  const other = side === 'buyer'
+  // 需求④/⑦：一个账号既可能买也可能卖，所以以「这张单里我的身份」为准，
+  // 而不是调用方传进来的默认值——我的订单页把两侧合成一页后，这个区别很关键
+  // （取消订单只有买家有、删除记录各删各的）。
+  const myRole = order.my_role || side;
+  const other = myRole === 'buyer'
     ? `卖家：${esc(order.seller_nickname || '')}`
     : `买家：${esc(order.buyer_nickname || '')}`;
+  const roleBadge = myRole === 'buyer'
+    ? '<span class="badge badge-info role-flag">我是买家</span>'
+    : '<span class="badge badge-warn role-flag">我是卖家</span>';
   const ops = [];
   if (order.status === 'pending') {
-    if (side === 'buyer') {
+    if (myRole === 'buyer') {
       ops.push(`<button class="btn btn-primary btn-sm" data-act="complete" data-id="${order.id}">确认完成</button>`);
       ops.push(`<button class="btn btn-danger btn-sm" data-act="cancel" data-id="${order.id}">取消订单</button>`);
     } else {
@@ -68,7 +75,10 @@ export function orderCardHtml(order, side = 'buyer') {
   <div class="card" style="padding:14px 16px">
     <div class="row-between mb-8">
       <span class="small muted">订单号 ${esc(order.order_no)}　${esc(fmtTime(order.created_at))}</span>
-      ${statusBadgeHtml(order.status, ORDER_STATUS[order.status] || order.status)}
+      <span class="row" style="gap:8px;align-items:center">
+        ${roleBadge}
+        ${statusBadgeHtml(order.status, ORDER_STATUS[order.status] || order.status)}
+      </span>
     </div>
     <div class="row" style="align-items:flex-start;gap:14px">
       <div class="pc-cover" style="width:72px;height:72px;border-radius:10px;flex:0 0 72px">${cover}</div>

@@ -9,6 +9,7 @@
 from datetime import datetime
 
 from flask import Blueprint
+from sqlalchemy import and_, or_
 
 from api.common import (
     arg_str, current_user, fail, haversine_m, json_body, login_required,
@@ -122,14 +123,29 @@ def create_order():
 @bp.get("/orders/mine")
 @login_required
 def my_orders():
+    """我的订单（需求④合并后一个页面看两侧）。
+
+    side=buyer（默认，兼容老调用）/ seller / all：
+    - all 会同时包含「我买的」与「我卖的」，每条订单带 my_role 供前端标出我的身份；
+    - 各自侧的「删除记录」只对自己隐藏，所以过滤条件也要按侧区分。
+    """
     user = current_user()
     page, size = paginate_args(Config.DEFAULT_PAGE_SIZE)
     status = arg_str("status") or "all"
     if status not in ("all",) + STATUSES:
         return fail("状态取值不合法")
+    side = arg_str("side") or "buyer"
+    if side not in ("buyer", "seller", "all"):
+        return fail("side 只能是 buyer / seller / all")
 
-    # 买家自己删掉的订单记录不再显示（只影响买家侧，卖家与管理员照常可见）
-    visible = (Order.buyer_id == user.id, Order.buyer_deleted.is_(False))
+    buyer_side = and_(Order.buyer_id == user.id, Order.buyer_deleted.is_(False))
+    seller_side = and_(Order.seller_id == user.id, Order.seller_deleted.is_(False))
+    visible = {
+        "buyer": (buyer_side,),
+        "seller": (seller_side,),
+        "all": (or_(buyer_side, seller_side),),
+    }[side]
+
     q = Order.query.filter(*visible)
     if status != "all":
         q = q.filter(Order.status == status)
@@ -143,7 +159,7 @@ def my_orders():
         ORDER_CANCELED: Order.query.filter(*visible, Order.status == ORDER_CANCELED).count(),
     }
     return ok({"list": [o.to_dict(user.id) for o in items], "total": total,
-               "page": page, "page_size": size, "counts": counts})
+               "page": page, "page_size": size, "counts": counts, "side": side})
 
 
 @bp.get("/orders/sold")

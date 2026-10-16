@@ -35,7 +35,8 @@ def register():
     body = json_body()
     username = (body.get("username") or "").strip()
     password = body.get("password") or ""
-    role = (body.get("role") or "").strip().lower()
+    # 需求④：注册不再要求选「买家 / 卖家」——同一个账号既能买也能卖，role 只作为历史字段保留
+    role = (body.get("role") or ROLE_BUYER).strip().lower()
     nickname = (body.get("nickname") or "").strip() or username
 
     if not USERNAME_RE.match(username):
@@ -43,7 +44,7 @@ def register():
     if len(password) < MIN_PASSWORD_LEN:
         return fail(f"密码长度不能少于 {MIN_PASSWORD_LEN} 位")
     if role not in NORMAL_ROLES:
-        return fail("注册身份只能是「买家」或「卖家」，管理员为预置账号不可注册")
+        return fail("管理员为预置账号，不可注册")
     if User.query.filter_by(username=username).first():
         return fail("该用户名已被注册")
 
@@ -65,8 +66,8 @@ def login():
     password = body.get("password") or ""
     role = (body.get("role") or "").strip().lower()
 
-    if role not in (ROLE_BUYER, ROLE_SELLER, ROLE_ADMIN):
-        return fail("请先选择登录身份（买家 / 卖家 / 管理员）")
+    if role and role not in (ROLE_BUYER, ROLE_SELLER, ROLE_ADMIN):
+        return fail("登录身份取值不合法")
     if not username or not password:
         return fail("请输入用户名和密码")
 
@@ -79,10 +80,11 @@ def login():
             return fail("该账号不是管理员，无法以管理员身份登录", 403)
         view = ROLE_ADMIN
     else:
+        # 需求④：普通用户不再选身份（buyer / seller 只是同一个账号的两种用法），
+        # 只有管理员账号必须显式选「管理员」登录，避免误登进管理后台。
         if user.role == ROLE_ADMIN:
-            return fail("管理员账号请在登录页选择「管理员」身份登录", 403)
-        # 普通用户：以所选视角进入（买家/卖家只是视角，不限制权限）
-        view = role
+            return fail("管理员账号请以「管理员」身份登录", 403)
+        view = user.role if user.role in NORMAL_ROLES else ROLE_BUYER
 
     return ok(
         {"token": _token_for(user, view), "user": user.to_dict(), "view": view},
@@ -94,11 +96,10 @@ def login():
 @login_required
 def me():
     user = current_user()
-    view = (request.headers.get("X-View-Role") or "").strip().lower()
-    if user.role == ROLE_ADMIN:
-        view = ROLE_ADMIN
-    elif view not in NORMAL_ROLES:
-        view = user.role
+    # 需求④：不再有「视角切换」，view 就是账号自己的角色（admin / buyer / seller）。
+    # 字段保留是为了兼容已有调用方与 localStorage 里的旧值。
+    view = ROLE_ADMIN if user.role == ROLE_ADMIN else (
+        user.role if user.role in NORMAL_ROLES else ROLE_BUYER)
     data = user.to_dict()
     # 需求③：个人资料页把「信用分」换成「好评率 + 分级」，数据一并带出来
     data["rating"] = seller_rating(user.id)
