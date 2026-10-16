@@ -3154,6 +3154,141 @@ async function feature27(cdp) {
     adminRow && adminRow.hasBan === false, JSON.stringify(adminRow));
 }
 
+/* ================================================================ 功能㉘ 动态监控删除选定记录（新批需求②） */
+async function feature28(cdp) {
+  console.log('\n===== 功能㉘ 动态监控可删除选定记录（需求②）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const adminToken = await login('admin', '123456', 'admin');
+
+  // 先造一条可识别的日志（发布冒烟商品 → product_create 日志）
+  const product = (await api('POST', '/api/products', {
+    token: sellerToken,
+    body: { name: '冒烟-动态监控删除用', price: 4, category_id: 1, subcategory_id: 1,
+            condition: '九成新', description: '删除日志用', default_place_id: 2, images: [] },
+  })).data;
+  const hit = (await api('GET', '/api/admin/logs?keyword=冒烟-动态监控删除用&page_size=5',
+    { token: adminToken })).data;
+  check('已备好一条可删除的操作记录', hit.total >= 1, `命中 ${hit.total} 条`);
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=trades');
+  await waitFor(cdp, `document.querySelectorAll('#lg-list .tl-item').length > 0`);
+  await sleep(700);
+
+  const toolbar = await cdp.eval(`
+    (() => ({
+      checks: document.querySelectorAll('#lg-list .tl-check').length,
+      items: document.querySelectorAll('#lg-list .tl-item').length,
+      hasAll: !!document.querySelector('#lg-check-all'),
+      delText: document.querySelector('#lg-del-selected')?.innerText.trim() || '',
+      delDisabled: document.querySelector('#lg-del-selected')?.disabled ?? null,
+    }))()`);
+  check('需求②：时间线每条都有勾选框，并有「全选本页」与「删除选中」按钮',
+    toolbar.checks === toolbar.items && toolbar.items > 0 && toolbar.hasAll
+    && toolbar.delText.includes('删除选中'),
+    JSON.stringify(toolbar));
+  check('需求②：没勾选时「删除选中」按钮是禁用的',
+    toolbar.delDisabled === true, `disabled=${toolbar.delDisabled}`);
+
+  // ---- 勾选：按钮数字跟着变，且不触发详情弹窗 ----
+  await cdp.eval(`
+    (() => {
+      const row = [...document.querySelectorAll('#lg-list .tl-item')]
+        .find(el => el.innerText.includes('冒烟-动态监控删除用'));
+      row.querySelector('.tl-check').click();
+    })()`);
+  await sleep(400);
+  const afterCheck = await cdp.eval(`
+    (() => ({
+      text: document.querySelector('#lg-del-selected')?.innerText.trim() || '',
+      disabled: document.querySelector('#lg-del-selected')?.disabled ?? null,
+      modalOpened: !!document.querySelector('.modal-mask'),
+    }))()`);
+  check('需求②：勾选一条后按钮变成可点，并显示已选条数',
+    /（1）/.test(afterCheck.text) && afterCheck.disabled === false,
+    JSON.stringify(afterCheck));
+  check('需求②：点勾选框不会误触发「查看详情」弹窗（stopPropagation）',
+    afterCheck.modalOpened === false, `弹窗=${afterCheck.modalOpened}`);
+
+  // ---- 全选 ----
+  await cdp.eval(`document.querySelector('#lg-check-all').click()`);
+  await sleep(400);
+  const allSel = await cdp.eval(`
+    (() => ({
+      text: document.querySelector('#lg-del-selected')?.innerText.trim() || '',
+      checked: document.querySelectorAll('#lg-list .tl-check:checked').length,
+      total: document.querySelectorAll('#lg-list .tl-check').length,
+    }))()`);
+  check('需求②：「全选本页」能一次勾上当前页全部记录',
+    allSel.checked === allSel.total && allSel.total > 0
+    && allSel.text.includes(`（${allSel.total}）`), JSON.stringify(allSel));
+
+  // ---- 取消勾选 + 单条删除时先取消（验证「取消不改数据」）----
+  await cdp.eval(`document.querySelector('#lg-check-all').click()`);
+  await sleep(300);
+  const before = (await api('GET', '/api/admin/logs?page_size=1', { token: adminToken })).data.total;
+  await cdp.eval(`
+    (() => {
+      const row = [...document.querySelectorAll('#lg-list .tl-item')]
+        .find(el => el.innerText.includes('冒烟-动态监控删除用'));
+      row.querySelector('.tl-del').click();
+    })()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  await cdp.eval(`document.querySelector('.modal-mask [data-cancel]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  await sleep(600);
+  const afterCancel = (await api('GET', '/api/admin/logs?page_size=1', { token: adminToken })).data.total;
+  const stillThere = await cdp.eval(`
+    [...document.querySelectorAll('#lg-list .tl-item')]
+      .some(el => el.innerText.includes('冒烟-动态监控删除用'))`);
+  check('需求②：取消确认时记录不会被删（数据不变）',
+    afterCancel === before && stillThere === true,
+    `总数 ${before} -> ${afterCancel}；列表里还在=${stillThere}`);
+
+  // ---- 真正删除 ----
+  await cdp.eval(`
+    (() => {
+      const row = [...document.querySelectorAll('#lg-list .tl-item')]
+        .find(el => el.innerText.includes('冒烟-动态监控删除用'));
+      row.querySelector('.tl-check').click();
+    })()`);
+  await sleep(300);
+  await cdp.eval(`document.querySelector('#lg-del-selected').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  await sleep(1200);
+
+  const gone = await cdp.eval(`
+    [...document.querySelectorAll('#lg-list .tl-item')]
+      .some(el => el.innerText.includes('冒烟-动态监控删除用'))`);
+  const after = (await api('GET', '/api/admin/logs?page_size=1', { token: adminToken })).data.total;
+  check('需求②：确认后选定的记录被删掉（列表里消失、总数减少）',
+    gone === false && after === before - 1 + 1,
+    `列表里还在=${gone}；总数 ${before} -> ${after}（删除动作本身留 1 条）`);
+
+  const delLog = (await api('GET', '/api/admin/logs?action=log_delete&page_size=1',
+    { token: adminToken })).data;
+  check('需求②：删除动作本身在动态监控里留了痕',
+    delLog.total >= 1 && delLog.list[0].action_text === '删除操作日志',
+    JSON.stringify(delLog.list[0] || {}).slice(0, 140));
+  await cdp.shot(path.join(SHOT_DIR, 'f28-log-delete.png'));
+
+  // ---- 整行点开详情仍然正常（勾选框不能把条目点击吃掉）----
+  await cdp.go('/admin?tab=trades');
+  await waitFor(cdp, `document.querySelectorAll('#lg-list .tl-item').length > 0`);
+  await sleep(600);
+  await cdp.eval(`
+    (() => {
+      const row = document.querySelector('#lg-list .tl-item');
+      row.querySelector('.tl-action').click();
+    })()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask .detail-h')`);
+  check('需求②：点条目本身依然能打开详情弹窗（勾选框没有吃掉点击）', true, '');
+  await cdp.eval(`document.querySelector('.modal-mask [data-close]').click()`);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -3183,6 +3318,7 @@ const GROUPS = {
   25: { title: '订单新状态红点（新批需求⑥）', fn: feature25 },
   26: { title: '页面状态自动更新（新批需求⑧）', fn: feature26 },
   27: { title: '用户管理 + 封禁（新批需求①）', fn: feature27 },
+  28: { title: '动态监控删除选定记录（新批需求②）', fn: feature28 },
 };
 
 async function main() {

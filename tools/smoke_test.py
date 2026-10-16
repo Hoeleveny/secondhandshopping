@@ -1790,6 +1790,46 @@ def main() -> int:
     check("卖家删的是自己那一侧，不报错也不影响买家侧数据",
           r.get("code") == 0, str(r)[:150])
 
+    # ---------------- 新批需求②：动态监控可删除选定记录 ----------------
+    section("新批需求② 动态监控删除选定记录")
+
+    # 先造两条「冒烟」记录再删，别动到别的日志
+    _probe_pids = []
+    for _i in (1, 2):
+        _st, r = call("POST", "/api/products", token=seller_token,
+                      body={"name": f"冒烟-待删日志商品{_i}", "price": 3, "category_id": 1,
+                            "subcategory_id": 1, "condition": "九成新",
+                            "description": "删日志用", "default_place_id": 2, "images": []})
+        _probe_pids.append((r.get("data") or {}).get("id"))
+    _d = _logs_q(keyword="冒烟-待删日志商品", page_size=10)
+    _del_ids = [x["id"] for x in _d.get("list") or []][:2]
+    check("能按关键字找到刚产生的日志", len(_del_ids) == 2, f"找到 {len(_del_ids)} 条")
+
+    _before_total = _logs_q(page_size=1).get("total")
+    _st, r = call("POST", "/api/admin/logs/delete", body={}, token=admin_token)
+    check("删除记录时必须指定要删哪些", r.get("code") != 0, str(r)[:120])
+    _st, r = call("POST", "/api/admin/logs/delete", body={"ids": ["abc"]}, token=admin_token)
+    check("记录 id 必须合法", r.get("code") != 0, str(r)[:120])
+    _st, r = call("POST", "/api/admin/logs/delete", body={"ids": [99999999]}, token=admin_token)
+    check("删除不存在的记录会报错", r.get("code") != 0, str(r)[:120])
+
+    _st, r = call("POST", "/api/admin/logs/delete", body={"ids": _del_ids}, token=admin_token)
+    check("删除选定的操作记录成功",
+          r.get("code") == 0 and (r.get("data") or {}).get("deleted") == 2, str(r)[:150])
+    _after_total = _logs_q(page_size=1).get("total")
+    check("删除后总数 = 原总数 - 2 + 1（删除动作本身留了一条日志）",
+          _after_total == _before_total - 2 + 1,
+          f"{_before_total} -> {_after_total}")
+    _st, r = call("GET", f"/api/admin/logs/{_del_ids[0]}", token=admin_token)
+    check("被删的记录再查就是 404", r.get("code") != 0, str(r)[:120])
+    _d = _logs_q(action="log_delete", page_size=2)
+    check("删除动作本身留在动态监控里（有迹可循）",
+          bool(_d.get("list")) and _d["list"][0]["action_text"] == "删除操作日志",
+          str((_d.get("list") or [{}])[0].get("summary"))[:120])
+    _st, r = call("POST", "/api/admin/logs/delete", body={"ids": _del_ids},
+                  token=buyer1)
+    check("普通用户不能删除操作记录（403）", r.get("code") != 0, str(r)[:120])
+
     # ---------------- 新批需求①：用户管理 + 封禁 ----------------
     section("新批需求① 用户管理 + 封禁")
 

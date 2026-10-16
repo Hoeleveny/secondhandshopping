@@ -721,14 +721,25 @@ async function renderTrades(panel) {
     }
 
     box.innerHTML = `
+      <div class="row-between mb-8">
+        <label class="row" style="gap:6px;align-items:center;cursor:pointer">
+          <input type="checkbox" id="lg-check-all">
+          <span class="muted small">全选本页</span>
+        </label>
+        <button class="btn btn-danger btn-sm" id="lg-del-selected" disabled>🗑 删除选中（0）</button>
+      </div>
       <div class="timeline">
         ${data.list.map(log => `
           <div class="tl-item clickable" data-log="${log.id}" role="button" tabindex="0"
                title="点击查看这条动作的详细交易信息">
+            <input type="checkbox" class="tl-check" data-check="${log.id}"
+                   title="选中后可批量删除这条记录">
             <span class="tl-time muted small">${esc(fmtTime(log.created_at))}</span>
             <span class="tl-who">${esc(log.nickname || log.username || '系统')}</span>
             <span class="tl-action">${esc(log.action_text)}</span>
             <span class="tl-summary muted">${esc(log.summary)}</span>
+            <button class="btn btn-ghost btn-sm tl-del" data-del="${log.id}"
+                    title="删除这条操作记录">🗑</button>
           </div>`).join('')}
       </div>`;
 
@@ -742,6 +753,52 @@ async function renderTrades(panel) {
         }
       });
     });
+
+    // 新批需求②：勾选后可删除选定的操作记录（删除动作本身也会留一条日志）
+    const checkAll = box.querySelector('#lg-check-all');
+    const delBtn = box.querySelector('#lg-del-selected');
+    const selectedIds = () => [...box.querySelectorAll('.tl-check:checked')]
+      .map(el => Number(el.dataset.check));
+    const syncDel = () => {
+      const n = selectedIds().length;
+      const total = box.querySelectorAll('.tl-check').length;
+      if (delBtn) {
+        delBtn.textContent = `🗑 删除选中（${n}）`;
+        delBtn.disabled = n === 0;
+      }
+      if (checkAll) {
+        checkAll.checked = n > 0 && n === total;
+        checkAll.indeterminate = n > 0 && n < total;
+      }
+    };
+    const removeLogs = async (ids) => {
+      if (!ids.length) return;
+      const sure = await confirmDialog({
+        title: ids.length === 1 ? '删除这条操作记录？' : `删除选中的 ${ids.length} 条操作记录？`,
+        danger: true, okText: '删除记录',
+        message: '操作日志是审计留痕，删掉之后这些记录就查不回来了；'
+          + '删除这个动作本身会留下一条新日志，方便日后追溯。',
+      });
+      if (!sure) return;
+      try {
+        const res = await api.post('/api/admin/logs/delete', { ids });
+        toast(`已删除 ${res.deleted} 条记录`);
+        loadLogs();
+      } catch (err) { toast(err.message, 'error'); }
+    };
+    checkAll?.addEventListener('change', () => {
+      box.querySelectorAll('.tl-check').forEach(el => { el.checked = checkAll.checked; });
+      syncDel();
+    });
+    box.querySelectorAll('.tl-check').forEach(el =>
+      el.addEventListener('click', (event) => { event.stopPropagation(); syncDel(); }));
+    delBtn?.addEventListener('click', () => removeLogs(selectedIds()));
+    box.querySelectorAll('[data-del]').forEach(btn =>
+      btn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        removeLogs([Number(btn.dataset.del)]);
+      }));
+    syncDel();
 
     renderPagination(panel.querySelector('#lg-pager'), {
       page: data.page,

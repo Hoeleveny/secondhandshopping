@@ -675,6 +675,7 @@ class OperationLog(db.Model):
         "admin_order_complete": "管理员标记交易完成",
         "user_ban": "封禁用户",
         "user_unban": "解封用户",
+        "log_delete": "删除操作日志",
     }
 
     id = db.Column(db.BigInteger, primary_key=True)

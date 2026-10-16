@@ -381,6 +381,10 @@
 .tl-item.clickable { cursor: pointer; border-radius: var(--radius-sm); }
 .tl-item.clickable:hover { background: var(--surface-hover); }
 .tl-item.clickable:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+/* 新批需求②：时间线条目可勾选删除；勾选框与删除按钮别抢走条目本身的点击区域 */
+.tl-check { flex: none; cursor: pointer; }
+.tl-del { flex: none; opacity: .5; padding: 2px 6px; }
+.tl-item:hover .tl-del, .tl-del:focus-visible { opacity: 1; }
 .detail-h {
   margin: 14px 0 4px; font-size: 11px; font-weight: 600; letter-spacing: .16em;
   text-transform: uppercase; color: var(--text-muted);

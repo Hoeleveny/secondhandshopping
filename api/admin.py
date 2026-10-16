@@ -452,6 +452,46 @@ def _log_actors() -> list[dict]:
     return sorted(actors, key=lambda x: x["nickname"] or "")
 
 
+@bp.post("/logs/delete")
+@admin_required
+def delete_logs():
+    """删除选定的操作日志（新批需求②）。
+
+    ⚠️ 说明：操作日志是审计留痕，删掉就查不回来了。所以：
+    - 只能由管理员删、只能删指定的若干条（一次最多 200 条）；
+    - **删除这个动作本身也会留一条日志**（action=log_delete），
+      这样「谁在什么时候删了哪些日志」仍然看得见，不至于删了也无迹可寻；
+    - 前端会先弹确认框并写明这一点。
+    """
+    admin = current_user()
+    body = json_body()
+    raw = body.get("ids")
+    if not isinstance(raw, list) or not raw:
+        return fail("请选择要删除的记录")
+    try:
+        ids = sorted({int(x) for x in raw})
+    except (TypeError, ValueError):
+        return fail("记录 id 只能是数字")
+    if len(ids) > 200:
+        return fail("一次最多删除 200 条记录")
+
+    rows = OperationLog.query.filter(OperationLog.id.in_(ids)).all()
+    if not rows:
+        return fail("这些记录已经不存在了", 404)
+
+    detail = "；".join(
+        f"#{r.id} {r.username or '系统'} {r.ACTIONS.get(r.action, r.action)}"
+        for r in rows[:8])
+    if len(rows) > 8:
+        detail += f" …等 {len(rows)} 条"
+
+    for row in rows:
+        db.session.delete(row)
+    audit.record("log_delete", "log", None, f"删除操作日志 {len(rows)} 条：{detail}"[:250])
+    db.session.commit()
+    return ok({"deleted": len(rows)}, msg=f"已删除 {len(rows)} 条记录")
+
+
 @bp.patch("/products/<int:pid>/status")
 @admin_required
 def admin_change_status(pid: int):
