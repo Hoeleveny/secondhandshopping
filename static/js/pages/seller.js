@@ -8,7 +8,7 @@
    ========================================================================== */
 import { api, qs } from '../api.js';
 import { ensureCategories } from '../data.js';
-import { bindProductCards, productCardHtml } from '../components.js';
+import { bindProductCards, postItemHtml, productCardHtml } from '../components.js';
 import {
   avatarHtml, confirmDialog, emptyHtml, esc, loadingHtml, ratingBadgeHtml,
   renderPagination, toast,
@@ -60,6 +60,7 @@ export default {
     const head = root.querySelector('#seller-head');
     const listArea = root.querySelector('#list-area');
     const pager = root.querySelector('#pager');
+    let blockedByMe = false;      // 我是否拉黑了这位用户（拉黑了就不展示 TA 的商品与帖子）
 
     function paintHead(seller, counts, social = {}, blockedByMe = false) {
       const isSelf = String(seller.id) === String(store.user?.id);
@@ -100,6 +101,8 @@ export default {
                     data-status="on_sale">在售 ${counts.on_sale ?? 0}</button>
             <button class="btn btn-sm ${status === 'sold' ? 'btn-primary' : ''}"
                     data-status="sold">已售 ${counts.sold ?? 0}</button>
+            <button class="btn btn-sm ${status === 'posts' ? 'btn-primary' : ''}"
+                    data-status="posts">帖子 ${counts.post_count ?? 0}</button>
           </div>
         </div>
         ${blockedByMe ? `<div class="hint">🚫 你已拉黑 TA：这里看不到 TA 的任何商品与评论，双方也无法互发私信。想恢复请点上面的「已拉黑」。</div>` : ''}`;
@@ -164,7 +167,9 @@ export default {
       let data;
       try {
         data = await api.get(`/api/sellers/${uid}${qs({
-          status, keyword, category_id: categoryId, page, page_size: 12,
+          // 卖家资料接口只认「在售 / 已售」；切到「帖子」页签时按在售取一份资料（只为拿头部与计数）
+          status: status === 'posts' ? 'on_sale' : status,
+          keyword, category_id: categoryId, page, page_size: 12,
         })}`);
       } catch (err) {
         head.innerHTML = '';
@@ -173,8 +178,11 @@ export default {
         return;
       }
 
-      paintHead(data.seller || {}, data.counts || {}, data.social || {},
-        data.blocked_by_me === true);
+      blockedByMe = data.blocked_by_me === true;
+      paintHead(data.seller || {}, data.counts || {}, data.social || {}, blockedByMe);
+
+      // 用户空间也展示 TA 的帖子（用户 2026-10-16 提出）
+      if (status === 'posts') return loadPosts();
 
       if (!data.list.length) {
         listArea.innerHTML = status === 'on_sale'
@@ -186,6 +194,43 @@ export default {
 
       listArea.innerHTML = `<div class="grid-cards">${data.list.map(productCardHtml).join('')}</div>`;
       bindProductCards(listArea);
+      renderPagination(pager, {
+        page: data.page,
+        pages: Math.max(1, Math.ceil(data.total / data.page_size)),
+        total: data.total,
+        onGo: (target) => { page = target; load(); },
+      });
+    }
+
+    /* 用户空间也展示 TA 的帖子（用户 2026-10-16 提出）；关键词筛选同样生效 */
+    async function loadPosts() {
+      let data;
+      try {
+        data = await api.get(`/api/posts${qs({ author_id: uid, keyword, page, page_size: 8 })}`);
+      } catch (err) {
+        listArea.innerHTML = emptyHtml(`加载失败：${err.message}`, '😵');
+        pager.innerHTML = '';
+        return;
+      }
+      if (blockedByMe) {
+        listArea.innerHTML = emptyHtml('你已拉黑 TA，看不到 TA 的任何内容', '🚫');
+        pager.innerHTML = '';
+        return;
+      }
+      if (!data.list.length) {
+        listArea.innerHTML = emptyHtml(keyword ? '没有匹配的帖子' : '这位用户还没有发过帖子', '💬');
+        pager.innerHTML = '';
+        return;
+      }
+      listArea.innerHTML = data.list.map(p => postItemHtml(p, { actions: false })).join('');
+      // 帖子卡整张可点进详情；点赞/评论这些操作按钮在这里不渲染（避免出现点了没反应的按钮）
+      listArea.querySelectorAll('.post-item[data-post]').forEach(el =>
+        el.addEventListener('click', () => { location.hash = `#/post/${el.dataset.post}`; }));
+      listArea.querySelectorAll('.post-item [data-user]').forEach(el =>
+        el.addEventListener('click', (event) => {
+          event.stopPropagation();
+          location.hash = `#/seller/${el.dataset.user}`;
+        }));
       renderPagination(pager, {
         page: data.page,
         pages: Math.max(1, Math.ceil(data.total / data.page_size)),

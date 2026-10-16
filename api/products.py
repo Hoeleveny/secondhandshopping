@@ -15,7 +15,7 @@ from api.common import (
 from config import Config
 from extensions import db
 from models import (
-    Category, Favorite, Message, Order, Product, ProductImage, ProductWant, Report, Review,
+    Category, Favorite, Message, Order, Post, Product, ProductImage, ProductWant, Report, Review,
     Subcategory, SwapOffer, User,
     PRODUCT_DELETED, PRODUCT_OFF_SHELF, PRODUCT_ON_SALE, PRODUCT_SOLD, ROLE_ADMIN,
 )
@@ -272,6 +272,8 @@ def seller_profile(uid: int):
     counts = {
         "on_sale": Product.query.filter_by(seller_id=uid, status=PRODUCT_ON_SALE).count(),
         "sold": Product.query.filter_by(seller_id=uid, status=PRODUCT_SOLD).count(),
+        # 用户空间也展示 TA 的帖子（用户 2026-10-16 提出），这里给出条数
+        "post_count": Post.query.filter_by(author_id=uid, status="normal").count(),
     }
     return ok({
         "seller": {

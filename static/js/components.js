@@ -160,11 +160,12 @@ export function postItemHtml(post, options = {}) {
       <span>💬 <span data-comment-count="${post.id}">${post.comment_count}</span> 条评论</span>
     </div>
     <div class="post-actions">
+      ${options.actions === false ? '' : `
       <button data-like="${post.id}" class="${post.liked ? 'liked' : ''}">
         ${post.liked ? '❤️' : '🤍'} <span data-like-count="${post.id}">${post.like_count}</span>
       </button>
       <button data-comment="${post.id}">💬 评论</button>
-      ${options.canDelete ? `<button data-delete="${post.id}">🗑️ 删除</button>` : ''}
+      ${options.canDelete ? `<button data-delete="${post.id}">🗑️ 删除</button>` : ''}`}
     </div>
   </div>`;
 }

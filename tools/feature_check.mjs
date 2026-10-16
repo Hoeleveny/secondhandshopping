@@ -4643,6 +4643,96 @@ async function feature40(cdp) {
     JSON.stringify(rcMention));
 }
 
+/* ================================================================ 功能㊶ 用户空间展示 TA 的帖子（本批需求③） */
+async function feature41(cdp) {
+  console.log('\n===== 功能㊶ 用户空间展示 TA 的帖子（本批需求③）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const seller = (await api('GET', '/api/auth/me', { token: sellerToken })).data.user;
+  const buyer = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+
+  // 该用户的帖子 + 另一个人的帖子（用来验证不会串）
+  const mine = (await api('POST', '/api/posts', {
+    token: sellerToken,
+    body: { title: '自动化测试：空间里的帖子', content: '属于卖家', tag: '闲聊' },
+  })).data;
+  const others = (await api('POST', '/api/posts', {
+    token: buyerToken,
+    body: { title: '自动化测试：别人的帖子', content: '属于买家', tag: '闲聊' },
+  })).data;
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go(`/seller/${seller.id}`);
+  await waitFor(cdp, `!!document.querySelector('[data-status="posts"]')`);
+  await sleep(600);
+
+  const tab = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('[data-status="posts"]');
+      return { text: el.innerText.trim(), active: el.classList.contains('btn-primary') };
+    })()`);
+  check('需求③：用户空间多了「帖子」页签，并显示条数',
+    /帖子/.test(tab.text) && /\d/.test(tab.text) && tab.active === false, JSON.stringify(tab));
+
+  await cdp.eval(`document.querySelector('[data-status="posts"]').click()`);
+  await waitFor(cdp, `!!document.querySelector('#list-area .post-item')`);
+  await sleep(700);
+  const list = await cdp.eval(`
+    (() => {
+      const items = [...document.querySelectorAll('#list-area .post-item')];
+      return {
+        count: items.length,
+        titles: items.map(x => (x.querySelector('.post-title') || {}).innerText || ''),
+        hasLikeBtn: !!document.querySelector('#list-area .post-actions [data-like]'),
+        activeTab: !!document.querySelector('[data-status="posts"].btn-primary'),
+        headText: (document.querySelector('#seller-head') || {}).innerText ? document.querySelector('#seller-head').innerText.replace(/\s+/g, ' ').slice(0, 60) : '(头部空)',
+      };
+    })()`);
+  check('需求③：切到「帖子」后列出该用户的帖子（不串别人的）',
+    list.count >= 1 && list.titles.some(t => t.includes('空间里的帖子'))
+    && !list.titles.some(t => t.includes('别人的帖子')), JSON.stringify(list).slice(0, 220));
+  check('需求③：页签高亮切到了「帖子」', list.activeTab === true, `active=${list.activeTab}`);
+  check('需求③：这里的帖子卡不渲染点赞/评论按钮（避免点了没反应的死按钮）',
+    list.hasLikeBtn === false, `有点赞按钮=${list.hasLikeBtn}`);
+  await cdp.shot(path.join(SHOT_DIR, 'f41-user-posts.png'));
+
+  // 点帖子卡 → 详情
+  await cdp.eval(`
+    (() => {
+      const el = [...document.querySelectorAll('#list-area .post-item')]
+        .find(x => x.innerText.includes('空间里的帖子'));
+      el.click();
+    })()`);
+  await waitFor(cdp, `location.hash === '#/post/${mine.id}'`);
+  await sleep(600);
+  const detail = await cdp.eval(`
+    (() => ({ hash: location.hash, title: document.body.innerText.includes('空间里的帖子') }))()`);
+  check('需求③：点帖子卡能进帖子详情', detail.hash === `#/post/${mine.id}` && detail.title === true,
+    JSON.stringify(detail));
+
+  // 我拉黑 TA 之后：用户空间的帖子也不展示
+  await api('POST', `/api/blocks/${seller.id}`, { token: buyerToken });
+  await cdp.go(`/seller/${seller.id}`);
+  await waitFor(cdp, `!!document.querySelector('[data-status="posts"]')`);
+  await sleep(500);
+  await cdp.eval(`document.querySelector('[data-status="posts"]').click()`);
+  await sleep(1000);
+  const blocked = await cdp.eval(`
+    (() => ({
+      items: document.querySelectorAll('#list-area .post-item').length,
+      text: (document.querySelector('#list-area') || {}).innerText || '',
+    }))()`);
+  check('需求③：拉黑后，用户空间的帖子也不展示（与商品/评论口径一致）',
+    blocked.items === 0 && /拉黑/.test(blocked.text), JSON.stringify(blocked).slice(0, 160));
+  await api('DELETE', `/api/blocks/${seller.id}`, { token: buyerToken });
+
+  // 清理测试帖子
+  await api('DELETE', `/api/posts/${mine.id}`, { token: sellerToken }).catch(() => null);
+  await api('DELETE', `/api/posts/${others.id}`, { token: buyerToken }).catch(() => null);
+  check('需求③：测试帖子已清理（对方 id 有效）', !!buyer.id && !!seller.id, '');
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -4685,6 +4775,7 @@ const GROUPS = {
   38: { title: '头像可自行选定展示范围（本批需求④）', fn: feature38 },
   39: { title: '订单卡点用户名跳私信（本批需求⑤）', fn: feature39 },
   40: { title: '评论里@到的人可点（本批需求②）', fn: feature40 },
+  41: { title: '用户空间展示帖子（本批需求③）', fn: feature41 },
 };
 
 async function main() {

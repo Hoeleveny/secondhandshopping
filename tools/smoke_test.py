@@ -1828,6 +1828,30 @@ def main() -> int:
     check("卖家删的是自己那一侧，不报错也不影响买家侧数据",
           r.get("code") == 0, str(r)[:150])
 
+    # ---------------- 本批需求③：用户空间展示 TA 的帖子 ----------------
+    section("本批需求③ 用户空间展示帖子")
+
+    _st, r = call("GET", "/api/auth/me", token=seller_token)
+    _sp_seller = (r.get("data") or {}).get("user") or {}
+    _st, r = call("POST", "/api/posts", token=seller_token,
+                  body={"title": "冒烟测试-空间帖子", "content": "用户空间展示用", "tag": "闲聊"})
+    _sp_post = (r.get("data") or {}).get("id")
+    check("需求③：已备好一条该用户的帖子", bool(_sp_post), str(r)[:120])
+
+    _st, r = call("GET", f"/api/sellers/{_sp_seller.get('id')}")
+    _sp_counts = (r.get("data") or {}).get("counts") or {}
+    check("需求③：用户空间接口带出 TA 的帖子数（供页签显示）",
+          isinstance(_sp_counts.get("post_count"), int) and _sp_counts["post_count"] >= 1,
+          str(_sp_counts))
+
+    _st, r = call("GET", f"/api/posts?author_id={_sp_seller.get('id')}&page_size=50")
+    _sp_list = (r.get("data") or {}).get("list") or []
+    check("需求③：帖子列表支持按作者筛选，且只返回该用户的帖子",
+          bool(_sp_list) and all(p["author_id"] == _sp_seller.get("id") for p in _sp_list),
+          f"{len(_sp_list)} 条，作者集合={sorted({p['author_id'] for p in _sp_list})}")
+    check("需求③：筛选结果里包含刚发的那条",
+          any(p["id"] == _sp_post for p in _sp_list), str([p["id"] for p in _sp_list])[:80])
+
     # ---------------- 本批需求②：@昵称落库 ----------------
     section("本批需求② @昵称落库（可点）")
     _st, r = call("GET", "/api/auth/me", token=seller_token)
