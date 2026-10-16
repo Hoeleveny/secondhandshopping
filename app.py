@@ -84,4 +84,7 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    # 用 Config 里的监听地址：默认 0.0.0.0，局域网可访问（设 APP_HOST=127.0.0.1 可只留本机）
+    from config import Config
+
+    app.run(host=Config.APP_HOST, port=Config.APP_PORT, debug=True)

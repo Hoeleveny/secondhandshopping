@@ -18,6 +18,12 @@ class Config:
     JSON_AS_ASCII = False
     TEMPLATES_AUTO_RELOAD = True
 
+    # ---------- 监听地址（局域网访问）----------
+    # 默认 0.0.0.0：同一局域网的手机/别的电脑都能打开 http://<本机IP>:5000。
+    # 想只让本机访问，就把环境变量设成 127.0.0.1。
+    APP_HOST = os.environ.get("APP_HOST", "0.0.0.0")
+    APP_PORT = int(os.environ.get("APP_PORT", "5000"))
+
     # ---------- 数据库：MySQL 8 ----------
     DB_HOST = os.environ.get("DB_HOST", "127.0.0.1")
     DB_PORT = os.environ.get("DB_PORT", "3306")

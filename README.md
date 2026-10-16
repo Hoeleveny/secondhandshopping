@@ -48,8 +48,17 @@ start.bat
 它和 `start.bat` 的区别在 `service.py`：关掉调试模式与热重载（不会双进程、不会因为改文件自己
 重启）、开启多线程，并且**自己把输出写进 `logs\server.log`**（所以能用 `pythonw.exe` 无窗口跑）。
 
-> 服务只监听 `127.0.0.1:5000`，即同一台电脑的浏览器可访问、局域网其他设备访问不到。
-> 需要局域网访问就把 `service.py` 里的 `APP_HOST` 环境变量改成 `0.0.0.0`。
+> **局域网访问**：服务默认监听 `0.0.0.0`，同一 Wi-Fi 下的手机 / 别的电脑可以直接打开
+> `http://<本机IP>:5000`。两步走：
+> 1. **放行防火墙**：右键项目根目录的 `open-lan.bat` → 「以管理员身份运行」（只需一次；
+>    它会放行 TCP 5000 入站并打印当前可用的局域网地址）；
+> 2. **自检**：`.venv\Scripts\python.exe tools\lan_check.py` 会逐项检查监听地址、
+>    局域网连通性、防火墙放行情况，并打印该用哪个地址访问。
+>
+> 只想让本机访问就设环境变量 `APP_HOST=127.0.0.1` 再重启服务（默认已开放到局域网）。
+>
+> ⚠️ **安全提醒**：开放到局域网后，演示账号（含管理员 `admin/123456`）在局域网内谁都能登录，
+> 而管理员可以删商品、重置或恢复全部数据。长期开放前建议先把这些密码改掉。
 
 ## 三、演示账号
 
@@ -88,15 +97,19 @@ start.bat
 
 | 命令 | 检查内容 | 最近结果 |
 |------|----------|----------|
-| `.venv\Scripts\python.exe manage.py check` | 依赖 / 项目模块 / MySQL 连接 / 表结构 / 三处表结构修正是否落地 | 全部通过 |
-| `.venv\Scripts\python.exe manage.py migrate` | 执行 `sql/migrations/` 下的增量迁移（幂等，只增不删） | 5 个迁移，17 张表 |
+| `.venv\Scripts\python.exe manage.py check` | 依赖 / 项目模块 / MySQL 连接 / 表结构 / 表结构修正是否落地 | 全部通过（19 张表） |
+| `.venv\Scripts\python.exe manage.py migrate` | 执行 `sql/migrations/` 下的增量迁移（幂等，只增不删） | 10 个迁移，19 张表 |
 | `.venv\Scripts\python.exe manage.py clean-test` | 清理自动化测试残留（另加 `--files` 可删孤儿图片） | 无残留 |
-| `.venv\Scripts\python.exe tools\smoke_test.py` | 后端接口冒烟测试（需服务已启动） | **171 项通过** |
-| `node tools\check_frontend.mjs` | 前端 ES Module 的 import 路径与具名导出是否对得上 | 22 个模块正常 |
-| `node tools\e2e_check.mjs --shots` | 无头 Chrome 把每个页面跑一遍：查 JS 报错、接口失败、空白页，并截图 | **27 个页面 0 问题** |
-| `node tools\feature_check.mjs all` | **7 项新增功能的浏览器测试**（真实点击、真实上传文件） | **54 / 54 通过** |
+| `.venv\Scripts\python.exe tools\smoke_test.py` | 后端接口冒烟测试（需服务已启动） | **293 项通过** |
+| `.venv\Scripts\python.exe tools\lan_check.py` | 局域网可访问性：监听地址 / 连通性 / 防火墙放行 / 前端有没有写死本机地址 | **4 / 5**（差防火墙，跑 `open-lan.bat` 后 5 / 5） |
+| `node tools\check_frontend.mjs` | 前端 ES Module 的 import 路径与具名导出是否对得上 | 24 个模块正常 |
+| `node tools\e2e_check.mjs --shots` | 无头 Chrome 把每个页面跑一遍：查 JS 报错、接口失败、空白页，并截图 | **31 个页面 0 问题** |
+| `node tools\feature_check.mjs all` | **21 组功能的浏览器测试**（真实点击、真实上传文件） | **175 / 175 通过** |
+| `node tools\theme_check.mjs` | 三套主题的文字对比度实算 + 逐页视觉 + 四个屏宽的居中几何 | **12 / 12 通过** |
 | `node tools\acceptance_check.mjs` | **PRD 第 10 章 23 条验收标准**逐条核对（界面真实点击 + 接口核对） | **23 / 23 通过** |
 | `node tools\make_acceptance_report.mjs` | 把验收结果 JSON 转成 `docs/验收报告.md` | — |
+
+> ⚠️ `acceptance_check.mjs` 内部会**无条件重置示例数据**，只能对临时库跑（见第五节说明）。
 
 > ⚠️ `acceptance_check.mjs` 内部会调用「重置示例数据」，**会清空库里的业务数据**。
 > 对正在使用的库请勿直接运行；若要跑，请先用 `DB_NAME` 指向一个临时库
@@ -273,6 +286,7 @@ git config http.sslCAInfo .git/git-ca-bundle.crt
 | ㉑ | 举报审核可填理由并私信反馈 | — | 删帖/下架/驳回改为「预设原因 + 详细说明」表单，结果以平台私信通知帖子作者或举报者 | `3b37f3e` |
 | ㉒ | 从举报审核进详情后原路返回 | — | 详情页带 `?from=admin`，返回回举报审核（文案也随之变化）；交流广场入口不受影响 | `e8b95e6` |
 | ㉓ | 卖家侧交易收尾 | 迁移 010：`orders.seller_deleted` | 卖出订单与「我的商品」[已售] 都补上「确认完成 / 删除订单记录」；**卖家也能确认完成**；删除仍只对自己隐藏 | `58abae1` |
+| ㉔ | **局域网内可访问** | `config.py` 新增 `APP_HOST`/`APP_PORT` | 服务默认监听 `0.0.0.0`；新增 `open-lan.bat`（一键放行防火墙）与 `tools/lan_check.py`（可复跑的自检）；前端本来就全是相对路径，无需改动 | 见第二节 |
 
 **回归验证（全部完成后一次性跑通）**
 

@@ -146,9 +146,11 @@ def cmd_check() -> int:
 
 def cmd_run() -> int:
     from app import app
+    from config import Config
 
-    print("[OK]  开发服务器启动中：http://127.0.0.1:5000   （Ctrl+C 停止）")
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    print(f"[OK]  开发服务器启动中：http://127.0.0.1:{Config.APP_PORT}"
+          f"（监听 {Config.APP_HOST}，局域网设备可用 http://<本机IP>:{Config.APP_PORT} 访问）")
+    app.run(host=Config.APP_HOST, port=Config.APP_PORT, debug=True)
     return 0
 
 
