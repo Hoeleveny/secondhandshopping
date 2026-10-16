@@ -1828,6 +1828,86 @@ def main() -> int:
     check("卖家删的是自己那一侧，不报错也不影响买家侧数据",
           r.get("code") == 0, str(r)[:150])
 
+    # ---------------- 新批需求⑦：关注 / 拉黑 ----------------
+    section("新批需求⑦ 关注与拉黑（单向）")
+
+    _st, r = call("GET", "/api/auth/me", token=token)
+    _me = (r.get("data") or {}).get("user") or {}
+    _st, r = call("GET", "/api/auth/me", token=seller_token)
+    _seller_u = (r.get("data") or {}).get("user") or {}
+
+    # 关注
+    _st, r = call("GET", f"/api/sellers/{_seller_u.get('id')}", token=token)
+    _s0 = (r.get("data") or {}).get("social") or {}
+    check("需求⑦：主页带出关注/粉丝数与关注状态",
+          all(k in _s0 for k in ("following_count", "follower_count", "is_following",
+                                 "is_blocked")),
+          str(_s0))
+    _st, r = call("POST", f"/api/follows/{_seller_u.get('id')}", body={}, token=token)
+    check("需求⑦：可以关注别人", r.get("code") == 0, str(r)[:120])
+    _st, r = call("GET", f"/api/sellers/{_seller_u.get('id')}", token=token)
+    _s1 = (r.get("data") or {}).get("social") or {}
+    check("需求⑦：关注后粉丝数 +1 且 is_following 为真",
+          _s1.get("follower_count") == _s0.get("follower_count", 0) + 1
+          and _s1.get("is_following") is True, str(_s1))
+    _convs = call("GET", "/api/messages/conversations", token=seller_token)[1].get("data") or []
+    check("需求⑦：关注会给对方发一条通知私信",
+          any("关注了你" in ((c.get("last_message") or {}).get("content") or "")
+              for c in _convs), "")
+    _st, r = call("POST", f"/api/follows/{_seller_u.get('id')}", body={}, token=token)
+    check("需求⑦：重复关注会提示（不报错也不重复插）", r.get("code") == 0, str(r)[:120])
+    _st, r = call("POST", f"/api/follows/{_me.get('id')}", body={}, token=token)
+    check("需求⑦：不能关注自己", r.get("code") != 0, str(r)[:120])
+    _st, r = call("GET", "/api/follows/mine", token=token)
+    check("需求⑧：我的关注列表能查到刚关注的人",
+          any(x["id"] == _seller_u.get("id") for x in (r.get("data") or {}).get("list", [])),
+          str(r.get("data"))[:150])
+    _st, r = call("DELETE", f"/api/follows/{_seller_u.get('id')}", token=token)
+    check("需求⑦：可以取消关注", r.get("code") == 0, str(r)[:120])
+    _st, r = call("DELETE", f"/api/follows/{_seller_u.get('id')}", token=token)
+    check("需求⑦：没关注时取消会报错", r.get("code") != 0, str(r)[:120])
+
+    # 拉黑：过滤商品与评论、阻断私信（单向）
+    _st, r = call("GET", "/api/products?keyword=冒烟测试-订单完成流程", token=token)
+    _before_see = r.get("data") or {}
+    _st, r = call("POST", f"/api/blocks/{_seller_u.get('id')}", body={}, token=token)
+    check("需求⑦：可以拉黑别人", r.get("code") == 0, str(r)[:120])
+    _st, r = call("GET", "/api/products?page_size=50", token=token)
+    _vis = [p["seller_id"] for p in (r.get("data") or {}).get("list", [])]
+    check("需求⑦：拉黑后商品列表里看不到 TA 的商品",
+          _seller_u.get("id") not in _vis, f"出现 {_vis.count(_seller_u.get('id'))} 次")
+    _st, r = call("GET", f"/api/sellers/{_seller_u.get('id')}", token=token)
+    _prof = r.get("data") or {}
+    check("需求⑦：TA 的主页能打开但商品被清空，并明确标记「我拉黑了 TA」",
+          _prof.get("blocked_by_me") is True and not _prof.get("list")
+          and _prof.get("total") == 0, str(_prof.get("blocked_by_me")))
+    _st, _r2 = call("POST", "/api/posts", token=seller_token,
+                    body={"title": "冒烟测试-拉黑评论", "content": "x", "tag": "闲聊"})
+    _blk_post = (_r2.get("data") or {}).get("id")
+    call("POST", f"/api/posts/{_blk_post}/comments", token=seller_token,
+         body={"content": "冒烟测试：被拉黑者的评论"})
+    _st, r = call("GET", f"/api/posts/{_blk_post}/comments", token=token)
+    check("需求⑦：拉黑后看不到 TA 在帖子下的评论",
+          all("被拉黑者的评论" not in c["content"] for c in (r.get("data") or [])),
+          str(r.get("data"))[:120])
+    _st, r = call("POST", "/api/messages", token=seller_token,
+                  body={"receiver_id": _me.get("id"), "content": "冒烟测试：被拉黑还想发私信"})
+    check("需求⑦：被拉黑的人不能给我发私信", r.get("code") != 0, str(r)[:120])
+    _st, r = call("POST", "/api/messages", token=token,
+                  body={"receiver_id": _seller_u.get("id"), "content": "冒烟测试：我能发"})
+    check("需求⑦：单向——我仍然能给他发私信", r.get("code") == 0, str(r)[:120])
+    _st, r = call("POST", f"/api/blocks/{_me.get('id')}", body={}, token=token)
+    check("需求⑦：不能拉黑自己", r.get("code") != 0, str(r)[:120])
+    _st, r = call("GET", "/api/blocks/mine", token=token)
+    check("需求⑧：我的拉黑列表能查到刚拉黑的人",
+          any(x["id"] == _seller_u.get("id") for x in (r.get("data") or {}).get("list", [])),
+          str(r.get("data"))[:150])
+    _st, r = call("DELETE", f"/api/blocks/{_seller_u.get('id')}", token=token)
+    check("需求⑦：可以解除拉黑", r.get("code") == 0, str(r)[:120])
+    _st, r = call("GET", f"/api/sellers/{_seller_u.get('id')}", token=token)
+    check("需求⑦：解除后又能看到 TA 的商品",
+          bool((r.get("data") or {}).get("list")), str((r.get("data") or {}).get("total")))
+
     # ---------------- 新批需求⑤：评价下的评论 + 举报评价/评论 ----------------
     section("新批需求⑤ 评价下的评论与举报")
 
@@ -1858,7 +1938,8 @@ def main() -> int:
           str((r.get("data") or {}).get("content"))[:80])
     _st, r = call("GET", f"/api/reviews/{_rc_rev}/comments")
     check("需求⑤：评价评论列表游客可看",
-          r.get("code") == 0 and len(r.get("data") or []) == 2, str(len(r.get("data") or [])))
+          r.get("code") == 0 and len(r.get("data") or []) == 2,
+          f"实际 {len(r.get('data') or [])} 条：{str(r.get('data'))[:200]}")
     _st, r = call("POST", f"/api/reviews/{_rc_rev}/comments", body={"content": "  "},
                   token=seller_token)
     check("需求⑤：评论内容不能为空", r.get("code") != 0, str(r)[:120])

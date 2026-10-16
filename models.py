@@ -740,6 +740,46 @@ class Message(db.Model):
         }
 
 
+# ---------------------------------------------------------------- 19. 关注 / 拉黑（新批需求⑦）
+class Follow(db.Model):
+    """关注（单向）：follower 关注 followee。主页展示关注/粉丝数，关注时私信通知对方。"""
+
+    __tablename__ = "follows"
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    follower_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
+    followee_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
+
+    follower = db.relationship("User", foreign_keys=[follower_id])
+    followee = db.relationship("User", foreign_keys=[followee_id])
+
+    __table_args__ = (
+        db.UniqueConstraint("follower_id", "followee_id", name="uk_follows_pair"),
+    )
+
+
+class Block(db.Model):
+    """拉黑（单向，口径由用户拍板）：blocker 拉黑 blocked 之后——
+    **blocker 看不到 blocked 的商品与评论**，且 **blocked 不能给 blocker 发私信**；
+    但 blocked 仍能看到 blocker、也能下单（交易不受影响）。
+    """
+
+    __tablename__ = "blocks"
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    blocker_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
+    blocked_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
+
+    blocker = db.relationship("User", foreign_keys=[blocker_id])
+    blocked = db.relationship("User", foreign_keys=[blocked_id])
+
+    __table_args__ = (
+        db.UniqueConstraint("blocker_id", "blocked_id", name="uk_blocks_pair"),
+    )
+
+
 # ---------------------------------------------------------------- 18. 操作日志（需求①）
 class OperationLog(db.Model):
     """记录「谁 · 何时 · 对哪个对象 · 做了什么」，供管理后台「动态监控」时间线使用。

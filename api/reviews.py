@@ -11,6 +11,7 @@ from api.common import current_user, fail, json_body, login_required, ok, pagina
 from config import Config
 from extensions import db
 from models import Order, Review, ReviewComment, ORDER_DONE
+from api.social import hidden_author_ids
 
 bp = Blueprint("reviews", __name__, url_prefix="/api")
 
@@ -128,6 +129,11 @@ def list_review_comments(rid: int):
         return fail("评价不存在", 404)
     rows = (ReviewComment.query.filter_by(review_id=rid)
             .order_by(ReviewComment.created_at.asc()).all())
+    # 新批需求⑦：我拉黑过的人，他的评论我看不到
+    viewer = current_user()
+    hidden = hidden_author_ids(viewer.id if viewer else None)
+    if hidden:
+        rows = [c for c in rows if c.author_id not in hidden]
     return ok([c.to_dict() for c in rows])
 
 

@@ -15,6 +15,7 @@ FOREIGN_BLUEPRINT_MODULES = (
     "swaps",       # M12 以物换物
     "posts",       # M13 交流广场
     "messages",    # 功能① 私信消息
+    "social",      # 新批需求⑦ 关注 / 拉黑
     "admin",       # M10/M11 管理后台、数据看板、基础数据、备份恢复
 )
 

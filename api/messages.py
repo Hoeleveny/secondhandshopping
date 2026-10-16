@@ -9,6 +9,7 @@ from sqlalchemy import and_, or_
 
 from api.common import current_user, fail, json_body, login_required, ok
 from api.orders import product_snapshot
+from api.social import blocked_me
 from extensions import db
 from models import Message, MessageClear, Product, User
 from rating import seller_rating
@@ -55,6 +56,10 @@ def send_message():
     receiver = User.query.get(receiver_id)
     if receiver is None:
         return fail("收信人不存在", 404)
+
+    # 新批需求⑦：对方拉黑了我 → 我不能给他发私信（单向拉黑，交易不受影响）
+    if blocked_me(me.id, receiver.id):
+        return fail("对方已把你拉黑，无法发送私信", 403)
 
     product = None
     if product_id not in (None, "", 0):

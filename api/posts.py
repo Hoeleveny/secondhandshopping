@@ -8,6 +8,7 @@ from api.common import (
 from config import Config
 from extensions import db
 from models import Post, PostComment, PostImage, PostLike  # noqa: F401
+from api.social import hidden_author_ids
 
 bp = Blueprint("posts", __name__, url_prefix="/api")
 
@@ -138,6 +139,11 @@ def list_comments(pid: int):
         return fail("帖子不存在", 404)
     comments = (PostComment.query.filter_by(post_id=pid)
                 .order_by(PostComment.created_at.asc()).all())
+    # 新批需求⑦：我拉黑过的人，他的评论我看不到
+    viewer = current_user()
+    hidden = hidden_author_ids(viewer.id if viewer else None)
+    if hidden:
+        comments = [c for c in comments if c.author_id not in hidden]
     return ok([c.to_dict() for c in comments])
 
 

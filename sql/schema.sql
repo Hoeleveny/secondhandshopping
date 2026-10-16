@@ -437,4 +437,34 @@ CREATE TABLE `message_clears` (
   CONSTRAINT `fk_message_clears_peer` FOREIGN KEY (`peer_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='会话清除标记（只对清空者自己隐藏）';
 
+-- -------------------------------------------------------------
+-- 表 20/21：follows / blocks（关注与拉黑）—— 新批需求⑦，新增于迁移 016
+-- 都是单向关系；拉黑后「我这边看不到对方的商品与评论」且「对方不能给我发私信」
+-- -------------------------------------------------------------
+DROP TABLE IF EXISTS `follows`;
+CREATE TABLE `follows` (
+  `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `follower_id` BIGINT UNSIGNED NOT NULL COMMENT '关注发起人',
+  `followee_id` BIGINT UNSIGNED NOT NULL COMMENT '被关注的人',
+  `created_at`  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_follows_pair` (`follower_id`, `followee_id`),
+  KEY `idx_follows_followee` (`followee_id`),
+  CONSTRAINT `fk_follows_follower` FOREIGN KEY (`follower_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_follows_followee` FOREIGN KEY (`followee_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='关注（单向，需求⑦）';
+
+DROP TABLE IF EXISTS `blocks`;
+CREATE TABLE `blocks` (
+  `id`         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `blocker_id` BIGINT UNSIGNED NOT NULL COMMENT '拉黑别人的人',
+  `blocked_id` BIGINT UNSIGNED NOT NULL COMMENT '被拉黑的人',
+  `created_at` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_blocks_pair` (`blocker_id`, `blocked_id`),
+  KEY `idx_blocks_blocked` (`blocked_id`),
+  CONSTRAINT `fk_blocks_blocker` FOREIGN KEY (`blocker_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_blocks_blocked` FOREIGN KEY (`blocked_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='拉黑（单向，需求⑦）';
+
 SET FOREIGN_KEY_CHECKS = 1;

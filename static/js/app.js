@@ -29,6 +29,9 @@ const M = {
   admin: { key: 'admin', hash: '#/admin', icon: '⚙️', label: '管理后台' },
   dashboard: { key: 'dashboard', hash: '#/dashboard', icon: '📈', label: '数据看板' },
   profile: { key: 'profile', hash: '#/profile', icon: '👤', label: '个人资料' },
+  // 新批需求⑧：右上角用户小框里的两个入口
+  follows: { key: 'follows', hash: '#/follows', icon: '⭐', label: '我的关注' },
+  blocks: { key: 'blocks', hash: '#/blocks', icon: '🚫', label: '我的拉黑' },
 };
 
 const MENUS = {
@@ -62,6 +65,9 @@ const ROUTES = [
   { path: '/post/:id', auth: 'any', menu: 'posts', load: () => import('./pages/postDetail.js') },
   { path: '/messages', auth: 'required', menu: 'messages', load: () => import('./pages/messages.js') },
   { path: '/profile', auth: 'required', menu: 'profile', load: () => import('./pages/profile.js') },
+  // 新批需求⑧：我的关注 / 我的拉黑（同一页，按 hash 区分）
+  { path: '/follows', auth: 'required', menu: 'follows', load: () => import('./pages/follows.js') },
+  { path: '/blocks', auth: 'required', menu: 'blocks', load: () => import('./pages/follows.js') },
   { path: '/admin', auth: 'admin', menu: 'admin', load: () => import('./pages/admin.js') },
   { path: '/dashboard', auth: 'admin', menu: 'dashboard', load: () => import('./pages/dashboard.js') },
 ];
@@ -305,6 +311,8 @@ function bindShellEvents() {
         <span class="badge badge-danger" id="dd-msg-count" style="${unread === '0' ? 'display:none' : ''}">${esc(unread)}</span>
       </button>
       <button class="dd-item" data-go="#/profile">👤 个人资料</button>
+      ${store.isAdmin ? '' : '<button class="dd-item" data-go="#/follows">⭐ 我的关注</button>'}
+      ${store.isAdmin ? '' : '<button class="dd-item" data-go="#/blocks">🚫 我的拉黑</button>'}
       <div class="dd-sep"></div>
       ${store.isAdmin ? '' : '<button class="dd-item" data-go="#/orders">📦 我的订单</button>'}
       ${store.isAdmin ? '' : '<button class="dd-item" data-go="#/favorites">⭐ 我的收藏</button>'}

@@ -3806,6 +3806,109 @@ async function feature32(cdp) {
   check('需求⑥：商品评价里的作者名同样能点进主页', true, '');
 }
 
+/* ================================================================ 功能㉝ 关注 / 拉黑（新批需求⑦） */
+async function feature33(cdp) {
+  console.log('\n===== 功能㉝ 关注与拉黑（需求⑦）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const sellerId = (await api('GET', '/api/auth/me', { token: sellerToken })).data.user.id;
+
+  // 先确保干净状态：没关注、没拉黑
+  await api('DELETE', `/api/follows/${sellerId}`, { token: buyerToken }).catch(() => null);
+  await api('DELETE', `/api/blocks/${sellerId}`, { token: buyerToken }).catch(() => null);
+  const p = (await api('POST', '/api/products', {
+    token: sellerToken,
+    body: { name: '自动化测试：拉黑过滤', price: 16, category_id: 1, subcategory_id: 1,
+            condition: '九成新', description: '拉黑过滤用', default_place_id: 2, images: [] },
+  })).data;
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go(`/seller/${sellerId}`);
+  await waitFor(cdp, `!!document.querySelector('[data-follow="${sellerId}"]')
+    && document.querySelectorAll('#list-area .grid-cards > *').length > 0`);
+  await sleep(600);
+
+  const initial = await cdp.eval(`
+    (() => ({
+      followText: document.querySelector('[data-follow="${sellerId}"]')?.innerText.trim() || '',
+      blockText: document.querySelector('[data-block="${sellerId}"]')?.innerText.trim() || '',
+      stats: document.querySelector('.seller-stats')?.innerText.replace(/\\n/g, ' ') || '',
+      cards: document.querySelectorAll('#list-area .grid-cards > *').length,
+    }))()`);
+  check('需求⑦：别人的主页上有「关注」「拉黑」按钮与关注/粉丝数',
+    initial.followText.includes('关注') && initial.blockText.includes('拉黑')
+    && initial.stats.includes('关注') && initial.stats.includes('粉丝'),
+    JSON.stringify(initial).slice(0, 200));
+  check('需求⑦：测试商品正常展示（拉黑前的基线）', initial.cards >= 1, `卡片 ${initial.cards}`);
+
+  // ---- 关注 ----
+  await cdp.eval(`document.querySelector('[data-follow="${sellerId}"]').click()`);
+  await waitFor(cdp, `document.querySelector('[data-follow="${sellerId}"]')?.innerText.includes('已关注')`);
+  await sleep(500);
+  const afterFollow = await cdp.eval(`
+    (() => ({
+      text: document.querySelector('[data-follow="${sellerId}"]')?.innerText.trim() || '',
+      stats: document.querySelector('.seller-stats')?.innerText.replace(/\\n/g, ' ') || '',
+    }))()`);
+  check('需求⑦：点关注后按钮变「已关注」，粉丝数 +1',
+    afterFollow.text.includes('已关注') && /粉丝\s*1/.test(afterFollow.stats),
+    JSON.stringify(afterFollow).slice(0, 160));
+  await cdp.shot(path.join(SHOT_DIR, 'f33-follow.png'));
+
+  // ---- 拉黑（要确认，且说清后果）----
+  await cdp.eval(`document.querySelector('[data-block="${sellerId}"]').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  const dlg = await cdp.eval(`document.querySelector('.modal-mask')?.innerText.replace(/\\n/g, ' ') || ''`);
+  check('需求⑦：拉黑前会确认，并写清后果（看不到商品/评论、TA 不能发私信）',
+    /拉黑/.test(dlg) && /看不到/.test(dlg) && /私信/.test(dlg), dlg.slice(0, 120));
+  await cdp.eval(`document.querySelector('.modal-mask [data-cancel]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+  await sleep(400);
+  const notBlocked = await cdp.eval(`document.querySelectorAll('#list-area .grid-cards > *').length`);
+  check('需求⑦：取消确认时不会拉黑（商品还在）', notBlocked >= 1, `卡片 ${notBlocked}`);
+
+  await cdp.eval(`document.querySelector('[data-block="${sellerId}"]').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
+  await waitFor(cdp, `document.querySelector('[data-block="${sellerId}"]')?.innerText.includes('已拉黑')`);
+  await sleep(900);
+  const afterBlock = await cdp.eval(`
+    (() => ({
+      blockText: document.querySelector('[data-block="${sellerId}"]')?.innerText.trim() || '',
+      cards: document.querySelectorAll('#list-area .grid-cards > *').length,
+      hint: [...document.querySelectorAll('.hint')].map(x => x.innerText).join(' '),
+    }))()`);
+  check('需求⑦：拉黑后主页明确提示，且看不到 TA 的任何商品',
+    afterBlock.blockText.includes('已拉黑') && afterBlock.cards === 0
+    && /你已拉黑/.test(afterBlock.hint),
+    JSON.stringify(afterBlock).slice(0, 200));
+
+  // 拉黑后搜索页也搜不到
+  await cdp.go('/search?keyword=自动化测试：拉黑过滤');
+  await waitFor(cdp, `!!document.querySelector('#list-area, #result-count')`);
+  await sleep(900);
+  const searchHit = await cdp.eval(`
+    (() => ({
+      cards: document.querySelectorAll('#list-area .grid-cards > *').length,
+      empty: /没有|没找到|暂无/.test(document.body.innerText),
+    }))()`);
+  check('需求⑦：拉黑后连搜索也搜不到 TA 的商品',
+    searchHit.cards === 0, JSON.stringify(searchHit));
+  await cdp.shot(path.join(SHOT_DIR, 'f33-blocked.png'));
+
+  // ---- 解除拉黑 ----
+  await cdp.go(`/seller/${sellerId}`);
+  await waitFor(cdp, `!!document.querySelector('[data-block="${sellerId}"]')`);
+  await sleep(600);
+  await cdp.eval(`document.querySelector('[data-block="${sellerId}"]').click()`);
+  await waitFor(cdp, `document.querySelector('[data-block="${sellerId}"]')?.innerText.includes('拉黑')
+    && !document.querySelector('[data-block="${sellerId}"]')?.innerText.includes('已拉黑')`);
+  await sleep(900);
+  const afterUnblock = await cdp.eval(`document.querySelectorAll('#list-area .grid-cards > *').length`);
+  check('需求⑦：解除拉黑后又能看到 TA 的商品', afterUnblock >= 1, `卡片 ${afterUnblock}`);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -3840,6 +3943,7 @@ const GROUPS = {
   30: { title: '私信发送商品详情卡片（新批需求④）', fn: feature30 },
   31: { title: '评论引用(@)与举报（新批需求⑤）', fn: feature31 },
   32: { title: '评论区点用户名跳主页（新批需求⑥）', fn: feature32 },
+  33: { title: '关注 / 拉黑（新批需求⑦）', fn: feature33 },
 };
 
 async function main() {

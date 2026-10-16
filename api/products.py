@@ -20,6 +20,7 @@ from models import (
     PRODUCT_DELETED, PRODUCT_OFF_SHELF, PRODUCT_ON_SALE, PRODUCT_SOLD, ROLE_ADMIN,
 )
 from rating import seller_rating
+from api.social import hidden_author_ids, social_state
 
 bp = Blueprint("products", __name__, url_prefix="/api")
 
@@ -65,6 +66,13 @@ def list_products():
     page, size = paginate_args(Config.DEFAULT_PAGE_SIZE)
 
     q = Product.query.filter(Product.status == PRODUCT_ON_SALE)
+
+    # 新批需求⑦：我拉黑过的人，他的商品在列表与搜索里都不出现
+    _viewer = current_user()
+    if _viewer:
+        _hidden = hidden_author_ids(_viewer.id)
+        if _hidden:
+            q = q.filter(~Product.seller_id.in_(_hidden))
 
     keyword = arg_str("keyword")
     if keyword:
@@ -190,6 +198,11 @@ def product_detail(pid: int):
     if product is None or product.status == PRODUCT_DELETED:
         return fail("商品不存在或已下架", 404)
 
+    # 新批需求⑦：我拉黑过的人，他的商品对我不可见（含直接点链接进来）
+    _viewer = current_user()
+    if _viewer and product.seller_id in hidden_author_ids(_viewer.id):
+        return fail("商品不存在或已下架", 404)
+
     # 每打开一次浏览量 +1（功能文档 5.2.3）
     product.views = (product.views or 0) + 1
     db.session.commit()
@@ -233,6 +246,11 @@ def seller_profile(uid: int):
     if seller is None or seller.role == ROLE_ADMIN:
         return fail("卖家不存在", 404)
 
+    # 新批需求⑦：被我拉黑的人——主页还能打开（不然我会以为"用户没了"），
+    # 但**看不到他任何商品**，并明确告诉我这是因为我拉黑了他。
+    _me = current_user()
+    _blocked_by_me = bool(_me and uid in hidden_author_ids(_me.id))
+
     status = arg_str("status") or PRODUCT_ON_SALE
     if status not in (PRODUCT_ON_SALE, PRODUCT_SOLD):
         return fail("只能查看「在售」或「已售」的商品")
@@ -267,9 +285,13 @@ def seller_profile(uid: int):
             # 需求③：好评率与分级（只算「买家评卖家」的那一半）
             "rating": seller_rating(seller.id),
         },
+        # 新批需求⑦：关注/拉黑状态与关注、粉丝数
+        "social": social_state(_me.id if _me else None, uid),
+        "blocked_by_me": _blocked_by_me,
         "counts": counts,
-        "list": [p.to_dict() for p in items],
-        "total": total, "page": page, "page_size": size,
+        "list": [] if _blocked_by_me else [p.to_dict() for p in items],
+        "total": 0 if _blocked_by_me else total,
+        "page": page, "page_size": size,
     })
 
 
