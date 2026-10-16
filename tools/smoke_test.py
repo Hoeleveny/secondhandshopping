@@ -423,6 +423,23 @@ def main() -> int:
           all(o.get("my_role") == "buyer" for o in (res.get("data") or {}).get("list") or []),
           str(res)[:120])
 
+    # 需求⑥：订单新状态红点（未读式：别人在我订单上的新动作）
+    status, res = call("GET", "/api/orders/updates", token=seller_token)
+    _upd = res.get("data") or {}
+    check("需求⑥：卖家能查到订单红点未读数（别人下单后 ≥1）",
+          status == 200 and _upd.get("count", 0) >= 1 and "latest_id" in _upd,
+          str(_upd)[:150])
+    _b = call("GET", "/api/orders/updates", token=token)[1].get("data") or {}
+    check("需求⑥：自己下的单不提醒自己（买家侧未读为 0）", _b.get("count") == 0, str(_b)[:120])
+    status, res = call("POST", "/api/orders/updates/seen", body={}, token=seller_token)
+    _after = call("GET", "/api/orders/updates", token=seller_token)[1].get("data") or {}
+    check("需求⑥：看过订单后卖家的红点清零，且不影响买家那侧",
+          res.get("code") == 0 and _after.get("count") == 0
+          and (call("GET", "/api/orders/updates", token=token)[1].get("data") or {}).get("count") == 0,
+          f"清零后={_after.get('count')}")
+    status, res = call("GET", "/api/orders/updates")
+    check("需求⑥：未登录不能查订单红点", status == 401, str(status))
+
     status, res = call("GET", "/api/orders/sold", token=seller_token)
     sold_ids = [o["id"] for o in (res.get("data") or {}).get("list", [])]
     check("订单出现在卖家「卖出订单」", order_id in sold_ids, str(sold_ids)[:150])

@@ -322,6 +322,8 @@
 /* 需求⑤：可点击跳转到对方主页的用户名/头像 */
 .user-link { cursor: pointer; border-radius: 4px; transition: color .15s ease; }
 .user-link:hover, .user-link:focus-visible { color: var(--primary); text-decoration: underline; }
+/* 需求⑥：左侧菜单项上的数字红点（「我的订单」有新状态时出现） */
+.menu-item .menu-badge { margin-left: auto; }
 /* 两列排的键值明细：行数多时纵向省一半，一屏就能看全（明细弹窗里用） */
 .kv-list.cols-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 26px; }
 

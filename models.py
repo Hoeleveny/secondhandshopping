@@ -33,6 +33,8 @@ class User(db.Model):
     seller_seq = db.Column(db.Integer, unique=True)
     # 需求②：商家简介（卖家在个人资料页自填，展示在卖家商品主页顶部）
     bio = db.Column(db.String(100))
+    # 需求⑥：订单红点的已读游标——已看到的最大订单操作日志 id（迁移 011）
+    orders_seen_log_id = db.Column(db.BigInteger)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
     # ---- 业务方法 ----

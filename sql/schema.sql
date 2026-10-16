@@ -29,6 +29,7 @@ CREATE TABLE `users` (
   `avatar`        VARCHAR(255)    NULL                    COMMENT '头像文件名（相对 uploads/），功能⑦',
   `seller_seq`    INT             NULL                    COMMENT '商品编号的卖家码来源：首次发布商品时惰性分配（迁移 006）',
   `bio`           VARCHAR(100)    NULL                    COMMENT '商家简介：卖家自填、展示在卖家商品主页（需求②，迁移 008）',
+  `orders_seen_log_id` BIGINT     NULL                    COMMENT '订单红点已读游标：已看到的最大订单操作日志 id（需求⑥，迁移 011）',
   `created_at`    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_users_username` (`username`),

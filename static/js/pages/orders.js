@@ -163,6 +163,13 @@ export default {
     }
 
     await load();
+
+    // 需求⑥：进了「我的订单」就把红点清零（游标推到最新），否则红点会一直挂着。
+    // 用事件通知外壳去刷新，避免页面反向 import app.js（外壳监听 cm:order-seen）。
+    try {
+      await api.post('/api/orders/updates/seen');
+      window.dispatchEvent(new CustomEvent('cm:order-seen'));
+    } catch (err) { /* 红点失败不该影响页面 */ }
   },
 };
 

@@ -2474,6 +2474,14 @@ async function feature23(cdp) {
     }
   }
 
+  const readMenu = () => cdp.eval(`
+    (() => ({
+      labels: [...document.querySelectorAll('.menu-item')].map(m => m.innerText.trim()),
+      // 比较菜单「有哪些项」要按 hash 比，别比 innerText——
+      // 「我的订单」上的未读红点会往文本里塞数字，那就变成在比红点了
+      hashes: [...document.querySelectorAll('.menu-item')].map(m => m.dataset.hash),
+    }))()`);
+
   // ---- 1. 顶栏没有身份滑块了，菜单买卖合一 ----
   await cdp.loginAs('buyer1', '123456', 'buyer');
   await cdp.go('/home');
@@ -2494,16 +2502,16 @@ async function feature23(cdp) {
     && buyer.menu.some(t => t.includes('我的订单')) && !buyer.menu.some(t => t.includes('卖出订单')),
     JSON.stringify(buyer.menu));
 
-  // 换个「卖家」账号登录，菜单应当完全一样（不再有买家/卖家之分）
+  // 换个「卖家」账号登录，菜单项应当完全一样（不再有买家/卖家之分）
+  const buyerHashes = await readMenu();
   await cdp.loginAs('seller1', '123456', 'seller');
   await cdp.go('/home');
   await waitFor(cdp, `document.querySelectorAll('.menu-item').length > 0`);
   await sleep(400);
-  const sellerMenu = await cdp.eval(`
-    [...document.querySelectorAll('.menu-item')].map(m => m.innerText.trim())`);
-  check('需求④：卖家账号与买家账号看到的菜单完全一致',
-    JSON.stringify(sellerMenu) === JSON.stringify(buyer.menu),
-    `卖家=${JSON.stringify(sellerMenu)}`);
+  const sellerHashes = await readMenu();
+  check('需求④：卖家账号与买家账号看到的菜单完全一致（按菜单项比，不受红点影响）',
+    JSON.stringify(sellerHashes.hashes) === JSON.stringify(buyerHashes.hashes),
+    `买家=${JSON.stringify(buyerHashes.hashes)}；卖家=${JSON.stringify(sellerHashes.hashes)}`);
 
   // ---- 2. 登录页不再要求选身份 ----
   await cdp.logout();
@@ -2721,6 +2729,86 @@ async function feature24(cdp) {
   check('需求⑤：游客点「私信 TA」会被引导登录', true, '');
 }
 
+/* ================================================================ 功能㉕ 订单新状态红点（新批需求⑥） */
+async function feature25(cdp) {
+  console.log('\n===== 功能㉕ 「我的订单」新状态数字红点（需求⑥）=====');
+
+  async function ensureAccount(username, password) {
+    try {
+      return await login(username, password, 'buyer');
+    } catch {
+      await api('POST', '/api/auth/register', { body: { username, password } });
+      return login(username, password, 'buyer');
+    }
+  }
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await ensureAccount('acc_buyer', '1234');
+
+  // 基线：让卖家先把红点清零
+  await api('POST', '/api/orders/updates/seen', { token: sellerToken, body: {} });
+
+  // 造一笔「别人在卖家的订单上做了动作」：自己的商品被下单
+  const product = (await api('POST', '/api/products', {
+    token: sellerToken,
+    body: { name: '自动化测试：红点用商品', price: 9.5, category_id: 1, subcategory_id: 1,
+            condition: '九成新', description: '红点用', default_place_id: 2, images: [] },
+  })).data;
+  const order = (await api('POST', '/api/orders', {
+    token: buyerToken, body: { product_id: product.id, meet_place_id: 2 },
+  })).data;
+  const pendingCount = (await api('GET', '/api/orders/updates',
+    { token: sellerToken })).data.count;
+  check('别人在我的订单上操作后，接口能算出未读数', pendingCount >= 1, `未读=${pendingCount}`);
+
+  // ---- 卖家登录：左侧「我的订单」出现数字红点 ----
+  await cdp.loginAs('seller1', '123456', 'seller');
+  await cdp.go('/home');
+  await waitFor(cdp, `document.querySelectorAll('.menu-item').length > 0`);
+  await sleep(1200);   // 外壳绑定后会异步刷一次红点
+  const badge = await cdp.eval(`
+    (() => {
+      const b = document.getElementById('order-badge');
+      if (!b) return { exists: false };
+      return { exists: true, text: b.textContent.trim(),
+               visible: b.style.display !== 'none' && b.offsetParent !== null,
+               onOrdersItem: !!b.closest('.menu-item') &&
+                 b.closest('.menu-item').innerText.includes('我的订单') };
+    })()`);
+  check('需求⑥：左侧「我的订单」上出现数字小红点',
+    badge.exists && badge.visible && Number(badge.text) >= 1 && badge.onOrdersItem,
+    JSON.stringify(badge));
+  check('需求⑥：红点里是未读数（数字），不是纯装饰点',
+    /^\d+$/.test(badge.text || ''), `红点文字=「${badge.text}」`);
+  await cdp.shot(path.join(SHOT_DIR, 'f25-order-badge.png'));
+
+  // ---- 进「我的订单」后红点清零 ----
+  await cdp.eval(`[...document.querySelectorAll('.menu-item')]
+    .find(m => m.innerText.includes('我的订单')).click()`);
+  await waitFor(cdp, `location.hash.startsWith('#/orders')`);
+  await waitFor(cdp, `document.querySelectorAll('#side-tabs .tab').length > 0`);
+  await sleep(1200);
+  const after = await cdp.eval(`
+    (() => {
+      const b = document.getElementById('order-badge');
+      return { hidden: !b || b.style.display === 'none', text: b ? b.textContent.trim() : '' };
+    })()`);
+  const leftCount = (await api('GET', '/api/orders/updates', { token: sellerToken })).data.count;
+  check('需求⑥：打开「我的订单」后红点消失、后端未读也清零',
+    after.hidden && leftCount === 0, `线上红点=${JSON.stringify(after)}；接口未读=${leftCount}`);
+
+  // ---- 买家那侧不该被自己的动作提醒 ----
+  await api('POST', '/api/orders/updates/seen', { token: buyerToken, body: {} });
+  await api('PATCH', `/api/orders/${order.id}/complete`, { token: buyerToken });
+  const sellerAgain = (await api('GET', '/api/orders/updates', { token: sellerToken })).data.count;
+  const buyerOwn = (await api('GET', '/api/orders/updates', { token: buyerToken })).data.count;
+  check('需求⑥：对方（卖家）确认/完成等动作会再点亮红点，而自己做的不提醒自己',
+    sellerAgain >= 1 && buyerOwn === 0, `卖家未读=${sellerAgain}；买家未读=${buyerOwn}`);
+
+  // ---- 清掉红点，别把状态留给后面的用例 ----
+  await api('POST', '/api/orders/updates/seen', { token: sellerToken, body: {} });
+  await api('POST', '/api/orders/updates/seen', { token: buyerToken, body: {} });
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -2747,6 +2835,7 @@ const GROUPS = {
   22: { title: '帖子举报入口（新批需求③）', fn: feature22 },
   23: { title: '买卖身份合并（新批需求④）', fn: feature23 },
   24: { title: '用户主页 + 私信入口（新批需求⑤）', fn: feature24 },
+  25: { title: '订单新状态红点（新批需求⑥）', fn: feature25 },
 };
 
 async function main() {

@@ -18,7 +18,7 @@ from api.common import (
 from config import Config
 from extensions import db
 from models import (
-    CampusPlace, Order, Product, User,
+    CampusPlace, OperationLog, Order, Product, User,
     ORDER_CANCELED, ORDER_DONE, ORDER_PENDING,
     PRODUCT_ON_SALE, PRODUCT_SOLD, ROLE_ADMIN,
 )
@@ -117,6 +117,55 @@ def create_order():
     db.session.commit()
 
     return ok(order.to_dict(user.id), msg="下单成功，请与卖家约定时间自提")
+
+
+@bp.get("/orders/updates")
+@login_required
+def order_updates():
+    """需求⑥：「我的订单」上的小红点。
+
+    口径：**别人**在我参与的订单上留下的操作日志，且比我上次查看订单时更新的，算未读。
+    - 我自己的操作不算（自己刚下的单不用提醒自己）；
+    - 打开一次「我的订单」页就会把游标推到最新（见 /orders/updates/seen）。
+    """
+    user = current_user()
+    latest = _latest_order_log_id(user.id)
+    seen = user.orders_seen_log_id or 0
+    count = _order_log_query(user.id).filter(OperationLog.id > seen).count()
+    return ok({"count": count, "latest_id": latest, "seen_id": seen})
+
+
+@bp.post("/orders/updates/seen")
+@login_required
+def order_updates_seen():
+    """把订单红点清零：游标推到当前最新（只推自己的，不影响别人）。"""
+    user = current_user()
+    latest = _latest_order_log_id(user.id)
+    if latest > (user.orders_seen_log_id or 0):
+        user.orders_seen_log_id = latest
+        db.session.commit()
+    return ok({"count": 0, "seen_id": user.orders_seen_log_id or 0})
+
+
+def _my_order_ids(user_id: int) -> list[int]:
+    rows = db.session.query(Order.id).filter(
+        or_(Order.buyer_id == user_id, Order.seller_id == user_id)).all()
+    return [r[0] for r in rows]
+
+
+def _order_log_query(user_id: int):
+    """「与我有关、但不是我自己做的」订单操作日志。"""
+    oids = _my_order_ids(user_id)
+    return OperationLog.query.filter(
+        OperationLog.target_type == "order",
+        OperationLog.target_id.in_(oids or [-1]),
+        OperationLog.user_id != user_id,
+    )
+
+
+def _latest_order_log_id(user_id: int) -> int:
+    row = _order_log_query(user_id).order_by(OperationLog.id.desc()).first()
+    return row.id if row else 0
 
 
 # ------------------------------------------------------------------ 订单列表

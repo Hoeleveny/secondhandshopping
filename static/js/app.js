@@ -132,6 +132,9 @@ function sidebarHtml(viewKey, activeMenu) {
   const items = (MENUS[viewKey] || MENUS.guest).map(item => `
     <button class="menu-item ${item.key === activeMenu ? 'active' : ''}" data-hash="${item.hash}">
       <span class="mi-icon">${item.icon}</span><span>${item.label}</span>
+      ${item.key === 'orders'
+        ? '<span class="badge badge-danger menu-badge" id="order-badge" style="display:none">0</span>'
+        : ''}
     </button>`).join('');
   const titles = { guest: '游客浏览', user: '我的集市', admin: '管理员' };
   return `<aside class="sidebar">
@@ -273,11 +276,15 @@ function bindShellEvents() {
   const loginBtn = root.querySelector('#go-login');
   if (loginBtn) loginBtn.addEventListener('click', () => go('#/login'));
 
-  // 未读私信红点（登录后每 30 秒刷一次；入口在右上角用户小框里）
+  // 未读私信红点 + 订单新状态红点（登录后每 30 秒刷一次；消息入口在右上角用户小框里）
   if (root.querySelector('#user-menu')) {
     refreshUnreadBadge();
+    refreshOrderBadge();
     clearInterval(window.__unreadTimer);
-    window.__unreadTimer = setInterval(refreshUnreadBadge, 30000);
+    window.__unreadTimer = setInterval(() => {
+      refreshUnreadBadge();
+      refreshOrderBadge();
+    }, 30000);
   } else {
     clearInterval(window.__unreadTimer);
   }
@@ -337,6 +344,23 @@ function bindShellEvents() {
 function viewKeyLabel() {
   return store.isAdmin ? '管理员' : '用户';
 }
+
+/**
+ * 需求⑥：左侧「我的订单」上的新状态红点。
+ * 口径＝别人在我订单上的新操作（下单/确认完成/取消…）；打开订单页会把游标推到最新，
+ * 页面处理完会派发 cm:order-seen，外壳收到后立刻重算（见 window 监听处）。
+ */
+async function refreshOrderBadge() {
+  const badge = document.getElementById('order-badge');
+  if (!badge || !store.isLoggedIn) return;
+  try {
+    const data = await api.get('/api/orders/updates');
+    badge.textContent = data.count;
+    badge.style.display = data.count > 0 ? '' : 'none';
+  } catch (err) { /* 未登录或网络异常时静默 */ }
+}
+
+window.addEventListener('cm:order-seen', () => { refreshOrderBadge(); });
 
 /** 顶栏未读私信红点 */
 async function refreshUnreadBadge() {
