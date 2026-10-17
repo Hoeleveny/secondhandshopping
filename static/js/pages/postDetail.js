@@ -6,7 +6,7 @@ import { store } from '../store.js';
 import { ensureMeta } from '../data.js';
 import { liveUpdate } from '../live.js';
 import { commentTextHtml } from '../components.js';
-import { confirmDialog, emptyHtml, esc, fmtTime, openModal, toast } from '../ui.js';
+import { avatarHtml, confirmDialog, emptyHtml, esc, fmtTime, openModal, toast } from '../ui.js';
 
 async function renderPost(root, ctx) {
   const id = ctx.params.id;
@@ -31,7 +31,9 @@ async function renderPost(root, ctx) {
     ? items.map(c => `
         <div class="comment-item" data-comment="${c.id}">
           <div class="cm-head">
-            <b class="user-link" data-user="${c.author_id}" title="查看 TA 的主页">${esc(c.author_nickname || '')}</b>
+            <span class="user-link mini-author" data-user="${c.author_id}" title="查看 TA 的主页"
+              >${avatarHtml({ nickname: c.author_nickname, avatar: c.author_avatar }, 22, 'mini-avatar')}<b
+              class="mini-author-name">${esc(c.author_nickname || '')}</b></span>
             <span>${esc(fmtTime(c.created_at))}</span>
           </div>
           <div class="cm-body">${commentTextHtml(c.content, c.mentions)}</div>

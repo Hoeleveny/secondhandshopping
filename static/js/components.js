@@ -1,7 +1,7 @@
 /* ==========================================================================
    可复用片段：商品卡、订单卡、帖子条目
    ========================================================================== */
-import { esc, fmtPrice, fmtTime, coverHtml, statusFlagHtml, statusBadgeHtml, starsHtml } from './ui.js';
+import { esc, fmtPrice, fmtTime, avatarHtml, coverHtml, statusFlagHtml, statusBadgeHtml, starsHtml } from './ui.js';
 
 /* ---------------------------------------------------------------- 商品卡 */
 export function productCardHtml(product) {
@@ -155,7 +155,9 @@ export function postItemHtml(post, options = {}) {
         ${post.images.length > 1 ? `<span class="post-thumb-more">共 ${post.images.length} 张</span>` : ''}
       </div>` : ''}
     <div class="post-meta">
-      <span class="user-link" data-user="${post.author_id}" title="查看 TA 的主页">👤 ${esc(post.author_nickname || '')}</span>
+      <span class="user-link mini-author" data-user="${post.author_id}" title="查看 TA 的主页"
+        >${avatarHtml({ nickname: post.author_nickname, avatar: post.author_avatar }, 22, 'mini-avatar')}<span
+        class="mini-author-name">${esc(post.author_nickname || '')}</span></span>
       <span>🕒 ${esc(fmtTime(post.created_at))}</span>
       <span>💬 <span data-comment-count="${post.id}">${post.comment_count}</span> 条评论</span>
     </div>

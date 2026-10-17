@@ -4992,6 +4992,116 @@ async function feature44(cdp) {
   await cdp.shot(path.join(SHOT_DIR, 'f44-msg-avatar.png'));
 }
 
+/* ================================================================ 功能㊺ 广场帖子/评论的作者小头像（本批需求④） */
+async function feature45(cdp) {
+  console.log('\n===== 功能㊺ 交流广场的作者小头像（本批需求④）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const seller = (await api('GET', '/api/auth/me', { token: sellerToken })).data.user;
+
+  const post = (await api('POST', '/api/posts', {
+    token: sellerToken,
+    body: { title: '自动化测试：小头像帖子', content: '看看头像', tag: '闲聊' },
+  })).data;
+  await api('POST', `/api/posts/${post.id}/comments`, {
+    token: buyerToken, body: { content: '自动化测试：评论也要小头像' },
+  });
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go('/posts');
+  await waitFor(cdp, `document.querySelectorAll('#list-area .mini-author').length > 0`);
+  await sleep(900);
+
+  const card = await cdp.eval(`
+    (() => {
+      const rows = [...document.querySelectorAll('#list-area .post-item')];
+      const row = rows.find(x => x.innerText.includes('小头像帖子'));
+      if (!row) return { found: false };
+      const wrap = row.querySelector('.post-meta .mini-author');
+      const av = wrap ? wrap.querySelector('.mini-avatar') : null;
+      const name = wrap ? wrap.querySelector('.mini-author-name') : null;
+      if (!wrap || !av || !name) return { found: true, layout: false };
+      const a = av.getBoundingClientRect();
+      const n = name.getBoundingClientRect();
+      return {
+        found: true, layout: true,
+        hasAvatarNode: true,
+        avatarLeft: Math.round(a.left), nameLeft: Math.round(n.left),
+        avatarCenterY: Math.round(a.top + a.height / 2),
+        nameCenterY: Math.round(n.top + n.height / 2),
+        nameText: name.innerText.trim(),
+        uid: wrap.dataset.user,
+        cursor: getComputedStyle(wrap).cursor,
+      };
+    })()`);
+  check('需求④：广场帖子卡上，作者头像与名字在同一块可点区域里',
+    card.found && card.layout === true && card.uid === String(seller.id)
+    && card.cursor === 'pointer', JSON.stringify(card));
+  check('需求④：小头像在用户名**左侧**',
+    card.avatarLeft < card.nameLeft, `头像 left=${card.avatarLeft}，名字 left=${card.nameLeft}`);
+  check('需求④：头像与用户名**竖向齐平**（中心线基本一致）',
+    Math.abs(card.avatarCenterY - card.nameCenterY) <= 4,
+    `头像中心 ${card.avatarCenterY} / 名字中心 ${card.nameCenterY}`);
+  check('需求④：作者名正确显示', card.nameText === seller.nickname, card.nameText);
+  await cdp.shot(path.join(SHOT_DIR, 'f45-post-avatar.png'));
+
+  // 点头像 → 主页
+  await cdp.eval(`
+    (() => {
+      const rows = [...document.querySelectorAll('#list-area .post-item')];
+      const row = rows.find(x => x.innerText.includes('小头像帖子'));
+      row.querySelector('.mini-avatar').click();
+    })()`);
+  await waitFor(cdp, `location.hash.startsWith('#/seller/')`);
+  check('需求④：点帖子里的头像进主页',
+    (await cdp.eval(`(() => ({ hash: location.hash }))()`)).hash === `#/seller/${seller.id}`,
+    await cdp.eval(`(() => ({ hash: location.hash }))()`).then(r => r.hash));
+
+  // 点名字 → 主页
+  await cdp.go('/posts');
+  await waitFor(cdp, `document.querySelectorAll('#list-area .mini-author').length > 0`);
+  await sleep(700);
+  await cdp.eval(`
+    (() => {
+      const rows = [...document.querySelectorAll('#list-area .post-item')];
+      const row = rows.find(x => x.innerText.includes('小头像帖子'));
+      row.querySelector('.mini-author-name').click();
+    })()`);
+  await waitFor(cdp, `location.hash.startsWith('#/seller/')`);
+  check('需求④：点用户名同样进主页',
+    (await cdp.eval(`(() => ({ hash: location.hash }))()`)).hash === `#/seller/${seller.id}`, '');
+
+  // 帖子详情：评论人也带头像，点头像/名字都进主页
+  await cdp.go(`/post/${post.id}`);
+  await waitFor(cdp, `!!document.querySelector('#comment-list .mini-author')`);
+  await sleep(500);
+  const comment = await cdp.eval(`
+    (() => {
+      const wrap = document.querySelector('#comment-list .mini-author');
+      const av = wrap ? wrap.querySelector('.mini-avatar') : null;
+      const name = wrap ? wrap.querySelector('.mini-author-name') : null;
+      if (!wrap || !av || !name) return { ok: false };
+      const a = av.getBoundingClientRect();
+      const n = name.getBoundingClientRect();
+      return {
+        ok: true, uid: wrap.dataset.user,
+        leftOk: Math.round(a.left) < Math.round(n.left),
+        alignOk: Math.abs((a.top + a.height / 2) - (n.top + n.height / 2)) <= 4,
+      };
+    })()`);
+  check('需求④：评论人也有小头像（在名字左侧、竖向齐平）',
+    comment.ok && comment.leftOk && comment.alignOk, JSON.stringify(comment));
+
+  await cdp.eval(`document.querySelector('#comment-list .mini-author .mini-avatar').click()`);
+  await waitFor(cdp, `location.hash.startsWith('#/seller/')`);
+  check('需求④：点评论人的头像进主页',
+    (await cdp.eval(`(() => ({ hash: location.hash }))()`)).hash === `#/seller/${comment.uid}`,
+    comment.uid);
+
+  await api('DELETE', `/api/posts/${post.id}`, { token: sellerToken }).catch(() => null);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -5038,6 +5148,7 @@ const GROUPS = {
   42: { title: '动态监控勾选区域放大（本批需求①）', fn: feature42 },
   43: { title: '多选不被自动刷新冲掉（本批需求②）', fn: feature43 },
   44: { title: '私信点头像进主页（本批需求③）', fn: feature44 },
+  45: { title: '广场帖子/评论小头像（本批需求④）', fn: feature45 },
 };
 
 async function main() {

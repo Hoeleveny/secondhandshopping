@@ -570,6 +570,16 @@
 /* 2026-10-16：私信里**只有头像**跳主页，其余区域进聊天，所以头像单独给出手型与可点样式 */
 .conv-avatar { flex: none; cursor: pointer; display: inline-flex; border-radius: 50%; }
 .conv-avatar:hover { outline: 2px solid var(--primary); outline-offset: 2px; }
+/* 2026-10-16：交流广场的帖子与评论，作者小头像放在用户名左侧、与文字竖向居中对齐；
+   头像与名字同属一个可点区域 → 点哪个都进 TA 的主页 */
+.mini-author {
+  display: inline-flex; align-items: center; gap: 6px;
+  cursor: pointer; line-height: 1;
+}
+.mini-author .mini-avatar { flex: none; }
+.mini-author .mini-author-name { font-weight: 600; }
+.mini-author:hover .mini-author-name { color: var(--primary); }
+.post-meta .mini-author { margin-right: 2px; }
 .rate-pick { display: flex; gap: 4px; font-size: 26px; cursor: pointer; color: var(--border-strong); }
 .rate-pick span.on { color: var(--warning); }
 

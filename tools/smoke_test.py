@@ -1828,6 +1828,27 @@ def main() -> int:
     check("卖家删的是自己那一侧，不报错也不影响买家侧数据",
           r.get("code") == 0, str(r)[:150])
 
+    # ---------------- 本批需求④：广场帖子/评论显示作者小头像 ----------------
+    section("本批需求④ 广场小头像")
+
+    _st, r = call("POST", "/api/posts", token=token,
+                  body={"title": "冒烟测试-小头像", "content": "头像展示用", "tag": "闲聊"})
+    _av_post = r.get("data") or {}
+    check("需求④：帖子数据带出作者头像字段",
+          "author_avatar" in _av_post, str(sorted(_av_post.keys()))[:160])
+
+    _st, r = call("POST", f"/api/posts/{_av_post.get('id')}/comments", token=seller_token,
+                  body={"content": "冒烟测试：评论人小头像"})
+    _av_comment = r.get("data") or {}
+    check("需求④：评论数据带出评论人头像字段",
+          "author_avatar" in _av_comment, str(sorted(_av_comment.keys()))[:160])
+
+    _st, r = call("GET", f"/api/posts/{_av_post.get('id')}")
+    _av_detail = r.get("data") or {}
+    _av_c = ((_av_detail.get("comments") or [{}])[0])
+    check("需求④：帖子详情的评论列表也带头像字段",
+          "author_avatar" in _av_c, str(sorted(_av_c.keys()))[:160])
+
     # ---------------- 本批需求③：用户空间展示 TA 的帖子 ----------------
     section("本批需求③ 用户空间展示帖子")
 

@@ -616,6 +616,8 @@ class Post(db.Model):
             "id": self.id,
             "author_id": self.author_id,
             "author_nickname": self.author.nickname if self.author else None,
+            # 2026-10-16：交流广场显示作者小头像（在用户名左侧）
+            "author_avatar": self.author.avatar if self.author else None,
             "title": self.title,
             "content": self.content,
             "tag": self.tag,
@@ -651,6 +653,8 @@ class PostComment(db.Model):
             "post_id": self.post_id,
             "author_id": self.author_id,
             "author_nickname": self.author.nickname if self.author else None,
+            # 2026-10-16：评论人小头像（在用户名左侧）
+            "author_avatar": self.author.avatar if self.author else None,
             "content": self.content,
             "mentions": self.mentions or [],
             "created_at": _dt(self.created_at),
