@@ -4827,6 +4827,74 @@ async function feature42(cdp) {
   await waitFor(cdp, `!document.querySelector('.modal-mask')`);
 }
 
+/* ================================================================ 功能㊸ 动态监控多选不被自动刷新冲掉（本批需求②） */
+async function feature43(cdp) {
+  console.log('\n===== 功能㊸ 连续勾选多条不被自动刷新冲掉（本批需求②）=====');
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=trades');
+  await waitFor(cdp, `document.querySelectorAll('#lg-list .tl-check').length >= 3`);
+  await sleep(700);
+
+  // 真实鼠标点第 i 个勾选框（用合成 click 在 label 里可能被转发两次，不可靠）
+  async function clickCheckbox(i) {
+    const pos = await cdp.eval(`
+      (() => {
+        const list = [...document.querySelectorAll('#lg-list .tl-check')];
+        const el = list[${i}];
+        if (!el) return null;
+        el.scrollIntoView({ block: 'center' });
+        const r = el.getBoundingClientRect();
+        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+      })()`);
+    if (!pos) return false;
+    await cdp.send('Input.dispatchMouseEvent',
+      { type: 'mousePressed', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
+    await cdp.send('Input.dispatchMouseEvent',
+      { type: 'mouseReleased', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
+    await sleep(300);
+    return true;
+  }
+
+  const read = () => cdp.eval(`
+    (() => ({
+      checked: document.querySelectorAll('#lg-list .tl-check:checked').length,
+      hint: (document.querySelector('#lg-del-selected') || {}).innerText || '',
+    }))()`);
+
+  check('需求②：时间线至少准备了 3 条记录可供勾选', true, '');
+
+  await clickCheckbox(0);
+  await clickCheckbox(1);
+  const before = await read();
+  check('需求②：可以连续勾选多条，计数累加',
+    before.checked === 2 && /（2）/.test(before.hint), JSON.stringify(before));
+
+  // 这条时间线每 5 秒自动刷新一次（原来会在重绘时把勾选全部清空 → 用户看到"选了几条又自己取消"）
+  await sleep(6500);
+  const afterRefresh = await read();
+  check('需求②：等过一轮 5 秒自动刷新后，已勾选的多条**依然在**',
+    afterRefresh.checked === 2 && /（2）/.test(afterRefresh.hint),
+    JSON.stringify(afterRefresh));
+
+  await clickCheckbox(2);
+  const three = await read();
+  check('需求②：接着勾第三条，之前的两条也没被取消',
+    three.checked === 3 && /（3）/.test(three.hint), JSON.stringify(three));
+
+  await sleep(6000);
+  const stillThree = await read();
+  check('需求②：再过一轮刷新，仍然是 3 条选中',
+    stillThree.checked === 3 && /（3）/.test(stillThree.hint), JSON.stringify(stillThree));
+
+  // 取消一条 → 回到 2
+  await clickCheckbox(0);
+  const two = await read();
+  check('需求②：取消其中一条后计数回到 2（勾选状态可正常增减）',
+    two.checked === 2 && /（2）/.test(two.hint), JSON.stringify(two));
+  await cdp.shot(path.join(SHOT_DIR, 'f43-multi-select.png'));
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -4871,6 +4939,7 @@ const GROUPS = {
   40: { title: '评论里@到的人可点（本批需求②）', fn: feature40 },
   41: { title: '用户空间展示帖子（本批需求③）', fn: feature41 },
   42: { title: '动态监控勾选区域放大（本批需求①）', fn: feature42 },
+  43: { title: '多选不被自动刷新冲掉（本批需求②）', fn: feature43 },
 };
 
 async function main() {

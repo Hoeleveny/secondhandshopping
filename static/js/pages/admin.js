@@ -227,6 +227,9 @@ async function renderTrades(panel) {
   let logFrom = '';
   let logTo = '';
   let logPage = 1;
+  // 2026-10-16 修复「选了几条又自己取消」：这条时间线有 5 秒自动刷新，每次都会整体重绘，
+  // 勾选状态必须存在这个**独立集合**里（而不是只依赖 DOM 的 checked），重绘时再按它回填。
+  const pickedLogs = new Set();
 
   panel.innerHTML = `
     <div class="grid grid-4 mb-16" id="td-stats">${loadingHtml()}</div>
@@ -733,7 +736,8 @@ async function renderTrades(panel) {
           <div class="tl-item clickable" data-log="${log.id}" role="button" tabindex="0"
                title="点击查看这条动作的详细交易信息">
             <label class="tl-check-box" title="选中后可批量删除这条记录">
-              <input type="checkbox" class="tl-check" data-check="${log.id}">
+              <input type="checkbox" class="tl-check" data-check="${log.id}"
+                     ${pickedLogs.has(log.id) ? 'checked' : ''}>
             </label>
             <span class="tl-time muted small">${esc(fmtTime(log.created_at))}</span>
             <span class="tl-who">${esc(log.nickname || log.username || '系统')}</span>
@@ -760,20 +764,21 @@ async function renderTrades(panel) {
     });
 
     // 新批需求②：勾选后可删除选定的操作记录（删除动作本身也会留一条日志）
+    // 2026-10-16 修复：勾选状态以 pickedLogs 为准，重绘（5 秒自动刷新）后据此回填，不再被冲掉
     const checkAll = box.querySelector('#lg-check-all');
     const delBtn = box.querySelector('#lg-del-selected');
-    const selectedIds = () => [...box.querySelectorAll('.tl-check:checked')]
-      .map(el => Number(el.dataset.check));
+    const selectedIds = () => [...pickedLogs];
     const syncDel = () => {
-      const n = selectedIds().length;
-      const total = box.querySelectorAll('.tl-check').length;
+      const n = pickedLogs.size;
+      const pageChecks = [...box.querySelectorAll('.tl-check')];
+      const pageChecked = pageChecks.filter(el => el.checked).length;
       if (delBtn) {
         delBtn.textContent = `🗑 删除选中（${n}）`;
         delBtn.disabled = n === 0;
       }
       if (checkAll) {
-        checkAll.checked = n > 0 && n === total;
-        checkAll.indeterminate = n > 0 && n < total;
+        checkAll.checked = pageChecks.length > 0 && pageChecked === pageChecks.length;
+        checkAll.indeterminate = pageChecked > 0 && pageChecked < pageChecks.length;
       }
     };
     const removeLogs = async (ids) => {
@@ -787,16 +792,26 @@ async function renderTrades(panel) {
       if (!sure) return;
       try {
         const res = await api.post('/api/admin/logs/delete', { ids });
+        ids.forEach(id => pickedLogs.delete(id));   // 删掉的从选中集合里去掉
         toast(`已删除 ${res.deleted} 条记录`);
         loadLogs();
       } catch (err) { toast(err.message, 'error'); }
     };
     checkAll?.addEventListener('change', () => {
-      box.querySelectorAll('.tl-check').forEach(el => { el.checked = checkAll.checked; });
+      box.querySelectorAll('.tl-check').forEach(el => {
+        el.checked = checkAll.checked;
+        const id = Number(el.dataset.check);
+        if (checkAll.checked) pickedLogs.add(id); else pickedLogs.delete(id);
+      });
       syncDel();
     });
     box.querySelectorAll('.tl-check').forEach(el =>
-      el.addEventListener('click', (event) => { event.stopPropagation(); syncDel(); }));
+      el.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const id = Number(el.dataset.check);
+        if (el.checked) pickedLogs.add(id); else pickedLogs.delete(id);
+        syncDel();
+      }));
     delBtn?.addEventListener('click', () => removeLogs(selectedIds()));
     box.querySelectorAll('[data-del]').forEach(btn =>
       btn.addEventListener('click', (event) => {
