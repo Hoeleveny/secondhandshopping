@@ -567,6 +567,9 @@
   position: absolute; left: 0; top: 0;
   user-select: none; -webkit-user-drag: none; pointer-events: none;
 }
+/* 2026-10-16：私信里**只有头像**跳主页，其余区域进聊天，所以头像单独给出手型与可点样式 */
+.conv-avatar { flex: none; cursor: pointer; display: inline-flex; border-radius: 50%; }
+.conv-avatar:hover { outline: 2px solid var(--primary); outline-offset: 2px; }
 .rate-pick { display: flex; gap: 4px; font-size: 26px; cursor: pointer; color: var(--border-strong); }
 .rate-pick span.on { color: var(--warning); }
 

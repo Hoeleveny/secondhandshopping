@@ -70,9 +70,9 @@ async function renderMessages(root, ctx) {
       const active = String(user.id) === String(currentUid);
       return `
         <div class="msg-conv ${active ? 'active' : ''}" data-uid="${user.id}">
-          ${avatarHtml(user)}
+          <span class="conv-avatar" data-user="${user.id}" title="查看 TA 的主页">${avatarHtml(user)}</span>
           <div class="mc-body">
-            <div class="mc-name user-link" data-user="${user.id}" title="查看 TA 的主页">${esc(user.nickname || '（用户已注销）')}</div>
+            <div class="mc-name">${esc(user.nickname || '（用户已注销）')}</div>
             <div class="mc-last">${esc(last.content || '')}</div>
           </div>
           ${item.unread > 0 ? `<span class="badge badge-danger">${item.unread}</span>` : ''}
@@ -85,7 +85,8 @@ async function renderMessages(root, ctx) {
         ctxProductHint = '';
         openChat(Number(el.dataset.uid));
       }));
-    // 需求⑤：点对方昵称去 TA 的主页（stopPropagation，别顺手把会话也切了）
+    // 2026-10-16：**只有头像**跳 TA 的主页（stopPropagation，别顺手把会话也切了）；
+    // 昵称等其它区域交给整行点击 → 进入私信聊天框
     convBox.querySelectorAll('[data-user]').forEach(el =>
       el.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -171,9 +172,9 @@ async function renderMessages(root, ctx) {
       <div class="chat-box">
         <div class="chat-head">
           <div class="row" style="gap:10px">
-            <span class="user-link row" style="gap:8px;align-items:center"
-                  data-user="${currentUser?.id || ''}" title="查看 TA 的主页">
-              ${avatarHtml(currentUser, 32)}
+            <span class="row" style="gap:8px;align-items:center">
+              <span class="conv-avatar" data-user="${currentUser?.id || ''}"
+                    title="查看 TA 的主页">${avatarHtml(currentUser, 32)}</span>
               <b>${esc(currentUser?.nickname || '')}</b>
             </span>
             ${ratingBadgeHtml(currentUser?.rating)}
@@ -220,7 +221,7 @@ async function renderMessages(root, ctx) {
         location.hash = `#/seller/${goSeller.dataset.goSeller}`;
       });
     }
-    // 需求⑤：聊天头部点对方头像/昵称 → TA 的主页
+    // 2026-10-16：聊天头部**只有头像**跳 TA 的主页；昵称等其它区域留在聊天框里
     const headUser = chatBox.querySelector('.chat-head [data-user]');
     if (headUser) {
       headUser.addEventListener('click', () => {

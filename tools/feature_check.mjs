@@ -2735,33 +2735,33 @@ async function feature24(cdp) {
   const chat = await cdp.eval(`
     (() => ({
       hash: location.hash,
-      headName: document.querySelector('.chat-head [data-user]')?.innerText.trim() || '',
+      headName: document.querySelector('.chat-head b')?.innerText.trim() || '',
       activeConv: document.querySelector('.msg-conv.active')?.innerText.trim().slice(0, 20) || '',
     }))()`);
   check('需求⑤：点「私信 TA」直接进入与 TA 的会话',
     chat.hash.includes(`to=${author.id}`) && chat.headName.includes(author.nickname || ''),
     JSON.stringify(chat));
 
-  // ---- 3. 私信页点对方昵称 → TA 的主页 ----
+  // ---- 3. 私信页点对方**头像** → TA 的主页（2026-10-16 起：只有头像跳主页，昵称跟随整行进聊天）----
   const convClicked = await cdp.eval(`
     (() => {
-      const el = document.querySelector('.msg-conv [data-user]');
+      const el = document.querySelector('.msg-conv .conv-avatar[data-user]');
       if (!el) return { ok: false };
       const uid = el.dataset.user, name = el.innerText.trim();
       el.click();
       return { ok: true, uid, name };
     })()`);
   await waitFor(cdp, `location.hash.startsWith('#/seller/')`);
-  check('需求⑤：私信页点对方昵称，跳去 TA 的主页',
+  check('需求⑤：私信页点对方头像，跳去 TA 的主页',
     convClicked.ok && (await cdp.eval(`location.hash`)) === `#/seller/${convClicked.uid}`,
     `点了「${convClicked.name}」-> ${await cdp.eval(`location.hash`)}`);
 
-  // ---- 4. 聊天头部点对方也能跳 ----
+  // ---- 4. 聊天头部点对方头像也能跳 ----
   await cdp.go(`/messages?to=${author.id}`);
-  await waitFor(cdp, `!!document.querySelector('.chat-head [data-user]')`);
-  await cdp.eval(`document.querySelector('.chat-head [data-user]').click()`);
+  await waitFor(cdp, `!!document.querySelector('.chat-head .conv-avatar[data-user]')`);
+  await cdp.eval(`document.querySelector('.chat-head .conv-avatar[data-user]').click()`);
   await waitFor(cdp, `location.hash.startsWith('#/seller/')`);
-  check('需求⑤：聊天窗口顶部点对方头像/昵称也能去 TA 的主页',
+  check('需求⑤：聊天窗口顶部点对方头像也能去 TA 的主页',
     (await cdp.eval(`location.hash`)) === `#/seller/${author.id}`,
     await cdp.eval(`location.hash`));
 
@@ -4895,6 +4895,103 @@ async function feature43(cdp) {
   await cdp.shot(path.join(SHOT_DIR, 'f43-multi-select.png'));
 }
 
+/* ================================================================ 功能㊹ 私信里点头像进主页、点其他进聊天（本批需求③） */
+async function feature44(cdp) {
+  console.log('\n===== 功能㊹ 私信：点头像进主页、点其他进聊天（本批需求③）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const seller = (await api('GET', '/api/auth/me', { token: sellerToken })).data.user;
+  const buyer = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+
+  // 保证两人之间有一条会话
+  await api('POST', '/api/messages', {
+    token: sellerToken, body: { receiver_id: buyer.id, content: '自动化测试：私信头像用' },
+  });
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go('/messages');
+  await waitFor(cdp, `document.querySelectorAll('#conv-list .msg-conv').length > 0`);
+  await sleep(700);
+
+  const shape = await cdp.eval(`
+    (() => {
+      const conv = document.querySelector('#conv-list .msg-conv');
+      const avatar = conv ? conv.querySelector('.conv-avatar[data-user]') : null;
+      const name = conv ? conv.querySelector('.mc-name') : null;
+      return {
+        hasAvatar: !!avatar,
+        avatarUid: avatar ? avatar.dataset.user : '',
+        nameIsLink: name ? name.classList.contains('user-link') || !!name.dataset.user : null,
+        nameText: name ? name.innerText.trim() : '',
+      };
+    })()`);
+  check('需求③：会话列表里**头像**才是跳主页的入口',
+    shape.hasAvatar && !!shape.avatarUid, JSON.stringify(shape));
+  check('需求③：昵称不再是跳主页的链接（点它应该进聊天）',
+    shape.nameIsLink === false, JSON.stringify(shape));
+
+  // 点昵称 → 留在私信页、并且切换到那个会话
+  const fromName = await cdp.eval(`
+    (() => {
+      const conv = document.querySelector('#conv-list .msg-conv');
+      const name = conv.querySelector('.mc-name');
+      const uid = conv.dataset.uid;
+      name.click();
+      return { uid };
+    })()`);
+  await sleep(900);
+  const afterName = await cdp.eval(`
+    (() => ({
+      hash: location.hash,
+      hasChat: !!document.querySelector('#chat-area .chat-box'),
+      activeUid: document.querySelector('#conv-list .msg-conv.active')?.dataset.uid || '',
+    }))()`);
+  check('需求③：点昵称（会话行的其它部分）进入的是**私信聊天框**，不是主页',
+    afterName.hash.startsWith('#/messages') && afterName.hasChat === true
+    && afterName.activeUid === fromName.uid,
+    JSON.stringify(afterName));
+  check('需求③：点昵称后打开了与对方的会话（聊天头显示对方的昵称）',
+    afterName.hasChat === true, JSON.stringify(afterName));
+
+  // 点头像 → 进 TA 的主页
+  await cdp.eval(`document.querySelector('#conv-list .msg-conv .conv-avatar[data-user]').click()`);
+  await waitFor(cdp, `location.hash.startsWith('#/seller/')`);
+  await sleep(600);
+  const afterAvatar = await cdp.eval(`(() => ({ hash: location.hash }))()`);
+  check('需求③：点会话列表里的头像跳去 TA 的主页',
+    afterAvatar.hash === `#/seller/${seller.id}`, JSON.stringify(afterAvatar));
+
+  // 聊天头：点头像 → 主页；点昵称 → 留在会话里
+  await cdp.go(`/messages?to=${seller.id}`);
+  await waitFor(cdp, `!!document.querySelector('.chat-head .conv-avatar[data-user]')`);
+  await sleep(500);
+  const head = await cdp.eval(`
+    (() => {
+      const headBox = document.querySelector('.chat-head');
+      return {
+        hasAvatar: !!headBox.querySelector('.conv-avatar[data-user]'),
+        nameIsLink: !!headBox.querySelector('b.user-link, b[data-user]'),
+        nameText: (headBox.querySelector('b') || {}).innerText || '',
+      };
+    })()`);
+  check('需求③：聊天窗口顶部同样是「头像可点、昵称不可点」',
+    head.hasAvatar === true && head.nameIsLink === false, JSON.stringify(head));
+
+  await cdp.eval(`document.querySelector('.chat-head b').click()`);
+  await sleep(600);
+  const afterHeadName = await cdp.eval(`(() => ({ hash: location.hash }))()`);
+  check('需求③：点聊天头部的昵称不会跳走（仍留在私信里）',
+    afterHeadName.hash.startsWith('#/messages'), JSON.stringify(afterHeadName));
+
+  await cdp.eval(`document.querySelector('.chat-head .conv-avatar[data-user]').click()`);
+  await waitFor(cdp, `location.hash.startsWith('#/seller/')`);
+  const afterHeadAvatar = await cdp.eval(`(() => ({ hash: location.hash }))()`);
+  check('需求③：点聊天头部的头像才跳去 TA 的主页',
+    afterHeadAvatar.hash === `#/seller/${seller.id}`, JSON.stringify(afterHeadAvatar));
+  await cdp.shot(path.join(SHOT_DIR, 'f44-msg-avatar.png'));
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -4940,6 +5037,7 @@ const GROUPS = {
   41: { title: '用户空间展示帖子（本批需求③）', fn: feature41 },
   42: { title: '动态监控勾选区域放大（本批需求①）', fn: feature42 },
   43: { title: '多选不被自动刷新冲掉（本批需求②）', fn: feature43 },
+  44: { title: '私信点头像进主页（本批需求③）', fn: feature44 },
 };
 
 async function main() {
