@@ -743,6 +743,21 @@
   flex: 0 0 36px; overflow: hidden; font-size: 14px;
 }
 .msg-avatar img { width: 100%; height: 100%; object-fit: cover; }
+/* 2026-10-17 需求①：头像里的 <img> 必须跟着容器尺寸走。
+   原来只有 .msg-avatar / .profile-avatar / .avatar-dot 写了规则，
+   广场小头像(.mini-avatar)与个人主页大图(.seller-avatar)没写 → 上传的 512px 原图按真实尺寸溢出，
+   看起来就是"头像裁剪错了、只露出左上角一块"。这里统一兜住。 */
+.msg-avatar img,
+.mini-avatar img,
+.seller-avatar img,
+.conv-avatar img,
+.profile-avatar img,
+.avatar-dot img {
+  width: 100%; height: 100%;
+  object-fit: cover; object-position: center;
+  border-radius: 50%; display: block;
+}
+.mini-avatar, .seller-avatar, .conv-avatar { border-radius: 50%; overflow: hidden; }
 .chat-box { display: flex; flex-direction: column; height: 560px; }
 .chat-head { padding-bottom: 10px; border-bottom: 1px solid var(--border); }
 .chat-body {

@@ -5509,6 +5509,97 @@ async function feature49(cdp) {
   await api('DELETE', `/api/posts/${post.id}`, { token: sellerToken }).catch(() => null);
 }
 
+/* ================================================================ 功能㊿ 上传头像后各处显示正确（本批需求①） */
+async function feature50(cdp) {
+  console.log('\n===== 功能㊿ 上传头像后个人主页/评论广场显示正确（本批需求①）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const seller = (await api('GET', '/api/auth/me', { token: sellerToken })).data.user;
+  const savedAvatar = seller.avatar || '';
+
+  // 用一张 400×400 的大图当头像：容器只有 22/72px，必须靠 CSS 缩放；
+  // 少了 img 的填充规则时，图片会按 400px 真实尺寸溢出，看起来就是"头像被裁错了"
+  const fd = new FormData();
+  fd.append('file', new Blob([makePng(400, 400)], { type: 'image/png' }), 'f50-big-avatar.png');
+  const upRes = await fetch(`${BASE}/api/upload`, {
+    method: 'POST', headers: { Authorization: `Bearer ${sellerToken}` }, body: fd,
+  });
+  const up = await upRes.json();
+  if (up.code !== 0) throw new Error(up.msg || '上传失败');
+  await api('PUT', '/api/auth/profile', { token: sellerToken, body: { avatar: up.data.url } });
+
+  try {
+  const post = (await api('POST', '/api/posts', {
+    token: sellerToken,
+    body: { title: '自动化测试：头像显示', content: '验证头像渲染', tag: '闲聊' },
+  })).data;
+  await api('POST', `/api/posts/${post.id}/comments`, {
+    token: sellerToken, body: { content: '自动化测试：评论人头像' },
+  });
+
+  const probe = (selector) => cdp.eval(`
+    (() => {
+      const img = document.querySelector(${JSON.stringify(selector)});
+      if (!img) return { found: false };
+      const r = img.getBoundingClientRect();
+      return {
+        found: true,
+        w: Math.round(r.width), h: Math.round(r.height),
+        natural: { w: img.naturalWidth, h: img.naturalHeight },
+        fit: getComputedStyle(img).objectFit,
+        radius: getComputedStyle(img).borderRadius,
+      };
+    })()`);
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+
+  // 1) 个人主页的大头像（72px）
+  await cdp.go(`/seller/${seller.id}`);
+  await waitFor(cdp, `!!document.querySelector('.seller-avatar img')`);
+  await sleep(700);
+  const big = await probe('.seller-avatar img');
+  check('需求①：个人主页的头像按容器尺寸缩放（72×72），原图是 400px 的大图',
+    big.found && big.w === 72 && big.h === 72 && big.natural.w === 400,
+    JSON.stringify(big));
+  check('需求①：个人主页头像用 object-fit: cover 且是圆形',
+    big.fit === 'cover' && /50%|36px/.test(String(big.radius)), JSON.stringify(big));
+
+  // 2) 交流广场卡片的小头像（22px）
+  await cdp.go('/posts');
+  await waitFor(cdp, `!!document.querySelector('#list-area .mini-avatar img')`);
+  await sleep(800);
+  const mini = await probe('#list-area .mini-avatar img');
+  check('需求①：交流广场帖子的小头像按容器缩放（22×22），没有溢出',
+    mini.found && mini.w === 22 && mini.h === 22, JSON.stringify(mini));
+  check('需求①：广场小头像同样是 cover + 圆形',
+    mini.fit === 'cover' && /50%|11px/.test(String(mini.radius)), JSON.stringify(mini));
+  await cdp.shot(path.join(SHOT_DIR, 'f50-avatar-in-square.png'));
+
+  // 3) 帖子详情里评论人的小头像
+  await cdp.go(`/post/${post.id}`);
+  await waitFor(cdp, `!!document.querySelector('#comment-list .mini-avatar img')`);
+  await sleep(600);
+  const cm = await probe('#comment-list .mini-avatar img');
+  check('需求①：评论里的小头像也按容器缩放（22×22）',
+    cm.found && cm.w === 22 && cm.h === 22 && cm.fit === 'cover', JSON.stringify(cm));
+
+  // 4) 顶栏/用户小框的头像也不该溢出（同一张 400px 图）
+  const top = await probe('.avatar-dot img');
+  if (top.found) {
+    check('需求①：顶栏头像同样按容器缩放，不溢出原图尺寸',
+      top.w === top.h && top.w < 100 && top.fit === 'cover', JSON.stringify(top));
+  }
+
+  // 清理
+  await api('DELETE', `/api/posts/${post.id}`, { token: sellerToken }).catch(() => null);
+  } finally {
+    // 无论断言成败都要还原头像，否则会把演示账号的头像改掉、
+    // 连累「未设置头像时显示昵称首字」那类断言（这次就踩了）
+    await api('PUT', '/api/auth/profile', { token: sellerToken, body: { avatar: savedAvatar } })
+      .catch(() => null);
+  }
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -5560,6 +5651,7 @@ const GROUPS = {
   47: { title: '读消息后红点同步消失（本批需求③）', fn: feature47 },
   48: { title: '评论Enter发送Ctrl+Enter换行（本批需求④）', fn: feature48 },
   49: { title: '评论显示第几楼（本批需求⑤）', fn: feature49 },
+  50: { title: '上传头像后各处显示正确（本批需求①）', fn: feature50 },
 };
 
 async function main() {
