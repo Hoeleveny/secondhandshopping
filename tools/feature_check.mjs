@@ -810,6 +810,10 @@ async function feature7(cdp) {
   const originalNick = original.nickname;
   const newNick = `李小明${Date.now() % 1000}`;
 
+  // 前置状态归一化（2026-10-17）：下面要断言「未设置头像时显示昵称首字」，
+  // 而别的分组/上一次运行可能在这账号上留了一张头像 → 先清空，别依赖环境。
+  await api('PUT', '/api/auth/profile', { token: buyerToken, body: { avatar: '' } });
+
   await cdp.loginAs('buyer1', '123456', 'buyer');
   await cdp.go('/profile');
 
