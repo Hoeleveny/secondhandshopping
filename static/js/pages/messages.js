@@ -112,7 +112,9 @@ async function renderMessages(root, ctx) {
     history.replaceState(null, '', `#/messages?to=${uid}`
       + (originProductId ? `&product=${originProductId}` : ''));
     paintChat();
-    paintConversations();
+    // 本批需求③：进会话后后端已把这些消息置为已读，所以**必须重新拉一次会话列表**——
+    // 原来这里只 paintConversations() 画的是缓存，左侧未读小红点/N 条未读会一直挂着不消。
+    await loadConversations();
     refreshTopbarUnread();
   }
 

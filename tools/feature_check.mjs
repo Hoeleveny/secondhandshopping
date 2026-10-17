@@ -5240,6 +5240,94 @@ async function feature46(cdp) {
   await api('DELETE', `/api/messages/conversations/${seller.id}`, { token: buyerToken }).catch(() => null);
 }
 
+/* ================================================================ 功能㊼ 读消息后红点同步消失（本批需求③） */
+async function feature47(cdp) {
+  console.log('\n===== 功能㊼ 进私信读消息后红点同步消失（本批需求③）=====');
+
+  const sellerToken = await login('seller2', '123456', 'seller');
+  const buyerToken = await login('buyer2', '123456', 'buyer');
+  const seller = (await api('GET', '/api/auth/me', { token: sellerToken })).data.user;
+  const buyer = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+
+  // 清一下这段会话，再造 2 条未读
+  await api('DELETE', `/api/messages/conversations/${seller.id}`, { token: buyerToken }).catch(() => null);
+  await api('GET', `/api/messages/with/${seller.id}`, { token: buyerToken });
+  const m1 = (await api('POST', '/api/messages', {
+    token: sellerToken, body: { receiver_id: buyer.id, content: '自动化测试：未读1' },
+  })).data;
+  const m2 = (await api('POST', '/api/messages', {
+    token: sellerToken, body: { receiver_id: buyer.id, content: '自动化测试：未读2' },
+  })).data;
+
+  // 私信页会「自动打开第一个会话」，那样未读就被读掉了；
+  // 这里先停在**另一个人的**会话里，让 seller2 的未读原样挂着，再点它——正是用户的操作路径
+  const otherPeer = (await api('GET', '/api/auth/me', { token: await login('seller1', '123456', 'seller') })).data.user;
+  await cdp.loginAs('buyer2', '123456', 'buyer');
+  await cdp.go(`/messages?to=${otherPeer.id}`);
+  await waitFor(cdp, `!!document.querySelector('#conv-list .msg-conv[data-uid="${seller.id}"]')`);
+  await sleep(1200);
+
+  const before = await cdp.eval(`
+    (() => {
+      const conv = document.querySelector('#conv-list .msg-conv[data-uid="${seller.id}"]');
+      const badge = conv ? conv.querySelector('.badge') : null;
+      const top = document.getElementById('msg-badge');
+      return {
+        convBadge: badge ? badge.innerText.trim() : '',
+        topText: top ? top.textContent.trim() : '',
+        topVisible: !!(top && getComputedStyle(top).display !== 'none'),
+      };
+    })()`);
+  check('需求③：还没进会话时，会话上有未读数字、顶栏也有红点',
+    before.convBadge === '2' && before.topVisible === true, JSON.stringify(before));
+
+  // 点进这个会话
+  await cdp.eval(`document.querySelector('#conv-list .msg-conv[data-uid="${seller.id}"]').click()`);
+  await waitFor(cdp, `!!document.querySelector('#chat-area .chat-box')`);
+  await sleep(1500);
+
+  const after = await cdp.eval(`
+    (() => {
+      const conv = document.querySelector('#conv-list .msg-conv[data-uid="${seller.id}"]');
+      const badge = conv ? conv.querySelector('.badge') : null;
+      const top = document.getElementById('msg-badge');
+      const topNum = top ? Number(top.textContent.trim() || 0) : 0;
+      return {
+        convBadge: badge ? badge.innerText.trim() : '',
+        topText: top ? top.textContent.trim() : '',
+        topVisible: !!(top && getComputedStyle(top).display !== 'none'),
+        topNum,
+      };
+    })()`);
+  check('需求③：进会话读过消息后，**这个会话的未读数字消失**',
+    after.convBadge === '', JSON.stringify(after));
+  check('需求③：顶栏未读红点同步减少（读掉 2 条：要么消失、要么少 2）',
+    (after.topVisible === false && after.topNum === 0)
+    || after.topNum === Math.max(0, Number(before.topText || 0) - 2),
+    `之前 ${before.topText}(${before.topVisible}) → 之后 ${after.topText}(${after.topVisible})`);
+  await cdp.shot(path.join(SHOT_DIR, 'f47-badge-cleared.png'));
+
+  // 刷新页面再确认：后端真的已读（不是只改了界面）
+  await cdp.go('/messages');
+  await waitFor(cdp, `!!document.querySelector('#conv-list .msg-conv[data-uid="${seller.id}"]')`);
+  await sleep(1000);
+  const reloaded = await cdp.eval(`
+    (() => {
+      const conv = document.querySelector('#conv-list .msg-conv[data-uid="${seller.id}"]');
+      const badge = conv ? conv.querySelector('.badge') : null;
+      return { convBadge: badge ? badge.innerText.trim() : '' };
+    })()`);
+  check('需求③：刷新页面后该会话依然没有未读（说明后端确实置为已读）',
+    reloaded.convBadge === '', JSON.stringify(reloaded));
+
+  // 清理
+  for (const mid of [m1.id, m2.id]) {
+    await api('POST', `/api/messages/${mid}/hide`, { token: buyerToken }).catch(() => null);
+    await api('POST', `/api/messages/${mid}/hide`, { token: sellerToken }).catch(() => null);
+  }
+  await api('DELETE', `/api/messages/conversations/${seller.id}`, { token: buyerToken }).catch(() => null);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -5288,6 +5376,7 @@ const GROUPS = {
   44: { title: '私信点头像进主页（本批需求③）', fn: feature44 },
   45: { title: '广场帖子/评论小头像（本批需求④）', fn: feature45 },
   46: { title: '单条私信删除与已读未读（本批需求②）', fn: feature46 },
+  47: { title: '读消息后红点同步消失（本批需求③）', fn: feature47 },
 };
 
 async function main() {
