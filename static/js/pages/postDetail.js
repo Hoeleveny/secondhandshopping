@@ -110,7 +110,7 @@ async function renderPost(root, ctx) {
       <div class="divider"></div>
       <div class="row" style="align-items:flex-start">
         <textarea class="textarea" id="comment-input" style="min-height:64px"
-                  placeholder="${store.isLoggedIn ? '写下你的评论…' : '登录后才能评论'}"></textarea>
+                  placeholder="${store.isLoggedIn ? '写下你的评论…（Enter 发送，Ctrl+Enter 换行）' : '登录后才能评论'}"></textarea>
         <button class="btn btn-primary" id="btn-comment">发表评论</button>
       </div>
     </div>`;
@@ -197,8 +197,22 @@ async function renderPost(root, ctx) {
     } catch (err) { toast(err.message, 'error'); }
   };
   commentBtn.addEventListener('click', submitComment);
+  // 本批需求④：**Enter 发送、Ctrl(⌘)+Enter 换行**
+  // （原来是反的：Ctrl+Enter 才发送、单按 Enter 只是换行）
   commentInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitComment();
+    if (event.key !== 'Enter') return;
+    if (event.ctrlKey || event.metaKey) {
+      // 换行：手动插一个换行符，行为可预期、也方便测试
+      event.preventDefault();
+      const el = commentInput;
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+      el.value = el.value.slice(0, start) + '\n' + el.value.slice(end);
+      el.selectionStart = el.selectionEnd = start + 1;
+      return;
+    }
+    event.preventDefault();
+    submitComment();
   });
 
   // 需求⑧：每 8 秒看一眼有没有别人发的新评论 / 新点赞。

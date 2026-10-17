@@ -5328,6 +5328,114 @@ async function feature47(cdp) {
   await api('DELETE', `/api/messages/conversations/${seller.id}`, { token: buyerToken }).catch(() => null);
 }
 
+/* ================================================================ 功能㊽ 广场评论 Enter 发送 / Ctrl+Enter 换行（本批需求④） */
+async function feature48(cdp) {
+  console.log('\n===== 功能㊽ 评论 Enter 发送、Ctrl+Enter 换行（本批需求④）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const post = (await api('POST', '/api/posts', {
+    token: sellerToken,
+    body: { title: '自动化测试：Enter 发送', content: '验证回车行为', tag: '闲聊' },
+  })).data;
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go(`/post/${post.id}`);
+  await waitFor(cdp, `!!document.querySelector('#comment-input')`);
+  await sleep(600);
+
+  const box = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#comment-input');
+      return {
+        tag: el ? el.tagName : '',
+        placeholder: el ? (el.placeholder || '') : '',
+        count: document.querySelectorAll('#comment-list .comment-item').length,
+      };
+    })()`);
+  check('需求④：评论输入框是多行文本框，且提示了「Enter 发送、Ctrl+Enter 换行」',
+    box.tag === 'TEXTAREA' && /Enter\s*发送/.test(box.placeholder)
+    && /Ctrl\+Enter\s*换行/.test(box.placeholder), JSON.stringify(box));
+
+  // 1) 单按 Enter → 发送
+  await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#comment-input');
+      el.value = '自动化测试：回车发送的评论';
+      el.dispatchEvent(new KeyboardEvent('keydown',
+        { key: 'Enter', bubbles: true, cancelable: true }));
+    })()`);
+  await waitFor(cdp, `document.querySelectorAll('#comment-list .comment-item').length === ${box.count + 1}`);
+  await sleep(400);
+  const sent = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#comment-input');
+      return {
+        count: document.querySelectorAll('#comment-list .comment-item').length,
+        cleared: el.value === '',
+        inList: document.getElementById('comment-list').innerText.includes('回车发送的评论'),
+      };
+    })()`);
+  check('需求④：单按 Enter 就把评论发出去了，并且清空输入框',
+    sent.count === box.count + 1 && sent.cleared === true && sent.inList === true,
+    JSON.stringify(sent));
+
+  // 2) Ctrl + Enter → 只换行、不发送
+  const ctrl = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#comment-input');
+      el.value = '第一行';
+      el.selectionStart = el.selectionEnd = el.value.length;
+      const ev = new KeyboardEvent('keydown',
+        { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true });
+      const notCancelled = el.dispatchEvent(ev);
+      return { value: el.value, notCancelled, count: document.querySelectorAll('#comment-list .comment-item').length };
+    })()`);
+  await sleep(700);
+  const afterCtrl = await cdp.eval(`
+    (() => ({
+      count: document.querySelectorAll('#comment-list .comment-item').length,
+      value: document.querySelector('#comment-input').value,
+    }))()`);
+  check('需求④：Ctrl+Enter 是在输入框里换行（值里多了 \\n），**不会**把评论发出去',
+    ctrl.value.includes('\n') && afterCtrl.value.includes('\n')
+    && afterCtrl.count === ctrl.count,
+    JSON.stringify({ ctrl, afterCtrl }));
+
+  // 3) 继续输入再发出去，换行要保留在正文里
+  await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#comment-input');
+      el.value = '第一行\\n第二行';
+      el.dispatchEvent(new KeyboardEvent('keydown',
+        { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }));
+    })()`);
+  await cdp.eval(`document.querySelector('#comment-input').value = '第一行\\n第二行'`);
+  await cdp.eval(`document.querySelector('#btn-comment').click()`);
+  await sleep(1200);
+  const multi = await cdp.eval(`
+    (() => {
+      const items = [...document.querySelectorAll('#comment-list .comment-item')];
+      const last = items[items.length - 1];
+      const bodyEl = last ? last.querySelector('.cm-body') : null;
+      return {
+        text: bodyEl ? bodyEl.innerText : '',
+        preWrap: bodyEl ? getComputedStyle(bodyEl).whiteSpace : '',
+        lines: bodyEl ? getComputedStyle(bodyEl).whiteSpace : '',
+      };
+    })()`);
+  check('需求④：带换行的评论发出去后，正文按两行显示（white-space: pre-wrap）',
+    multi.text.includes('第一行') && multi.text.includes('第二行') && multi.preWrap === 'pre-wrap',
+    JSON.stringify(multi));
+  await cdp.shot(path.join(SHOT_DIR, 'f48-enter-send.png'));
+
+  // 清理
+  const comments = (await api('GET', `/api/posts/${post.id}/comments`)).data || [];
+  for (const c of comments) {
+    await api('DELETE', `/api/posts/${post.id}/comments/${c.id}`, { token: sellerToken }).catch(() => null);
+  }
+  await api('DELETE', `/api/posts/${post.id}`, { token: sellerToken }).catch(() => null);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -5377,6 +5485,7 @@ const GROUPS = {
   45: { title: '广场帖子/评论小头像（本批需求④）', fn: feature45 },
   46: { title: '单条私信删除与已读未读（本批需求②）', fn: feature46 },
   47: { title: '读消息后红点同步消失（本批需求③）', fn: feature47 },
+  48: { title: '评论Enter发送Ctrl+Enter换行（本批需求④）', fn: feature48 },
 };
 
 async function main() {
