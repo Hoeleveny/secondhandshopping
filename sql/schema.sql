@@ -355,6 +355,7 @@ CREATE TABLE `messages` (
   `product_snapshot` JSON       NULL                    COMMENT '商品卡片快照，商品删了卡片仍能显示（迁移 014）',
   `content`     VARCHAR(1000)   NOT NULL                COMMENT '消息内容',
   `is_read`     TINYINT(1)      NOT NULL DEFAULT 0      COMMENT '收信人是否已读',
+  `keep_unread` TINYINT(1)      NOT NULL DEFAULT 0      COMMENT '手动标为未读：进聊天框的自动置已读会跳过它（迁移 018）',
   `created_at`  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_messages_receiver` (`receiver_id`, `is_read`, `created_at`),
@@ -438,6 +439,23 @@ CREATE TABLE `message_clears` (
   CONSTRAINT `fk_message_clears_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_message_clears_peer` FOREIGN KEY (`peer_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='会话清除标记（只对清空者自己隐藏）';
+
+-- -------------------------------------------------------------
+-- 表 23：message_hides（单条私信的隐藏）—— 本批需求②，新增于迁移 018
+-- 「删掉某一条」只对我隐藏，对方完全不受影响（与删除会话同口径）
+-- -------------------------------------------------------------
+DROP TABLE IF EXISTS `message_hides`;
+CREATE TABLE `message_hides` (
+  `id`         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`    BIGINT UNSIGNED NOT NULL COMMENT '谁把它删掉的（只有这个人看不到）',
+  `message_id` BIGINT UNSIGNED NOT NULL,
+  `created_at` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_message_hides_pair` (`user_id`, `message_id`),
+  KEY `idx_message_hides_user` (`user_id`),
+  CONSTRAINT `fk_message_hides_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_message_hides_message` FOREIGN KEY (`message_id`) REFERENCES `messages` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='我对单条私信的隐藏（只对我隐藏）';
 
 -- -------------------------------------------------------------
 -- 表 20/21：follows / blocks（关注与拉黑）—— 新批需求⑦，新增于迁移 016

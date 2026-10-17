@@ -1828,6 +1828,81 @@ def main() -> int:
     check("卖家删的是自己那一侧，不报错也不影响买家侧数据",
           r.get("code") == 0, str(r)[:150])
 
+    # ---------------- 本批需求②：单条私信删除 + 已读/未读 ----------------
+    section("本批需求② 单条私信删除与已读未读")
+
+    _st, r = call("POST", "/api/auth/me", token=seller_token)
+    _sp_seller2 = {}
+    _st, r = call("GET", "/api/auth/me", token=seller_token)
+    _sp_seller2 = (r.get("data") or {}).get("user") or {}
+    _st, r = call("GET", "/api/auth/me", token=token)
+    _sp_me = (r.get("data") or {}).get("user") or {}
+
+    # 卖家发两条：一条给买家留着、一条待删
+    _st, r = call("POST", "/api/messages", token=seller_token,
+                  body={"receiver_id": _sp_me.get("id"), "content": "冒烟测试：单条删除-保留"})
+    _keep_mid = (r.get("data") or {}).get("id")
+    _st, r = call("POST", "/api/messages", token=seller_token,
+                  body={"receiver_id": _sp_me.get("id"), "content": "冒烟测试：单条删除-待删"})
+    _del_mid = (r.get("data") or {}).get("id")
+    check("需求②：已备好两条测试私信", bool(_keep_mid and _del_mid), f"{_keep_mid}/{_del_mid}")
+
+    # 我删掉其中一条
+    _st, r = call("POST", f"/api/messages/{_del_mid}/hide", token=token, body={})
+    check("需求②：可以把某一条私信从自己这边删掉", r.get("code") == 0, str(r)[:120])
+
+    _st, r = call("GET", f"/api/messages/with/{_sp_seller2.get('id')}", token=token)
+    _ids = [m["id"] for m in (r.get("data") or {}).get("list") or []]
+    check("需求②：删掉的那条不再出现在我的聊天记录里",
+          _del_mid not in _ids and _keep_mid in _ids, str(_ids)[:120])
+
+    # 只对我隐藏：对方（卖家）那边照样看得到
+    _st, r = call("GET", f"/api/messages/with/{_sp_me.get('id')}", token=seller_token)
+    _other_ids = [m["id"] for m in (r.get("data") or {}).get("list") or []]
+    check("需求②：只对我隐藏——对方那边那条还在（聊天记录没被真删）",
+          _del_mid in _other_ids, str(_other_ids)[:120])
+
+    # 标记未读：先读一遍（自动已读），再手动标回未读，进聊天框不能再被自动改回
+    # 全局未读数会被别的会话污染，这里只看「与这个卖家的会话」的未读（会话列表里的 unread）
+    def _conv_unread(peer_id):
+        _st2, r2 = call("GET", "/api/messages/conversations", token=token)
+        for c in (r2.get("data") or []):
+            if c.get("user") and c["user"]["id"] == peer_id:
+                return c["unread"]
+        return 0
+
+    call("GET", f"/api/messages/with/{_sp_seller2.get('id')}", token=token)
+    _base_unread = 0      # 刚拉过聊天记录，这个会话已被自动置为已读
+    _st, r = call("POST", f"/api/messages/{_keep_mid}/read", token=token, body={"read": False})
+    check("需求②：可以把收到的消息标为未读", r.get("code") == 0 and r.get("data", {}).get("is_read") is False,
+          str(r.get("data"))[:120])
+    check("需求②：标未读后这个会话的未读数变回 1", _conv_unread(_sp_seller2.get("id")) == 1,
+          f"会话未读 = {_conv_unread(_sp_seller2.get('id'))}")
+
+    _st, r = call("GET", f"/api/messages/with/{_sp_seller2.get('id')}", token=token)
+    _after = next((m for m in (r.get("data") or {}).get("list") or [] if m["id"] == _keep_mid), {})
+    check("需求②：进聊天框的自动置已读**不会**把手动标的未读改回去",
+          _after.get("is_read") is False, str(_after.get("is_read")))
+
+    _st, r = call("POST", f"/api/messages/{_keep_mid}/read", token=token, body={"read": True})
+    check("需求②：再标为已读，这个会话的未读数回到 0",
+          r.get("code") == 0 and _conv_unread(_sp_seller2.get("id")) == 0,
+          f"会话未读 = {_conv_unread(_sp_seller2.get('id'))}")
+
+    # 边界：不能标记自己发出去的消息
+    _st, r = call("POST", "/api/messages", token=token,
+                  body={"receiver_id": _sp_seller2.get("id"), "content": "冒烟测试：我发的"})
+    _mine_mid = (r.get("data") or {}).get("id")
+    _st, r = call("POST", f"/api/messages/{_mine_mid}/read", token=token, body={"read": False})
+    check("需求②：不允许把「自己发出去的」消息标记已读/未读", r.get("code") != 0, str(r)[:120])
+
+    # 本段自清理：把造出来的消息都标记已读并隐藏，避免污染后面的未读断言
+    for _m in (_keep_mid, _del_mid, _mine_mid):
+        if _m:
+            call("POST", f"/api/messages/{_m}/read", token=token, body={"read": True})
+            call("POST", f"/api/messages/{_m}/hide", token=token, body={})
+    call("POST", f"/api/messages/{_mine_mid}/hide", token=seller_token, body={}) if _mine_mid else None
+
     # ---------------- 本批需求④：广场帖子/评论显示作者小头像 ----------------
     section("本批需求④ 广场小头像")
 

@@ -145,10 +145,15 @@ async function renderMessages(root, ctx) {
         const card = m.kind === 'product' ? m.product_card : null;
         const ref = (!card && m.product_id)
           ? `<div class="mp-ref">关于：${esc(m.product_name || '商品')}</div>` : '';
-        return `<div class="bubble ${mine ? 'mine' : 'other'} ${card ? 'has-card' : ''}">
+        return `<div class="bubble ${mine ? 'mine' : 'other'} ${card ? 'has-card' : ''}" data-mid="${m.id}">
                   ${card ? productCardHtml(card) : esc(m.content)}
                   ${ref}
                   <span class="b-time">${esc(fmtTime(m.created_at))}</span>
+                  <span class="b-actions">
+                    ${mine ? '' : `<button data-mark="${m.id}" data-read="${m.is_read ? '1' : '0'}"
+                        title="只影响你自己这边的已读状态">${m.is_read ? '标为未读' : '标为已读'}</button>`}
+                    <button data-hide="${m.id}" title="从我这边删掉这条，对方不受影响">删除</button>
+                  </span>
                 </div>`;
       }).join('')
     : emptyHtml('还没有消息，打个招呼吧', '👋'));
@@ -165,6 +170,35 @@ async function renderMessages(root, ctx) {
         if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); go2(); }
       });
     });
+  }
+
+  // 本批需求②：单条消息的「删除（只对我隐藏）」与「标为已读/未读」
+  function bindBubbleActions(scope) {
+    scope.querySelectorAll('[data-hide]').forEach(btn =>
+      btn.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        const sure = await confirmDialog({
+          title: '从你这边删掉这条消息？', danger: true, okText: '删除',
+          message: '只影响你自己：对方照样能看到这条消息，聊天记录也不会被真正抹掉。',
+        });
+        if (!sure) return;
+        try {
+          await api.post(`/api/messages/${btn.dataset.hide}/hide`, {});
+          toast('已从你这边删除（对方不受影响）');
+          await openChat(currentUid);
+        } catch (err) { toast(err.message, 'error'); }
+      }));
+
+    scope.querySelectorAll('[data-mark]').forEach(btn =>
+      btn.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        const read = btn.dataset.read !== '1';     // 当前是「已读」就标回未读
+        try {
+          const res = await api.post(`/api/messages/${btn.dataset.mark}/read`, { read });
+          toast(res.msg || (read ? '已标为已读' : '已标为未读'));
+          await openChat(currentUid);
+        } catch (err) { toast(err.message, 'error'); }
+      }));
   }
 
   function paintChat() {
@@ -214,6 +248,7 @@ async function renderMessages(root, ctx) {
       sendCard.addEventListener('click', () => sendProductCard(sendCard.dataset.sendCard));
     }
     bindProductCards(chatBox);
+    bindBubbleActions(chatBox);
     // 需求④：「查看 TA 的商品」→ 卖家商品主页；「返回原商品」→ 买家原来浏览的那件商品
     const goSeller = chatBox.querySelector('[data-go-seller]');
     if (goSeller) {
@@ -336,6 +371,7 @@ async function renderMessages(root, ctx) {
     const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
     body.innerHTML = bubblesHtml(messages);
     bindProductCards(body);
+    bindBubbleActions(body);
     if (atBottom) body.scrollTop = body.scrollHeight;
     await loadConversations();   // 左侧列表的最后一条 / 未读数也跟上
     refreshTopbarUnread();

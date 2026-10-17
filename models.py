@@ -703,6 +703,8 @@ class Message(db.Model):
     product_snapshot = db.Column(db.JSON)
     content = db.Column(db.String(MAX_LENGTH), nullable=False)
     is_read = db.Column(db.Boolean, nullable=False, default=False)
+    # 2026-10-17 需求②：手动「标为未读」后，进聊天框的自动置已读要跳过它
+    keep_unread = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
     sender = db.relationship("User", foreign_keys=[sender_id])
@@ -876,6 +878,27 @@ class MessageClear(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint("user_id", "peer_id", name="uk_message_clears_pair"),
+    )
+
+
+class MessageHide(db.Model):
+    """删掉**单条**消息只对我隐藏（2026-10-17 需求②）。
+
+    与「删除对话」同一个口径：删的是我这边的可见性，对方完全不受影响。
+    会话列表、聊天记录、未读数三处查询都要把它过滤掉。
+    """
+
+    __tablename__ = "message_hides"
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete="CASCADE"),
+                        nullable=False)
+    message_id = db.Column(db.BigInteger, db.ForeignKey("messages.id", ondelete="CASCADE"),
+                           nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
+
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "message_id", name="uk_message_hides_pair"),
     )
 
     def to_dict(self) -> dict:

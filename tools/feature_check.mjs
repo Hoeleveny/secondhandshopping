@@ -4926,7 +4926,7 @@ async function feature44(cdp) {
 
   const shape = await cdp.eval(`
     (() => {
-      const conv = document.querySelector('#conv-list .msg-conv');
+      const conv = document.querySelector('#conv-list .msg-conv[data-uid="${seller.id}"]');
       const avatar = conv ? conv.querySelector('.conv-avatar[data-user]') : null;
       const name = conv ? conv.querySelector('.mc-name') : null;
       return {
@@ -4944,7 +4944,7 @@ async function feature44(cdp) {
   // 点昵称 → 留在私信页、并且切换到那个会话
   const fromName = await cdp.eval(`
     (() => {
-      const conv = document.querySelector('#conv-list .msg-conv');
+      const conv = document.querySelector('#conv-list .msg-conv[data-uid="${seller.id}"]');
       const name = conv.querySelector('.mc-name');
       const uid = conv.dataset.uid;
       name.click();
@@ -5112,6 +5112,134 @@ async function feature45(cdp) {
   await api('DELETE', `/api/posts/${post.id}`, { token: sellerToken }).catch(() => null);
 }
 
+/* ================================================================ 功能㊻ 单条私信删除 + 已读未读（本批需求②） */
+async function feature46(cdp) {
+  console.log('\n===== 功能㊻ 单条私信删除、标为已读/未读（本批需求②）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const seller = (await api('GET', '/api/auth/me', { token: sellerToken })).data.user;
+  const buyer = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+
+  // 清掉这段会话的历史，再发两条（一条要删、一条要标记）
+  await api('DELETE', `/api/messages/conversations/${seller.id}`, { token: buyerToken }).catch(() => null);
+  await api('GET', `/api/messages/with/${seller.id}`, { token: buyerToken });
+  const keep = (await api('POST', '/api/messages', {
+    token: sellerToken, body: { receiver_id: buyer.id, content: '自动化测试：保留这条' },
+  })).data;
+  const drop = (await api('POST', '/api/messages', {
+    token: sellerToken, body: { receiver_id: buyer.id, content: '自动化测试：这条要删掉' },
+  })).data;
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go(`/messages?to=${seller.id}`);
+  await waitFor(cdp, `document.querySelectorAll('#chat-body .bubble').length >= 2`);
+  await sleep(700);
+
+  const actions = await cdp.eval(`
+    (() => {
+      const bubbles = [...document.querySelectorAll('#chat-body .bubble')];
+      const peer = bubbles.filter(b => b.classList.contains('other'));
+      const mine = bubbles.filter(b => b.classList.contains('mine'));
+      const first = peer[0];
+      return {
+        peerCount: peer.length,
+        peerHasHide: peer.every(b => !!b.querySelector('[data-hide]')),
+        peerHasMark: peer.every(b => !!b.querySelector('[data-mark]')),
+        peerMarkText: first && first.querySelector('[data-mark]') ? first.querySelector('[data-mark]').innerText.trim() : '',
+        mineHasMark: mine.some(b => !!b.querySelector('[data-mark]')),
+        mineHasHide: mine.every(b => !!b.querySelector('[data-hide]')),
+      };
+    })()`);
+  check('需求②：每条消息上都有「删除」，对方发来的还有「标为已读/未读」',
+    actions.peerCount >= 2 && actions.peerHasHide && actions.peerHasMark,
+    JSON.stringify(actions));
+  check('需求②：自己发出的消息只给「删除」，不提供已读/未读（已读状态属于对方）',
+    actions.mineHasMark === false, JSON.stringify(actions));
+
+  // 删除一条
+  await cdp.eval(`
+    (() => {
+      const b = [...document.querySelectorAll('#chat-body .bubble.other')]
+        .find(x => x.innerText.includes('这条要删掉'));
+      b.querySelector('[data-hide]').click();
+    })()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  const warn = await cdp.eval(`(() => ({ text: document.querySelector('.modal-mask').innerText }))()`);
+  check('需求②：删除前先确认，并说明"只影响你自己、对方仍能看到"',
+    /只影响你自己|对方/.test(warn.text), warn.text.replace(/\s+/g, ' ').slice(0, 80));
+  await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
+  await sleep(1200);
+  const afterHide = await cdp.eval(`
+    (() => ({
+      hasDropped: (document.getElementById('chat-body') || {}).innerText.includes('这条要删掉'),
+      hasKeep: (document.getElementById('chat-body') || {}).innerText.includes('保留这条'),
+      bubbles: document.querySelectorAll('#chat-body .bubble').length,
+    }))()`);
+  check('需求②：删掉的那条从我的聊天框消失，另一条还在',
+    afterHide.hasDropped === false && afterHide.hasKeep === true, JSON.stringify(afterHide));
+
+  const sellerSide = await api('GET', `/api/messages/with/${buyer.id}`, { token: sellerToken });
+  check('需求②：对方那边的聊天记录没被删（只对我隐藏）',
+    (sellerSide.data.list || []).some(m => m.content === '自动化测试：这条要删掉'), '');
+
+  // 标为未读 → 会话出现未读、按钮变成「标为已读」
+  await cdp.eval(`
+    (() => {
+      const b = [...document.querySelectorAll('#chat-body .bubble.other')]
+        .find(x => x.innerText.includes('保留这条'));
+      b.querySelector('[data-mark]').click();
+    })()`);
+  await sleep(1600);
+  const afterUnread = await cdp.eval(`
+    (() => {
+      const b = [...document.querySelectorAll('#chat-body .bubble.other')]
+        .find(x => x.innerText.includes('保留这条'));
+      const conv = document.querySelector('#conv-list .msg-conv[data-uid="${seller.id}"]');
+      return {
+        btn: b && b.querySelector('[data-mark]') ? b.querySelector('[data-mark]').innerText.trim() : '',
+        convUnread: conv && conv.querySelector('.badge') ? conv.querySelector('.badge').innerText.trim() : '',
+        toast: document.body.innerText.includes('已标为未读'),
+      };
+    })()`);
+  check('需求②：标为未读后按钮变成「标为已读」、会话出现未读标记',
+    afterUnread.btn === '标为已读', JSON.stringify(afterUnread));
+
+  // 再标回已读
+  await cdp.eval(`
+    (() => {
+      const b = [...document.querySelectorAll('#chat-body .bubble.other')]
+        .find(x => x.innerText.includes('保留这条'));
+      b.querySelector('[data-mark]').click();
+    })()`);
+  await sleep(1600);
+  const afterRead = await cdp.eval(`
+    (() => {
+      const b = [...document.querySelectorAll('#chat-body .bubble.other')]
+        .find(x => x.innerText.includes('保留这条'));
+      const conv = document.querySelector('#conv-list .msg-conv[data-uid="${seller.id}"]');
+      return {
+        btn: b && b.querySelector('[data-mark]') ? b.querySelector('[data-mark]').innerText.trim() : '',
+        convBadge: conv && conv.querySelector('.badge') ? conv.querySelector('.badge').innerText.trim() : '',
+      };
+    })()`);
+  // 用接口判断（比 DOM 徽标权威），同时打印 DOM 值方便排查
+  const convApi = await api('GET', '/api/messages/conversations', { token: buyerToken });
+  const convEntry = (convApi.data || []).find(c => c.user && c.user.id === seller.id);
+  check('需求②：再标回已读，按钮变回「标为未读」、该会话未读归零',
+    afterRead.btn === '标为未读' && (!convEntry || convEntry.unread === 0),
+    JSON.stringify({ btn: afterRead.btn, apiUnread: convEntry ? convEntry.unread : null,
+                     domBadge: afterRead.convBadge }));
+  await cdp.shot(path.join(SHOT_DIR, 'f46-msg-actions.png'));
+
+  // 清理：两边都隐藏这两条
+  for (const mid of [keep.id, drop.id]) {
+    await api('POST', `/api/messages/${mid}/hide`, { token: buyerToken }).catch(() => null);
+    await api('POST', `/api/messages/${mid}/hide`, { token: sellerToken }).catch(() => null);
+  }
+  await api('DELETE', `/api/messages/conversations/${seller.id}`, { token: buyerToken }).catch(() => null);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -5159,6 +5287,7 @@ const GROUPS = {
   43: { title: '多选不被自动刷新冲掉（本批需求②）', fn: feature43 },
   44: { title: '私信点头像进主页（本批需求③）', fn: feature44 },
   45: { title: '广场帖子/评论小头像（本批需求④）', fn: feature45 },
+  46: { title: '单条私信删除与已读未读（本批需求②）', fn: feature46 },
 };
 
 async function main() {

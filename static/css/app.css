@@ -556,6 +556,18 @@
 
 /* 星级打分 */
 /* 本批需求④：头像裁剪取景框 */
+/* 2026-10-17 需求②：单条消息的「删除 / 标为已读未读」——平时淡出，鼠标移上去才明显 */
+.b-actions {
+  display: flex; gap: 6px; justify-content: flex-end;
+  margin-top: 4px; opacity: 0; transition: opacity .15s;
+}
+.bubble:hover .b-actions, .b-actions:focus-within { opacity: 1; }
+.b-actions button {
+  border: 0; background: transparent; padding: 0 3px;
+  font-size: 11px; color: var(--text-muted); cursor: pointer;
+}
+.b-actions button:hover { color: var(--primary); text-decoration: underline; }
+.b-actions [data-hide]:hover { color: var(--danger); }
 .crop-wrap { display: flex; flex-direction: column; align-items: center; gap: 12px; }
 /* 2026-10-17：取景框改成**圆形**——头像本来就是圆形展示的，方形取景框会让人以为角落也会露出来 */
 .crop-box {

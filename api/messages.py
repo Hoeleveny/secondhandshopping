@@ -11,10 +11,15 @@ from api.common import current_user, fail, json_body, login_required, ok
 from api.orders import product_snapshot
 from api.social import block_between
 from extensions import db
-from models import Message, MessageClear, Product, User
+from models import Message, MessageClear, MessageHide, Product, User
 from rating import seller_rating
 
 bp = Blueprint("messages", __name__, url_prefix="/api")
+
+
+def _hidden_subq(me: int):
+    """我「单条删除」掉的那些消息（本批需求②：只对我隐藏，与删除会话同口径）。"""
+    return db.session.query(MessageHide.message_id).filter(MessageHide.user_id == me)
 
 
 def _clear_marks(me: int) -> dict[int, int]:
@@ -102,6 +107,7 @@ def conversations():
     rows = (
         Message.query
         .filter(or_(Message.sender_id == me, Message.receiver_id == me))
+        .filter(Message.id.notin_(_hidden_subq(me)))    # 本批需求②：单条删掉的不再出现在列表里
         .order_by(Message.created_at.desc(), Message.id.desc())
         .limit(500)
         .all()
@@ -144,9 +150,10 @@ def with_user(uid: int):
 
     floor = _clear_marks(me).get(uid, 0)  # 需求⑤：我删过的话，这个 id 之前的对我不可见
     # 先标记已读，再取列表，这样返回的就是最新状态
+    # 本批需求②：手动「标为未读」的那条（keep_unread）跳过，否则一刷新就被改回已读
     Message.query.filter(
         Message.sender_id == uid, Message.receiver_id == me, Message.is_read.is_(False),
-        Message.id > floor,
+        Message.id > floor, Message.keep_unread.is_(False),
     ).update({Message.is_read: True}, synchronize_session=False)
     db.session.commit()
 
@@ -156,6 +163,7 @@ def with_user(uid: int):
             and_(Message.sender_id == me, Message.receiver_id == uid),
             and_(Message.sender_id == uid, Message.receiver_id == me),
         ), Message.id > floor)
+        .filter(Message.id.notin_(_hidden_subq(me)))    # 本批需求②：被我单条删掉的不再显示
         .order_by(Message.created_at.asc(), Message.id.asc())
         .limit(300)
         .all()
@@ -172,6 +180,8 @@ def unread_count():
     me = current_user().id
     marks = _clear_marks(me)
     q = Message.query.filter_by(receiver_id=me, is_read=False)
+    # 本批需求②：被我从自己这边单条删掉的，不再计入未读（否则红点点不掉）
+    q = q.filter(Message.id.notin_(_hidden_subq(me)))
     if marks:
         # 被清空过的会话，只统计「下限之后」的未读；没清空过的会话照常统计
         conds = [and_(Message.sender_id == peer, Message.id > mark)
@@ -212,3 +222,45 @@ def clear_conversation(uid: int):
         mark.last_message_id = max(mark.last_message_id or 0, last_id)
     db.session.commit()
     return ok(msg="对话已从你的列表移除（对方不受影响）")
+
+
+@bp.post("/messages/<int:mid>/hide")
+@login_required
+def hide_message(mid: int):
+    """删掉**单条**消息（本批需求②）：只对我隐藏，对方完全不受影响。
+
+    与「删除对话」同一个口径；会话列表、聊天记录、未读数三处都会过滤掉它。
+    """
+    me = current_user().id
+    message = Message.query.get(mid)
+    if message is None or me not in (message.sender_id, message.receiver_id):
+        return fail("消息不存在", 404)
+    if MessageHide.query.filter_by(user_id=me, message_id=mid).first() is None:
+        db.session.add(MessageHide(user_id=me, message_id=mid))
+        db.session.commit()
+    return ok(msg="已从你这边删除（对方不受影响）", data={"hidden": mid})
+
+
+@bp.post("/messages/<int:mid>/read")
+@login_required
+def mark_message_read(mid: int):
+    """把某一条「我收到的」消息标记为已读 / 未读（本批需求②）。
+
+    标为未读时会记下 keep_unread，进聊天框的自动置已读不会把它改回去。
+    """
+    me = current_user().id
+    message = Message.query.get(mid)
+    if message is None or me not in (message.sender_id, message.receiver_id):
+        return fail("消息不存在", 404)
+    if message.receiver_id != me:
+        return fail("只能标记自己收到的消息", 403)
+    read = bool((json_body() or {}).get("read", True))
+    message.is_read = read
+    message.keep_unread = not read
+    db.session.commit()
+    unread = (Message.query.filter_by(receiver_id=me, is_read=False)
+              .filter(Message.id.notin_(_hidden_subq(me))).count())
+    return ok({
+        "is_read": read, "id": mid, "unread": unread,
+        "msg": "已标为已读" if read else "已标为未读",
+    })
