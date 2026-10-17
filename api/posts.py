@@ -165,3 +165,18 @@ def create_comment(pid: int):
     db.session.add(comment)
     db.session.commit()
     return ok(comment.to_dict(), msg="评论成功")
+
+
+@bp.delete("/posts/<int:pid>/comments/<int:cid>")
+@login_required
+def delete_comment(pid: int, cid: int):
+    """删除自己的评论（2026-10-17 需求①）：**只能删自己的**，别人的评论返回 403。"""
+    user = current_user()
+    comment = PostComment.query.get(cid)
+    if comment is None or comment.post_id != pid:
+        return fail("评论不存在", 404)
+    if comment.author_id != user.id:
+        return fail("只能删除自己的评论", 403)
+    db.session.delete(comment)
+    db.session.commit()
+    return ok(msg="评论已删除")

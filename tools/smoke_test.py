@@ -1828,6 +1828,37 @@ def main() -> int:
     check("卖家删的是自己那一侧，不报错也不影响买家侧数据",
           r.get("code") == 0, str(r)[:150])
 
+    # ---------------- 本批需求①：删除自己的评论 ----------------
+    section("本批需求① 删除自己的评论")
+
+    _st, r = call("POST", "/api/posts", token=token,
+                  body={"title": "冒烟测试-删评论", "content": "删评论用", "tag": "闲聊"})
+    _dc_post = (r.get("data") or {}).get("id")
+    _st, r = call("POST", f"/api/posts/{_dc_post}/comments", token=token,
+                  body={"content": "冒烟测试：我自己的评论"})
+    _dc_mine = (r.get("data") or {}).get("id")
+    _st, r = call("POST", f"/api/posts/{_dc_post}/comments", token=seller_token,
+                  body={"content": "冒烟测试：别人的评论"})
+    _dc_other = (r.get("data") or {}).get("id")
+    check("需求①：已备好自己与别人的两条评论", bool(_dc_mine and _dc_other), f"{_dc_mine}/{_dc_other}")
+
+    _st, r = call("DELETE", f"/api/posts/{_dc_post}/comments/{_dc_other}", token=token)
+    check("需求①：不能删别人的评论（403）", r.get("code") != 0, str(r)[:120])
+
+    _st, r = call("DELETE", f"/api/posts/{_dc_post}/comments/{_dc_mine}", token=token)
+    check("需求①：能删自己的评论", r.get("code") == 0, str(r)[:120])
+
+    _st, r = call("GET", f"/api/posts/{_dc_post}/comments")
+    _dc_ids = [c["id"] for c in (r.get("data") or [])]
+    check("需求①：删掉后列表里就没有它了，别人那条还在",
+          _dc_mine not in _dc_ids and _dc_other in _dc_ids, str(_dc_ids)[:120])
+
+    _st, r = call("DELETE", f"/api/posts/{_dc_post}/comments/{_dc_mine}", token=token)
+    check("需求①：再删同一条返回「评论不存在」", r.get("code") != 0, str(r)[:120])
+
+    # 清理
+    call("DELETE", f"/api/posts/{_dc_post}", token=seller_token)
+
     # ---------------- 本批需求②：单条私信删除 + 已读/未读 ----------------
     section("本批需求② 单条私信删除与已读未读")
 

@@ -43,6 +43,8 @@ async function renderPost(root, ctx) {
             <button class="btn btn-ghost btn-sm" data-reply="${c.id}"
                     data-nick="${esc(c.author_nickname || '')}">回复</button>
             <button class="btn btn-ghost btn-sm" data-report-comment="${c.id}">举报</button>
+            ${store.user && c.author_id === store.user.id
+              ? `<button class="btn btn-ghost btn-sm" data-del-comment="${c.id}">删除</button>` : ''}
           </div>
         </div>`).join('')
     : emptyHtml('还没有评论，来说两句', '💬'));
@@ -65,6 +67,29 @@ async function renderPost(root, ctx) {
     scope.querySelectorAll('[data-report-comment]').forEach(btn =>
       btn.addEventListener('click', () =>
         openReportModal({ type: 'comment', id: Number(btn.dataset.reportComment) })));
+    // 2026-10-17 需求①：删除自己的评论（按钮只在自己的评论上渲染，后端也会再校验一次）
+    scope.querySelectorAll('[data-del-comment]').forEach(btn =>
+      btn.addEventListener('click', async () => {
+        const sure = await confirmDialog({
+          title: '删除这条评论？', danger: true, okText: '删除',
+          message: '删除后其他同学就看不到这条评论了，而且不能恢复。',
+        });
+        if (!sure) return;
+        try {
+          await api.del(`/api/posts/${id}/comments/${btn.dataset.delComment}`);
+          toast('评论已删除');
+          await refreshComments();
+        } catch (err) { toast(err.message, 'error'); }
+      }));
+  }
+
+  // 只刷新评论区（发评论、删评论、自动更新都复用它），避免整页重绘
+  async function refreshComments() {
+    const fresh = await api.get(`/api/posts/${id}`);
+    const items = fresh.comments || [];
+    paintComments(items);
+    lastSig = `${items.length}:${fresh.like_count}`;
+    return items;
   }
 
   const paintComments = (items) => {
@@ -191,10 +216,7 @@ async function renderPost(root, ctx) {
       await api.post(`/api/posts/${id}/comments`, { content });
       toast('评论成功');
       // 只刷新评论区，避免整页重绘
-      const fresh = await api.get(`/api/posts/${id}`);
-      const items = fresh.comments || [];
-      paintComments(items);
-      lastSig = `${items.length}:${fresh.like_count}`;
+      await refreshComments();
       commentInput.value = '';
     } catch (err) { toast(err.message, 'error'); }
   };

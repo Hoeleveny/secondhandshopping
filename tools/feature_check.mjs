@@ -5601,6 +5601,100 @@ async function feature50(cdp) {
   }
 }
 
+/* ================================================================ 功能51 删除自己的评论（本批需求①） */
+async function feature51(cdp) {
+  console.log('\n===== 功能51 交流广场：删除自己的评论（本批需求①）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const seller = (await api('GET', '/api/auth/me', { token: sellerToken })).data.user;
+  const post = (await api('POST', '/api/posts', {
+    token: sellerToken,
+    body: { title: '自动化测试：删评论', content: '验证删除自己的评论', tag: '闲聊' },
+  })).data;
+  const sellersComment = (await api('POST', `/api/posts/${post.id}/comments`, {
+    token: sellerToken, body: { content: '自动化测试：卖家发的评论' },
+  })).data;
+  const mine = (await api('POST', `/api/posts/${post.id}/comments`, {
+    token: buyerToken, body: { content: '自动化测试：我要删掉的评论' },
+  })).data;
+  const keep = (await api('POST', `/api/posts/${post.id}/comments`, {
+    token: buyerToken, body: { content: '自动化测试：保留的评论' },
+  })).data;
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go(`/post/${post.id}`);
+  await waitFor(cdp, `document.querySelectorAll('#comment-list .comment-item').length === 3`);
+  await sleep(700);
+
+  const buttons = await cdp.eval(`
+    (() => {
+      const items = [...document.querySelectorAll('#comment-list .comment-item')];
+      const pick = (id) => {
+        const el = items.find(x => x.dataset.comment === String(id));
+        return el ? !!el.querySelector('[data-del-comment]') : null;
+      };
+      return {
+        mine: pick(${mine.id}),
+        keep: pick(${keep.id}),
+        others: pick(${sellersComment.id}),
+        floorOfMine: (items.find(x => x.dataset.comment === String(${mine.id})) || {})
+          .querySelector?.('.cm-floor')?.innerText || '',
+      };
+    })()`);
+  check('需求①：自己的评论上有「删除」按钮，别人的评论上没有',
+    buttons.mine === true && buttons.keep === true && buttons.others === false,
+    JSON.stringify(buttons));
+
+  // 点删除 → 确认 → 评论消失
+  await cdp.eval(`
+    (() => {
+      const el = [...document.querySelectorAll('#comment-list .comment-item')]
+        .find(x => x.dataset.comment === String(${mine.id}));
+      el.querySelector('[data-del-comment]').click();
+    })()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
+  const warn = await cdp.eval(`(() => ({ text: document.querySelector('.modal-mask').innerText }))()`);
+  check('需求①：删除前先确认，并说明删了看不到、不能恢复',
+    /不能恢复|看不到/.test(warn.text), warn.text.replace(/\s+/g, ' ').slice(0, 70));
+  await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
+  await waitFor(cdp, `document.querySelectorAll('#comment-list .comment-item').length === 2`);
+  await sleep(500);
+
+  const after = await cdp.eval(`
+    (() => {
+      const items = [...document.querySelectorAll('#comment-list .comment-item')];
+      return {
+        count: items.length,
+        ids: items.map(x => x.dataset.comment),
+        title: (document.querySelector('.card-head h2') || {}).innerText || '',
+        floors: items.map(x => (x.querySelector('.cm-floor') || {}).innerText && x.querySelector('.cm-floor').innerText.trim()),
+        hasGone: document.getElementById('comment-list').innerText.includes('我要删掉的评论'),
+        hasKeep: document.getElementById('comment-list').innerText.includes('保留的评论'),
+      };
+    })()`);
+  check('需求①：删掉后评论从列表消失，其他评论还在，评论数同步减少',
+    after.count === 2 && after.hasGone === false && after.hasKeep === true
+    && after.title.includes('2'), JSON.stringify(after));
+  check('需求①：剩下的评论楼号重新连续（1 楼、2 楼）',
+    after.floors.join('|') === '1 楼|2 楼', JSON.stringify(after.floors));
+  await cdp.shot(path.join(SHOT_DIR, 'f51-delete-comment.png'));
+
+  // 刷新后依然是 2 条（真的删了，不是只改界面）
+  await cdp.go(`/post/${post.id}`);
+  await waitFor(cdp, `document.querySelectorAll('#comment-list .comment-item').length === 2`);
+  const reloaded = await cdp.eval(`
+    (() => ({ count: document.querySelectorAll('#comment-list .comment-item').length }))()`);
+  check('需求①：刷新页面后确认评论真的被删掉了', reloaded.count === 2, JSON.stringify(reloaded));
+
+  // 后端也拦住"删别人的"
+  const forbidden = await api('DELETE', `/api/posts/${post.id}/comments/${sellersComment.id}`,
+    { token: buyerToken }).catch((err) => ({ code: -1, msg: String(err) }));
+  check('需求①：接口层不允许删别人的评论', forbidden.code !== 0, JSON.stringify(forbidden).slice(0, 120));
+
+  await api('DELETE', `/api/posts/${post.id}`, { token: sellerToken }).catch(() => null);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -5653,6 +5747,7 @@ const GROUPS = {
   48: { title: '评论Enter发送Ctrl+Enter换行（本批需求④）', fn: feature48 },
   49: { title: '评论显示第几楼（本批需求⑤）', fn: feature49 },
   50: { title: '上传头像后各处显示正确（本批需求①）', fn: feature50 },
+  51: { title: '删除自己的评论（本批需求①）', fn: feature51 },
 };
 
 async function main() {
