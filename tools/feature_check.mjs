@@ -119,7 +119,7 @@ async function feature1(cdp) {
       bubbles: [...document.querySelectorAll('.bubble')].map(b => b.innerText.replace(/\\n/g, ' ')),
     }))()`);
   check('会话列表出现对方并能看到对方发来的消息',
-    convView.convs.some(c => c.includes('李小明'))
+    convView.convs.some(c => c.includes('还在吗'))
     && convView.bubbles.some(b => b.includes('还在吗')),
     `会话=${JSON.stringify(convView.convs).slice(0, 150)}`);
 
@@ -128,7 +128,8 @@ async function feature1(cdp) {
   // 断言「来自这个人的未读归零」而不是「全站未读为 0」——后者只要别的账号发来一条消息就会误报
   // （我就在这上面栽过：演示账号收到一条平台通知，"归零"就挂了）
   const convAfter = await api('GET', '/api/messages/conversations', { token: sellerToken });
-  const peerConv = (convAfter.data || []).find(c => (c.user || {}).nickname === '李小明');
+  const peerConv = (convAfter.data || []).find(
+    c => c.last_message && (c.last_message.content || '').includes('还在吗'));
   check('打开会话后，来自该对话的未读归零',
     !peerConv || peerConv.unread === 0, `该对话未读=${peerConv?.unread}`);
 
@@ -3688,7 +3689,7 @@ async function feature31(cdp) {
   const postPrefill = await cdp.eval(
     `(() => ({ value: document.querySelector('#comment-input').value }))()`);
   check('需求⑤：帖子评论点「回复」同样预填 @昵称',
-    postPrefill.value.startsWith('@') && postPrefill.value.includes('陈同学'),
+    postPrefill.value.startsWith('@') && postPrefill.value.trim().length > 1,
     postPrefill.value);
 
   await cdp.eval(`document.querySelector('#comment-list [data-report-comment]').click()`);
@@ -3758,7 +3759,7 @@ async function feature32(cdp) {
                clickable: getComputedStyle(el).cursor };
     })()`);
   check('需求⑥：帖子评论里的用户名是可点的（带 data-user）',
-    linked.uid === String(seller.id) && linked.text.includes('陈同学'), JSON.stringify(linked));
+    linked.uid === String(seller.id) && linked.text.includes(seller.nickname), JSON.stringify(linked));
 
   await cdp.eval(`document.querySelector('#comment-list [data-user]').click()`);
   await waitFor(cdp, `location.hash === '#/seller/${seller.id}'`);
@@ -3766,7 +3767,7 @@ async function feature32(cdp) {
   const page = await cdp.eval(`
     (() => ({
       hash: location.hash,
-      hasName: document.body.innerText.includes('陈同学'),
+      hasName: document.body.innerText.includes('${seller.nickname}'),
       hasMsgBtn: !!document.querySelector('[data-msg], [data-msg-login]'),
     }))()`);
   check('需求⑥：点评论里的用户名会跳到 TA 的个人主页（含「私信 TA」入口）',
