@@ -3976,15 +3976,21 @@ async function feature34(cdp) {
   await cdp.eval(`document.querySelector('#social-list [data-cancel]').click()`);
   await waitFor(cdp, `!!document.querySelector('.modal-mask [data-ok]')`);
   await cdp.eval(`document.querySelector('.modal-mask [data-ok]').click()`);
-  await waitFor(cdp, `document.querySelectorAll('#social-list .social-item').length === 0`);
+  // 只等"这个人"从列表消失——**别等整个列表为空**：别的分组也可能关注过其他人，
+  // 那种全局断言会互相干扰（这条教训已经吃过好几次了）
+  await waitFor(cdp, `![...document.querySelectorAll('#social-list .social-item')]
+    .some(el => el.innerText.includes('${sellerName}'))`);
   await sleep(400);
   const afterCancel = await cdp.eval(`
-    (() => ({
-      items: document.querySelectorAll('#social-list .social-item').length,
-      empty: /还没有关注任何人/.test(document.getElementById('social-list')?.innerText || ''),
-    }))()`);
+    (() => {
+      const items = [...document.querySelectorAll('#social-list .social-item')];
+      return {
+        stillThere: items.some(el => el.innerText.includes('${sellerName}')),
+        total: items.length,
+      };
+    })()`);
   check('需求⑧：取消关注后列表里就没有 TA 了',
-    afterCancel.items === 0 && afterCancel.empty, JSON.stringify(afterCancel));
+    afterCancel.stillThere === false, JSON.stringify(afterCancel));
 
   // ---- 我的拉黑：列表 + 解除 ----
   await api('POST', `/api/blocks/${sellerId}`, { token: buyerToken });
