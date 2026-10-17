@@ -4733,6 +4733,100 @@ async function feature41(cdp) {
   check('需求③：测试帖子已清理（对方 id 有效）', !!buyer.id && !!seller.id, '');
 }
 
+/* ================================================================ 功能㊷ 动态监控勾选区域放大（本批需求①） */
+async function feature42(cdp) {
+  console.log('\n===== 功能㊷ 动态监控勾选区域放大、不误触详情（本批需求①）=====');
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=trades');
+  await waitFor(cdp, `document.querySelectorAll('#lg-list .tl-item').length > 0`);
+  await sleep(700);
+
+  const size = await cdp.eval(`
+    (() => {
+      const box = document.querySelector('#lg-list .tl-check-box');
+      const input = box ? box.querySelector('.tl-check') : null;
+      if (!box || !input) return null;
+      const b = box.getBoundingClientRect();
+      const i = input.getBoundingClientRect();
+      return {
+        box: { w: Math.round(b.width), h: Math.round(b.height), left: b.left, top: b.top },
+        input: { w: Math.round(i.width), h: Math.round(i.height) },
+        checked: input.checked,
+      };
+    })()`);
+  check('需求①：勾选框外面套了一层可点区域，且明显大于勾选框本身',
+    size && size.box.w >= size.input.w + 12 && size.box.h >= size.input.h + 8,
+    JSON.stringify(size));
+  check('需求①：勾选框尺寸放大到 16px（原来是浏览器默认的小方块）',
+    size && size.input.w >= 14 && size.input.h >= 14, JSON.stringify(size && size.input));
+
+  // 关键①：在「可点区域」上派发的点击**不会**冒泡去打开详情
+  // （用户误触的场景就是这一下：想勾选却点到勾选框旁边）
+  const guard = await cdp.eval(`
+    (() => {
+      const row = document.querySelector('#lg-list .tl-item');
+      const box = row ? row.querySelector('.tl-check-box') : null;
+      if (!box) return { ok: false };
+      box.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      return {
+        ok: true,
+        modal: !!document.querySelector('.modal-mask'),
+        boxW: Math.round(box.getBoundingClientRect().width),
+        inputW: Math.round(box.querySelector('.tl-check').getBoundingClientRect().width),
+      };
+    })()`);
+  check('需求①：在勾选区域（含其放大出来的边距）上点击不会打开详情弹窗',
+    guard.ok === true && guard.modal === false,
+    `可点区 ${guard.boxW}px / 勾选框 ${guard.inputW}px，弹窗=${guard.modal}`);
+
+  // 关键②：用**真实鼠标点击**勾选框中心（label 里的勾选框用合成 click 会被转发两次，不可靠）
+  const center = await cdp.eval(`
+    (() => {
+      const input = document.querySelector('#lg-list .tl-check');
+      input.scrollIntoView({ block: 'center' });
+      input.checked = false;              // 归零，稍后据实判断
+      const r = input.getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2),
+               w: Math.round(r.width) };
+    })()`);
+  await sleep(300);
+  const c2 = await cdp.eval(`
+    (() => {
+      const input = document.querySelector('#lg-list .tl-check');
+      const r = input.getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+    })()`);
+  await cdp.send('Input.dispatchMouseEvent',
+    { type: 'mousePressed', x: c2.x, y: c2.y, button: 'left', clickCount: 1 });
+  await cdp.send('Input.dispatchMouseEvent',
+    { type: 'mouseReleased', x: c2.x, y: c2.y, button: 'left', clickCount: 1 });
+  await sleep(400);
+  const toggled = await cdp.eval(`
+    (() => {
+      const input = document.querySelector('#lg-list .tl-check');
+      return {
+        checked: input.checked,
+        hint: (document.querySelector('#lg-del-selected') || {}).innerText || '',
+        modal: !!document.querySelector('.modal-mask'),
+      };
+    })()`);
+  check('需求①：用真实点击勾选框能勾上，按钮计数同步更新，且不弹详情',
+    toggled.checked === true && /（1）/.test(toggled.hint) && toggled.modal === false,
+    JSON.stringify(toggled));
+  // 反向保证：点条目的正文区域仍然会打开详情
+  await cdp.eval(`
+    (() => {
+      const row = document.querySelector('#lg-list .tl-item');
+      const sum = row.querySelector('.tl-summary') || row;
+      sum.click();
+    })()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask .detail-h')`);
+  check('需求①：点条目正文仍然能打开记录详情（原有功能没被挡掉）', true, '');
+  await cdp.eval(`document.querySelector('.modal-mask [data-close]').click()`);
+  await waitFor(cdp, `!document.querySelector('.modal-mask')`);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -4776,6 +4870,7 @@ const GROUPS = {
   39: { title: '订单卡点用户名跳私信（本批需求⑤）', fn: feature39 },
   40: { title: '评论里@到的人可点（本批需求②）', fn: feature40 },
   41: { title: '用户空间展示帖子（本批需求③）', fn: feature41 },
+  42: { title: '动态监控勾选区域放大（本批需求①）', fn: feature42 },
 };
 
 async function main() {

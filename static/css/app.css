@@ -391,6 +391,16 @@
 .tl-check { flex: none; align-self: center; cursor: pointer; }
 .tl-del { flex: none; align-self: center; opacity: .5; padding: 2px 6px; }
 .tl-item:hover .tl-del, .tl-del:focus-visible { opacity: 1; }
+/* 2026-10-16：勾选框的**可点区域放大**（外面套一层 label，用负外边距抵消，不影响排版），
+   避免"想勾选却点偏、结果弹出了记录详情"。 */
+.tl-check-box {
+  display: flex; align-items: center; justify-content: center;
+  align-self: center;
+  padding: 8px 10px; margin: -8px -10px;    /* 面积变大但不挤占网格列宽 */
+  cursor: pointer; border-radius: var(--radius-sm);
+}
+.tl-check-box:hover { background: var(--surface-hover); }
+.tl-check-box .tl-check { width: 16px; height: 16px; margin: 0; }
 .detail-h {
   margin: 14px 0 4px; font-size: 11px; font-weight: 600; letter-spacing: .16em;
   text-transform: uppercase; color: var(--text-muted);

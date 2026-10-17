@@ -732,8 +732,9 @@ async function renderTrades(panel) {
         ${data.list.map(log => `
           <div class="tl-item clickable" data-log="${log.id}" role="button" tabindex="0"
                title="点击查看这条动作的详细交易信息">
-            <input type="checkbox" class="tl-check" data-check="${log.id}"
-                   title="选中后可批量删除这条记录">
+            <label class="tl-check-box" title="选中后可批量删除这条记录">
+              <input type="checkbox" class="tl-check" data-check="${log.id}">
+            </label>
             <span class="tl-time muted small">${esc(fmtTime(log.created_at))}</span>
             <span class="tl-who">${esc(log.nickname || log.username || '系统')}</span>
             <span class="tl-action">${esc(log.action_text)}</span>
@@ -744,8 +745,12 @@ async function renderTrades(panel) {
       </div>`;
 
     // 需求②：点条目看详情（发起人、精确时间、相关订单与商品）
+    // 注意：勾选区域与删除按钮的点击要**完全避开**详情弹窗，否则勾选时稍微点偏就弹详情
     box.querySelectorAll('[data-log]').forEach(el => {
-      el.addEventListener('click', () => openLogDetail(el.dataset.log));
+      el.addEventListener('click', (event) => {
+        if (event.target.closest('.tl-check-box, .tl-del')) return;
+        openLogDetail(el.dataset.log);
+      });
       el.addEventListener('keydown', (event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
