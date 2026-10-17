@@ -557,10 +557,16 @@
 /* 星级打分 */
 /* 本批需求④：头像裁剪取景框 */
 .crop-wrap { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+/* 2026-10-17：取景框改成**圆形**——头像本来就是圆形展示的，方形取景框会让人以为角落也会露出来 */
 .crop-box {
   position: relative; width: 300px; height: 300px; overflow: hidden;
-  border-radius: var(--radius-md); background: var(--bg-secondary);
+  border-radius: 50%; background: var(--bg-secondary);
   cursor: grab; touch-action: none;
+  box-shadow: 0 0 0 1px var(--border), inset 0 0 0 2px rgba(255, 255, 255, .35);
+}
+.crop-box::after {           /* 圆内一圈细描边，圆形边界更清楚 */
+  content: ''; position: absolute; inset: 0; border-radius: 50%;
+  border: 1px solid var(--border-strong); pointer-events: none;
 }
 .crop-box:active { cursor: grabbing; }
 .crop-box img {

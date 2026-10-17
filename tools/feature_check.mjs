@@ -4365,12 +4365,16 @@ async function feature38(cdp) {
         boxSize: box ? Math.round(box.getBoundingClientRect().width) : 0,
         natural: img ? { w: img.naturalWidth, h: img.naturalHeight } : null,
         hasZoom: !!document.querySelector('#crop-zoom'),
-        hint: /正方形就是最终的头像/.test(document.body.innerText),
+        circle: box ? getComputedStyle(box).borderRadius : '',
+        hint: /圆形框内/.test(document.body.innerText),
       };
     })()`);
-  check('需求④：选完图片会打开裁剪框（正方形取景框 + 缩放滑块 + 说明）',
+  check('需求④：选完图片会打开裁剪框（圆形取景框 + 缩放滑块 + 说明）',
     opened.hasBox && opened.boxSize > 0 && opened.hasZoom && opened.hint,
     JSON.stringify(opened));
+  // 2026-10-17 需求①：取景框改成圆形（圆角等于半径 150px，不再是方形）
+  check('本批需求①：取景框是圆形（圆角 = 半径，而不是方形）',
+    /^50%$|^(75%|150px)$/.test(String(opened.circle).trim()), `border-radius = ${opened.circle}`);
   check('需求④：原图读到的是非方形图（400×200，裁剪才有意义）',
     opened.natural && opened.natural.w === 400 && opened.natural.h === 200,
     JSON.stringify(opened.natural));

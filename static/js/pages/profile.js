@@ -177,7 +177,7 @@ export default {
               <input type="range" id="crop-zoom" min="1" max="3" step="0.01" value="1"
                      style="width:100%">
             </div>
-            <div class="muted small">拖动图片调整位置、滑块缩放；框内这块正方形就是最终的头像。</div>
+            <div class="muted small">拖动图片调整位置、滑块缩放；<b>圆形框内</b>就是最终头像的样子（头像按圆形展示）。</div>
           </div>`,
         footer: `<button class="btn" data-close>取消</button>
                  <button class="btn btn-primary" id="crop-ok">裁剪并上传</button>`,
