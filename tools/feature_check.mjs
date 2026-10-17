@@ -5436,6 +5436,79 @@ async function feature48(cdp) {
   await api('DELETE', `/api/posts/${post.id}`, { token: sellerToken }).catch(() => null);
 }
 
+/* ================================================================ 功能㊾ 评论显示「第几楼」（本批需求⑤） */
+async function feature49(cdp) {
+  console.log('\n===== 功能㊾ 评论右上角显示「第几楼」（本批需求⑤）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const post = (await api('POST', '/api/posts', {
+    token: sellerToken,
+    body: { title: '自动化测试：楼号', content: '验证第几楼', tag: '闲聊' },
+  })).data;
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const ids = [];
+  for (const text of ['第一楼', '第二楼', '第三楼']) {
+    const c = (await api('POST', `/api/posts/${post.id}/comments`, {
+      token: buyerToken, body: { content: `自动化测试：${text}` },
+    })).data;
+    ids.push(c.id);
+  }
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go(`/post/${post.id}`);
+  await waitFor(cdp, `document.querySelectorAll('#comment-list .comment-item').length === 3`);
+  await sleep(700);
+
+  const floors = await cdp.eval(`
+    (() => {
+      const items = [...document.querySelectorAll('#comment-list .comment-item')];
+      const head = items[0] ? items[0].querySelector('.cm-head') : null;
+      const floorEl = items[0] ? items[0].querySelector('.cm-floor') : null;
+      const h = head ? head.getBoundingClientRect() : null;
+      const f = floorEl ? floorEl.getBoundingClientRect() : null;
+      return {
+        texts: items.map(x => {
+          const el = x.querySelector('.cm-floor');
+          return el ? el.innerText.trim() : '';
+        }),
+        hasFloor: !!floorEl,
+        // 楼号应该在头部这一行的右侧（离右边缘比离左边缘更近）
+        rightAligned: !!(h && f) && (h.right - f.right) < (h.width / 2) && f.left > h.left + h.width / 2,
+        sameRow: !!(h && f) && f.top < h.bottom && f.bottom > h.top,
+        order: items.map(x => (x.querySelector('.cm-body') || {}).innerText || '').map(t => t.trim()),
+      };
+    })()`);
+  check('需求⑤：每条评论右上角都有「N 楼」，按评论先后从 1 开始',
+    floors.texts.join('|') === '1 楼|2 楼|3 楼', JSON.stringify(floors.texts));
+  check('需求⑤：楼号与作者/时间在同一行，并且是靠右的',
+    floors.sameRow === true && floors.rightAligned === true, JSON.stringify(floors));
+  check('需求⑤：楼号顺序与评论先后一致',
+    floors.order[0].includes('第一楼') && floors.order[1].includes('第二楼')
+    && floors.order[2].includes('第三楼'), JSON.stringify(floors.order));
+  await cdp.shot(path.join(SHOT_DIR, 'f49-floor-number.png'));
+
+  // 再发一条 → 应该是「4 楼」，前面的不变
+  await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#comment-input');
+      el.value = '自动化测试：第四楼';
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    })()`);
+  await waitFor(cdp, `document.querySelectorAll('#comment-list .comment-item').length === 4`);
+  await sleep(600);
+  const after = await cdp.eval(`
+    (() => [...document.querySelectorAll('#comment-list .cm-floor')].map(x => x.innerText.trim()))()`);
+  check('需求⑤：新发的评论接着编号（第 4 楼），前面的楼号不变',
+    after.join('|') === '1 楼|2 楼|3 楼|4 楼', JSON.stringify(after));
+
+  // 清理
+  const comments = (await api('GET', `/api/posts/${post.id}/comments`)).data || [];
+  for (const c of comments) {
+    await api('DELETE', `/api/posts/${post.id}/comments/${c.id}`, { token: sellerToken }).catch(() => null);
+  }
+  await api('DELETE', `/api/posts/${post.id}`, { token: sellerToken }).catch(() => null);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -5486,6 +5559,7 @@ const GROUPS = {
   46: { title: '单条私信删除与已读未读（本批需求②）', fn: feature46 },
   47: { title: '读消息后红点同步消失（本批需求③）', fn: feature47 },
   48: { title: '评论Enter发送Ctrl+Enter换行（本批需求④）', fn: feature48 },
+  49: { title: '评论显示第几楼（本批需求⑤）', fn: feature49 },
 };
 
 async function main() {

@@ -28,13 +28,15 @@ async function renderPost(root, ctx) {
 
   // 评论区渲染抽成函数：初次渲染、自己发评论后、以及需求⑧的自动更新都复用同一份
   const commentListHtml = (items) => (items.length
-    ? items.map(c => `
+    ? items.map((c, index) => `
         <div class="comment-item" data-comment="${c.id}">
           <div class="cm-head">
             <span class="user-link mini-author" data-user="${c.author_id}" title="查看 TA 的主页"
               >${avatarHtml({ nickname: c.author_nickname, avatar: c.author_avatar }, 22, 'mini-avatar')}<b
               class="mini-author-name">${esc(c.author_nickname || '')}</b></span>
             <span>${esc(fmtTime(c.created_at))}</span>
+            <!-- 本批需求⑤：按评论先后标「第几楼」，放在右上角（参考贴吧） -->
+            <span class="cm-floor">${index + 1} 楼</span>
           </div>
           <div class="cm-body">${commentTextHtml(c.content, c.mentions)}</div>
           <div class="cm-actions">

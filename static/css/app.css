@@ -547,6 +547,12 @@
 .rc-body { margin-top: 2px; color: var(--text-secondary); line-height: 1.7; }
 .cm-head { display: flex; align-items: center; gap: 10px; font-size: 13px; }
 .cm-head span { color: var(--text-muted); font-size: 12px; letter-spacing: .04em; }
+/* 本批需求⑤：楼号放右上角（参考贴吧的「N 楼」） */
+.cm-head .cm-floor {
+  margin-left: auto; flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted); font-size: 12px; letter-spacing: .04em;
+}
 .cm-actions { display: flex; gap: 6px; margin-top: 4px; }
 /* 2026-10-16：评论里 @ 到的人渲染成可点链接 */
 /* 2026-10-17 需求④：评论支持 Ctrl+Enter 换行，正文要按原样保留换行 */
