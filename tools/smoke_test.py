@@ -1966,8 +1966,10 @@ def main() -> int:
 
     _st, r = call("GET", f"/api/messages/with/{_sp_seller2.get('id')}", token=token)
     _after = next((m for m in (r.get("data") or {}).get("list") or [] if m["id"] == _keep_mid), {})
-    check("需求②：进聊天框的自动置已读**不会**把手动标的未读改回去",
-          _after.get("is_read") is False, str(_after.get("is_read")))
+    # 2026-10-18 需求②：口径改为「进聊天框看到就算读过」——手动标的未读也要被清掉，
+    # 否则用户明明读了，红点却一直不消（用户报的就是这个）
+    check("本批需求②：进聊天框后，之前手动标的未读也会被清掉（红点随之消失）",
+          _after.get("is_read") is True, str(_after.get("is_read")))
 
     _st, r = call("POST", f"/api/messages/{_keep_mid}/read", token=token, body={"read": True})
     check("需求②：再标为已读，这个会话的未读数回到 0",

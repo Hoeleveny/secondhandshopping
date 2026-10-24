@@ -149,12 +149,13 @@ def with_user(uid: int):
         return fail("对方不存在", 404)
 
     floor = _clear_marks(me).get(uid, 0)  # 需求⑤：我删过的话，这个 id 之前的对我不可见
-    # 先标记已读，再取列表，这样返回的就是最新状态
-    # 本批需求②：手动「标为未读」的那条（keep_unread）跳过，否则一刷新就被改回已读
+    # 先标记已读，再取列表，这样返回的就是最新状态。
+    # 2026-10-18 需求②：**进聊天框看到消息就算读过了**——连之前手动「标为未读」的那些也一并清掉，
+    # 否则用户明明已经读了，顶栏/会话的红点却一直不消（这正是本条反馈的问题）。
     Message.query.filter(
         Message.sender_id == uid, Message.receiver_id == me, Message.is_read.is_(False),
-        Message.id > floor, Message.keep_unread.is_(False),
-    ).update({Message.is_read: True}, synchronize_session=False)
+        Message.id > floor,
+    ).update({Message.is_read: True, Message.keep_unread: False}, synchronize_session=False)
     db.session.commit()
 
     rows = (

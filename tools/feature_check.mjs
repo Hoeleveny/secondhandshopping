@@ -5794,6 +5794,83 @@ async function feature52(cdp) {
     pages.includes('/posts') || pages.includes('/compare'), JSON.stringify(pages.slice(0, 6)));
 }
 
+/* ================================================================ 功能53 读完消息红点必须即时消失（本批需求②） */
+async function feature53(cdp) {
+  console.log('\n===== 功能53 读完消息后红点即时消失（本批需求②）=====');
+
+  const sellerToken = await login('seller2', '123456', 'seller');
+  const buyerToken = await login('buyer2', '123456', 'buyer');
+  const seller = (await api('GET', '/api/auth/me', { token: sellerToken })).data.user;
+  const buyer = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+
+  // 清掉这段会话，发 1 条，再**故意标成未读**（复现用户遇到的形态）
+  await api('DELETE', `/api/messages/conversations/${seller.id}`, { token: buyerToken }).catch(() => null);
+  await api('GET', `/api/messages/with/${seller.id}`, { token: buyerToken });
+  const m = (await api('POST', '/api/messages', {
+    token: sellerToken, body: { receiver_id: buyer.id, content: '自动化测试：标未读后读它' },
+  })).data;
+  await api('POST', `/api/messages/${m.id}/read`, { token: buyerToken, body: { read: false } });
+
+  const other = (await api('GET', '/api/auth/me',
+    { token: await login('seller1', '123456', 'seller') })).data.user;
+
+  await cdp.loginAs('buyer2', '123456', 'buyer');
+  await cdp.go(`/messages?to=${other.id}`);
+  await waitFor(cdp, `!!document.querySelector('#conv-list .msg-conv[data-uid="${seller.id}"]')`);
+  await sleep(1200);
+
+  const before = await cdp.eval(`
+    (() => {
+      const top = document.getElementById('msg-badge');
+      const conv = document.querySelector('#conv-list .msg-conv[data-uid="${seller.id}"] .badge');
+      return {
+        top: top ? Number(top.textContent.trim() || 0) : 0,
+        topShown: !!(top && getComputedStyle(top).display !== 'none'),
+        conv: conv ? conv.textContent.trim() : '',
+      };
+    })()`);
+  check('需求②：还没进会话时，顶栏与会话上都挂着未读',
+    before.topShown === true && before.top >= 1 && before.conv === '1', JSON.stringify(before));
+
+  // 点进这个会话（读取）
+  await cdp.eval(`document.querySelector('#conv-list .msg-conv[data-uid="${seller.id}"]').click()`);
+  await waitFor(cdp, `location.hash === '#/messages?to=${seller.id}'`);
+  await sleep(2000);
+
+  const after = await cdp.eval(`
+    (() => {
+      const top = document.getElementById('msg-badge');
+      const conv = document.querySelector('#conv-list .msg-conv[data-uid="${seller.id}"] .badge');
+      return {
+        top: top ? Number(top.textContent.trim() || 0) : 0,
+        topShown: !!(top && getComputedStyle(top).display !== 'none'),
+        conv: conv ? conv.textContent.trim() : '',
+      };
+    })()`);
+  check('需求②：读完后，**会话上的未读数字立刻消失**',
+    after.conv === '', JSON.stringify(after));
+  check('需求②：读完后，**顶栏红点也立刻消失**',
+    after.top === 0 && after.topShown === false, JSON.stringify({ before, after }));
+
+  // 后端也确实置为已读（不是只改界面）
+  const apiCheck = await api('GET', `/api/messages/with/${seller.id}`, { token: buyerToken });
+  const target = (apiCheck.data.list || []).find(x => x.id === m.id) || {};
+  check('需求②：接口里这条也变成已读（连之前手动标的未读一起清掉）',
+    target.is_read === true, JSON.stringify({ is_read: target.is_read }));
+
+  const unread = await api('GET', '/api/messages/unread', { token: buyerToken });
+  const convs = await api('GET', '/api/messages/conversations', { token: buyerToken });
+  const entry = (convs.data || []).find(c => c.user && c.user.id === seller.id);
+  check('需求②：该会话在该用户这边的未读数归零',
+    (!entry || entry.unread === 0), JSON.stringify({ unread: unread.data.count, conv: entry && entry.unread }));
+  await cdp.shot(path.join(SHOT_DIR, 'f53-badge-instant.png'));
+
+  // 清理
+  await api('POST', `/api/messages/${m.id}/hide`, { token: buyerToken }).catch(() => null);
+  await api('POST', `/api/messages/${m.id}/hide`, { token: sellerToken }).catch(() => null);
+  await api('DELETE', `/api/messages/conversations/${seller.id}`, { token: buyerToken }).catch(() => null);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -5848,6 +5925,7 @@ const GROUPS = {
   50: { title: '上传头像后各处显示正确（本批需求①）', fn: feature50 },
   51: { title: '删除自己的评论（本批需求①）', fn: feature51 },
   52: { title: '用户行为监测（本批需求①）', fn: feature52 },
+  53: { title: '读完消息红点即时消失（本批需求②）', fn: feature53 },
 };
 
 async function main() {

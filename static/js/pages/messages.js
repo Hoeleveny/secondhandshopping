@@ -194,11 +194,23 @@ async function renderMessages(root, ctx) {
     scope.querySelectorAll('[data-mark]').forEach(btn =>
       btn.addEventListener('click', async (event) => {
         event.stopPropagation();
+        const id = Number(btn.dataset.mark);
         const read = btn.dataset.read !== '1';     // 当前是「已读」就标回未读
         try {
-          const res = await api.post(`/api/messages/${btn.dataset.mark}/read`, { read });
+          const res = await api.post(`/api/messages/${id}/read`, { read });
           toast(res.msg || (read ? '已标为已读' : '已标为未读'));
-          await openChat(currentUid);
+          // 只改本地这条的已读态并重画气泡区——**不能走 openChat**：
+          // 它会重新拉聊天记录，而后端"进会话即已读"会立刻把刚标的未读又改回去
+          const target = messages.find(m => m.id === id);
+          if (target) target.is_read = read;
+          const body = document.getElementById('chat-body');
+          if (body) {
+            body.innerHTML = bubblesHtml(messages);
+            bindProductCards(body);
+            bindBubbleActions(body);
+          }
+          await loadConversations();   // 左侧会话的未读数跟着变
+          refreshTopbarUnread();
         } catch (err) { toast(err.message, 'error'); }
       }));
   }
@@ -366,7 +378,11 @@ async function renderMessages(root, ctx) {
     if (!currentUid) return;
     const data = await api.get(`/api/messages/with/${currentUid}`);
     const list = data.list || [];
-    if (list.length === messages.length) return;
+    // 2026-10-18 需求②：不光看条数，**已读状态变化也要刷新徽标**——
+    // 否则「读完消息 → 红点不消」的情况里，列表长度没变就永远不会去更新顶栏。
+    const unreadNow = list.filter(m => !m.is_read && m.sender_id !== store.user?.id).length;
+    const unreadBefore = messages.filter(m => !m.is_read && m.sender_id !== store.user?.id).length;
+    if (list.length === messages.length && unreadNow === unreadBefore) return;
     messages = list;
     const body = document.getElementById('chat-body');
     if (!body) return;
