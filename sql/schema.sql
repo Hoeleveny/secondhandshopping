@@ -487,4 +487,25 @@ CREATE TABLE `blocks` (
   CONSTRAINT `fk_blocks_blocked` FOREIGN KEY (`blocked_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='拉黑（单向，需求⑦）';
 
+-- -------------------------------------------------------------
+-- 表 24：user_activities（用户行为监测）—— 2026-10-18 需求①，新增于迁移 019
+-- 记录登录 / 登出 / 页面浏览，供管理员分析使用习惯（与 operation_logs 分开）
+-- -------------------------------------------------------------
+DROP TABLE IF EXISTS `user_activities`;
+CREATE TABLE `user_activities` (
+  `id`         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`    BIGINT UNSIGNED NOT NULL                COMMENT '行为主体',
+  `kind`       ENUM('login','logout','page') NOT NULL  COMMENT '登录 / 登出 / 页面浏览',
+  `page`       VARCHAR(60)     NOT NULL DEFAULT ''     COMMENT '路由路径，如 /search',
+  `page_name`  VARCHAR(40)     NOT NULL DEFAULT ''     COMMENT '页面中文名',
+  `ip`         VARCHAR(45)     NOT NULL DEFAULT ''     COMMENT '客户端 IP',
+  `user_agent` VARCHAR(200)    NOT NULL DEFAULT ''     COMMENT '浏览器 UA（截断）',
+  `created_at` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_activities_user` (`user_id`, `created_at`),
+  KEY `idx_activities_kind` (`kind`, `created_at`),
+  KEY `idx_activities_page` (`page`, `created_at`),
+  CONSTRAINT `fk_activities_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户行为监测（登录/登出/页面浏览）';
+
 SET FOREIGN_KEY_CHECKS = 1;

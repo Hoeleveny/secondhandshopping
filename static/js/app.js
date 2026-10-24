@@ -427,6 +427,9 @@ async function render() {
   }
 
   page.innerHTML = loadingHtml();
+  // 2026-10-18 需求①：把这次页面浏览上报给后端（供管理后台「行为监测」分析使用习惯）。
+  // 只在登录后上报、失败不影响页面（纯统计，静默）。
+  trackPageView(path, route.menu);
   try {
     const module = await route.load();
     if (token !== renderToken) return;   // 期间又切换了路由，放弃本次渲染
@@ -436,6 +439,15 @@ async function render() {
     console.error(err);
     page.innerHTML = emptyHtml(`页面加载失败：${err.message}`, '😵');
   }
+}
+
+/* ---------------------------------------------------------------- 行为监测（需求①） */
+/** 上报一次页面浏览：只上报登录用户、纯统计用，失败静默不影响页面 */
+function trackPageView(path, menuKey) {
+  if (!store.isLoggedIn) return;
+  // 管理后台这类页面也照常记，但登录页不算（上面已经提前 return 了）
+  const name = (M[menuKey] && M[menuKey].label) || path;
+  api.post('/api/activities/page', { page: path, name }).catch(() => {});
 }
 
 /* ---------------------------------------------------------------- 启动 */

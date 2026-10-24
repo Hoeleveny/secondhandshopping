@@ -5699,6 +5699,101 @@ async function feature51(cdp) {
   await api('DELETE', `/api/posts/${post.id}`, { token: sellerToken }).catch(() => null);
 }
 
+/* ================================================================ 功能52 用户行为监测（本批需求①） */
+async function feature52(cdp) {
+  console.log('\n===== 功能52 管理后台「行为监测」（本批需求①）=====');
+
+  const adminToken = await login('admin', '123456', 'admin');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const buyer = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+
+  // 先用接口造两条可识别的浏览记录（前端上报走的是同一个接口）
+  await api('POST', '/api/activities/page',
+    { token: buyerToken, body: { page: '/favorites', name: '我的收藏' } });
+  await api('POST', '/api/activities/page',
+    { token: buyerToken, body: { page: '/swaps', name: '以物换物' } });
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=activity');
+  await waitFor(cdp, `!!document.querySelector('#act-stats .stat-card')`);
+  await sleep(900);
+
+  const overview = await cdp.eval(`
+    (() => {
+      const cards = [...document.querySelectorAll('#act-stats .stat-card')].map(el => ({
+        label: (el.querySelector('.sc-label') || {}).innerText || '',
+        value: (el.querySelector('.sc-value') || {}).innerText || '',
+      }));
+      const tops = [...document.querySelectorAll('#act-tops .card')].map(el => ({
+        title: (el.querySelector('h2') || {}).innerText || '',
+        rows: el.querySelectorAll('tbody tr').length,
+      }));
+      const hasFilter = !!document.querySelector('#act-kind')
+        && !!document.querySelector('#act-user') && !!document.querySelector('#act-page')
+        && !!document.querySelector('#act-from') && !!document.querySelector('#act-to');
+      return { cards, tops, hasFilter,
+               listRows: document.querySelectorAll('#act-list tbody tr').length };
+    })()`);
+  check('需求①：行为监测页签有 4 张今日概览卡（登录/登出/浏览/活跃用户）',
+    overview.cards.length === 4
+    && overview.cards.some(c => c.label.includes('登录'))
+    && overview.cards.some(c => c.label.includes('页面浏览'))
+    && overview.cards.every(c => /^\d+$/.test(c.value)),
+    JSON.stringify(overview.cards));
+  check('需求①：页面热度与最活跃用户两张榜都在',
+    overview.tops.length === 2 && overview.tops.some(t => t.title.includes('页面热度'))
+    && overview.tops.some(t => t.title.includes('最活跃用户')), JSON.stringify(overview.tops));
+  check('需求①：有类型/用户/页面/日期四组筛选控件',
+    overview.hasFilter === true, `hasFilter=${overview.hasFilter}`);
+  check('需求①：明细列表有记录', overview.listRows > 0, `rows=${overview.listRows}`);
+  await cdp.shot(path.join(SHOT_DIR, 'f52-activity.png'));
+
+  // 筛选：只看「浏览」类型
+  await cdp.eval(`
+    (() => {
+      const sel = document.querySelector('#act-kind');
+      sel.value = 'page';
+      document.querySelector('#act-search').click();
+    })()`);
+  await sleep(1200);
+  const filtered = await cdp.eval(`
+    (() => {
+      const rows = [...document.querySelectorAll('#act-list tbody tr')];
+      const kinds = rows.map(r => (r.querySelector('.badge') || {}).innerText || '');
+      return { rows: rows.length, kinds: [...new Set(kinds)] };
+    })()`);
+  check('需求①：按「浏览」筛选后列表只剩浏览记录',
+    filtered.rows > 0 && filtered.kinds.length === 1 && filtered.kinds[0] === '浏览',
+    JSON.stringify(filtered));
+
+  // 造的两条浏览记录能在明细里查到（说明上报链路通到管理端）
+  const mine = await api('GET', '/api/admin/activities?kind=page&page_path=/favorites&page_size=20',
+    { token: adminToken });
+  check('需求①：前端上报的浏览记录能在管理端查到（带页面中文名）',
+    (mine.data.list || []).some(a => a.page === '/favorites' && a.page_name === '我的收藏'),
+    JSON.stringify((mine.data.list || []).slice(0, 2)));
+
+  // 普通用户进不去管理后台
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go('/admin?tab=activity');
+  await sleep(900);
+  const denied = await cdp.eval(`
+    (() => ({ text: (document.getElementById('page') || {}).innerText || '' }))()`);
+  check('需求①：普通用户看行为监测会被拦住（需要管理员身份）',
+    /管理员/.test(denied.text), denied.text.replace(/\\s+/g, ' ').slice(0, 60));
+
+  // 真实走一遍前端路由：浏览两个页面后，管理端应能查到（证明 app.js 的上报生效）
+  await cdp.go('/posts');
+  await sleep(700);
+  await cdp.go('/compare');
+  await sleep(900);
+  const tracked = await api('GET',
+    `/api/admin/activities?kind=page&user=${buyer.username}&page_size=20`, { token: adminToken });
+  const pages = (tracked.data.list || []).map(a => a.page);
+  check('需求①：前端切换页面会自动上报（能查到 /posts 或 /compare）',
+    pages.includes('/posts') || pages.includes('/compare'), JSON.stringify(pages.slice(0, 6)));
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -5752,6 +5847,7 @@ const GROUPS = {
   49: { title: '评论显示第几楼（本批需求⑤）', fn: feature49 },
   50: { title: '上传头像后各处显示正确（本批需求①）', fn: feature50 },
   51: { title: '删除自己的评论（本批需求①）', fn: feature51 },
+  52: { title: '用户行为监测（本批需求①）', fn: feature52 },
 };
 
 async function main() {

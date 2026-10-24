@@ -17,7 +17,7 @@ from models import (
     OperationLog, Order, Post,
     PostComment, PostImage,
     PostLike, Product, ProductImage, ProductWant, Report, Review, ReviewComment, Subcategory,
-    SwapOffer, User,
+    SwapOffer, User, UserActivity,
 )
 
 # 插入顺序＝外键依赖顺序（父表在前）；删除时反序
@@ -43,6 +43,7 @@ INSERT_ORDER = [
     ("operation_logs", OperationLog),
     ("message_clears", MessageClear),
     ("message_hides", MessageHide),
+    ("user_activities", UserActivity),
     ("follows", Follow),
     ("blocks", Block),
 ]

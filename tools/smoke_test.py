@@ -1828,6 +1828,60 @@ def main() -> int:
     check("卖家删的是自己那一侧，不报错也不影响买家侧数据",
           r.get("code") == 0, str(r)[:150])
 
+    # ---------------- 本批需求①：用户行为监测 ----------------
+    section("本批需求① 用户行为监测")
+
+    _st, r = call("GET", "/api/auth/me", token=token)
+    _act_me = (r.get("data") or {}).get("user") or {}
+    _act_name = _act_me.get("username") or ""
+    _st, r = call("POST", "/api/auth/login",
+                  body={"username": "admin", "password": "123456", "role": "admin"})
+    _admin_at = (r.get("data") or {}).get("token")
+
+    def _acts(qs_str=""):
+        return call("GET", f"/api/admin/activities?page_size=100{qs_str}", token=_admin_at)
+
+    _st, r = _acts(f"&kind=login&user={_act_name}")
+    check("需求①：登录会被记录（可按用户筛到这条登录）",
+          r.get("code") == 0 and any(a["kind"] == "login" for a in (r.get("data") or {}).get("list") or []),
+          str((r.get("data") or {}).get("total")))
+
+    _st, r = call("POST", "/api/activities/page", token=token,
+                  body={"page": "/search", "name": "搜索与筛选"})
+    check("需求①：页面浏览可以上报（登录用户）", r.get("code") == 0, str(r)[:120])
+
+    _st, r = _acts(f"&kind=page&user={_act_name}&page_path=/search")
+    _rows = (r.get("data") or {}).get("list") or []
+    check("需求①：能按「用户 + 页面」筛出这条浏览记录",
+          any(a["page"] == "/search" and a["kind"] == "page" for a in _rows), str(len(_rows)))
+    check("需求①：浏览记录带页面中文名，便于画像分析",
+          any(a["page_name"] == "搜索与筛选" for a in _rows), str([a["page_name"] for a in _rows])[:80])
+
+    call("POST", "/api/auth/logout", token=token)
+    _st, r = _acts(f"&kind=logout&user={_act_name}")
+    check("需求①：登出会被记录",
+          any(a["kind"] == "logout" for a in (r.get("data") or {}).get("list") or []),
+          str((r.get("data") or {}).get("total")))
+
+    _st, r = _acts("&kind=page")
+    check("需求①：按类型筛选生效（只看浏览，不含登录/登出）",
+          all(a["kind"] == "page" for a in (r.get("data") or {}).get("list") or []),
+          str([a["kind"] for a in (r.get("data") or {}).get("list") or []])[:80])
+
+    _st, r = call("GET", "/api/admin/activities/summary", token=_admin_at)
+    _sum = r.get("data") or {}
+    check("需求①：概览给出今日登录/登出/浏览/活跃用户与页面热度",
+          r.get("code") == 0 and isinstance(_sum.get("today"), dict)
+          and {"login", "logout", "page", "users"} <= set(_sum["today"])
+          and isinstance(_sum.get("top_pages"), list),
+          str(_sum.get("today"))[:100])
+
+    _st, r = call("GET", "/api/admin/activities", token=token)
+    check("需求①：普通用户不能看行为数据（仅管理员）", r.get("code") != 0, str(r)[:120])
+
+    _st, r = call("POST", "/api/activities/page", body={"page": "/home"})
+    check("需求①：未登录不能上报页面浏览", r.get("code") != 0, str(r)[:120])
+
     # ---------------- 本批需求①：删除自己的评论 ----------------
     section("本批需求① 删除自己的评论")
 

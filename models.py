@@ -910,6 +910,47 @@ class MessageHide(db.Model):
         }
 
 
+class UserActivity(db.Model):
+    """用户行为监测（2026-10-18 需求①）：登录 / 登出 / 页面浏览。
+
+    供管理员分析使用习惯（谁在什么时候做了什么、页面热度、活跃用户）。
+    只有业务行为的"读写数据表"之外的那一层轨迹，不和 operation_logs 混。
+    """
+
+    __tablename__ = "user_activities"
+
+    KINDS = {"login": "登录", "logout": "登出", "page": "浏览页面"}
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete="CASCADE"),
+                        nullable=False)
+    kind = db.Column(db.Enum("login", "logout", "page", name="activity_kind"),
+                     nullable=False)
+    page = db.Column(db.String(60), nullable=False, default="")
+    page_name = db.Column(db.String(40), nullable=False, default="")
+    ip = db.Column(db.String(45), nullable=False, default="")
+    user_agent = db.Column(db.String(200), nullable=False, default="")
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
+
+    user = db.relationship("User")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "nickname": self.user.nickname if self.user else None,
+            "username": self.user.username if self.user else None,
+            "avatar": self.user.avatar if self.user else None,
+            "kind": self.kind,
+            "kind_text": self.KINDS.get(self.kind, self.kind),
+            "page": self.page,
+            "page_name": self.page_name,
+            "ip": self.ip,
+            "user_agent": self.user_agent,
+            "created_at": _dt(self.created_at),
+        }
+
+
 # ---------------------------------------------------------------- 工具函数
 def _dt(value: datetime | None) -> str | None:
     return value.strftime("%Y-%m-%d %H:%M:%S") if value else None

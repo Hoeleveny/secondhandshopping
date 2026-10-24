@@ -11,6 +11,7 @@ import re
 from flask import Blueprint, request
 from flask_jwt_extended import create_access_token
 
+from api.activities import record_activity
 from api.common import current_user, fail, json_body, login_required, ok
 from extensions import db
 from models import ROLE_ADMIN, ROLE_BUYER, ROLE_SELLER, User
@@ -93,6 +94,10 @@ def login():
             return fail("管理员账号请以「管理员」身份登录", 403)
         view = user.role if user.role in NORMAL_ROLES else ROLE_BUYER
 
+    # 2026-10-18 需求①：记一条登录行为（供管理后台「行为监测」分析使用习惯）
+    record_activity(user.id, "login")
+    db.session.commit()
+
     return ok(
         {"token": _token_for(user, view), "user": user.to_dict(), "view": view},
         msg="登录成功",
@@ -162,5 +167,13 @@ def update_profile():
 
 @bp.post("/logout")
 def logout():
-    """JWT 无状态，退出由前端清除本地凭证即可。"""
+    """JWT 无状态，退出由前端清除本地凭证即可；这里只补一条「登出」行为记录。"""
+    # 2026-10-18 需求①：带着有效 token 调进来就记一笔登出（token 过期也不报错，静默跳过）
+    user = current_user()
+    if user is not None:
+        try:
+            record_activity(user.id, "logout")
+            db.session.commit()
+        except Exception:      # noqa: BLE001 —— 记录失败不能影响退出
+            db.session.rollback()
     return ok(msg="已退出登录")

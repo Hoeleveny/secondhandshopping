@@ -14,6 +14,7 @@ const TABS = [
   { key: 'users', label: '用户管理', icon: '👥' },
   { key: 'trades', label: '交易管理', icon: '🧾' },
   { key: 'reports', label: '举报审核', icon: '🚩' },
+  { key: 'activity', label: '行为监测', icon: '🕵️' },
   { key: 'base', label: '基础数据', icon: '🗂️' },
   { key: 'data', label: '数据管理', icon: '💾' },
 ];
@@ -59,6 +60,7 @@ export default {
       if (tab === 'users') return renderUsers(panel);
       if (tab === 'trades') return renderTrades(panel);
       if (tab === 'reports') return renderReports(panel);
+      if (tab === 'activity') return renderActivity(panel);
       if (tab === 'base') return renderBaseData(panel);
       return renderDataManager(panel);
     }
@@ -1215,6 +1217,179 @@ const TARGET_META = {
 };
 
 /* ================================================================ 举报审核 */
+/* ================================================================ 行为监测（2026-10-18 需求①） */
+async function renderActivity(panel) {
+  let kind = 'all';
+  let userKw = '';
+  let pagePath = '';
+  let dateFrom = '';
+  let dateTo = '';
+  let page = 1;
+
+  panel.innerHTML = `
+    <div class="grid grid-4 mb-16" id="act-stats">${loadingHtml()}</div>
+    <div class="card mb-16">
+      <div class="row wrap" style="gap:8px;align-items:center">
+        <select id="act-kind" class="input" style="width:130px"></select>
+        <input id="act-user" class="input" style="width:170px" placeholder="用户（用户名/昵称）">
+        <select id="act-page" class="input" style="width:190px"><option value="">全部页面</option></select>
+        <input id="act-from" type="date" class="input" style="width:150px">
+        <span class="muted small">至</span>
+        <input id="act-to" type="date" class="input" style="width:150px">
+        <button class="btn btn-primary btn-sm" id="act-search">筛选</button>
+        <button class="btn btn-ghost btn-sm" id="act-reset">重置</button>
+      </div>
+    </div>
+    <div class="grid" style="grid-template-columns:1fr 1fr;gap:16px" id="act-tops"></div>
+    <div class="card" id="act-list">${loadingHtml()}</div>
+    <div class="pagination" id="act-pager"></div>`;
+
+  const statsBox = panel.querySelector('#act-stats');
+  const topsBox = panel.querySelector('#act-tops');
+  const listBox = panel.querySelector('#act-list');
+  const pager = panel.querySelector('#act-pager');
+  const kindSel = panel.querySelector('#act-kind');
+  const pageSel = panel.querySelector('#act-page');
+
+  async function loadSummary() {
+    let data;
+    try {
+      data = await api.get('/api/admin/activities/summary');
+    } catch (err) {
+      statsBox.innerHTML = emptyHtml(`加载失败：${err.message}`, '😵');
+      return;
+    }
+    const t = data.today || {};
+    // 复用项目里已有的 .stat-card 结构（sc-icon / sc-label / sc-value / sc-more）
+    const card = (icon, label, num, hint) => `
+      <div class="stat-card">
+        <span class="sc-icon">${icon}</span>
+        <div class="sc-label">${esc(label)}</div>
+        <div class="sc-value">${esc(String(num ?? 0))}</div>
+        <div class="sc-more">${esc(hint || '')}</div>
+      </div>`;
+    statsBox.innerHTML = [
+      card('🔑', '今日登录', t.login, '含管理员'),
+      card('👋', '今日登出', t.logout, '主动退出'),
+      card('👣', '今日页面浏览', t.page, `累计 ${data.total ?? 0} 条行为`),
+      card('🔥', '今日活跃用户', t.users, `近 7 天 ${data.week_active_users ?? 0} 人`),
+    ].join('');
+
+    const pageRows = (data.top_pages || []).map((p, i) => `
+      <tr><td style="width:34px">${i + 1}</td>
+          <td>${esc(p.name || p.page)}<div class="muted small">${esc(p.page)}</div></td>
+          <td style="text-align:right">${p.count}</td></tr>`).join('');
+    const userRows = (data.top_users || []).map((u, i) => `
+      <tr><td style="width:34px">${i + 1}</td>
+          <td>${esc(u.nickname)}<div class="muted small">@${esc(u.username)}</div></td>
+          <td style="text-align:right">${u.count}<div class="muted small">${esc((u.last_at || '').slice(5, 16))}</div></td></tr>`).join('');
+
+    topsBox.innerHTML = `
+      <div class="card">
+        <div class="card-head"><h2>页面热度 Top 8</h2></div>
+        ${pageRows ? `<div class="table-wrap"><table class="table">
+          <thead><tr><th>#</th><th>页面</th><th style="text-align:right">浏览</th></tr></thead>
+          <tbody>${pageRows}</tbody></table></div>` : emptyHtml('还没有浏览记录', '👣')}
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>最活跃用户 Top 8</h2></div>
+        ${userRows ? `<div class="table-wrap"><table class="table">
+          <thead><tr><th>#</th><th>用户</th><th style="text-align:right">行为数 / 最近</th></tr></thead>
+          <tbody>${userRows}</tbody></table></div>` : emptyHtml('还没有用户行为', '🙈')}
+      </div>`;
+  }
+
+  async function loadList() {
+    listBox.innerHTML = loadingHtml();
+    let data;
+    try {
+      data = await api.get(`/api/admin/activities${qs({
+        kind: kind === 'all' ? '' : kind, user: userKw, page_path: pagePath,
+        date_from: dateFrom, date_to: dateTo, page, page_size: 30,
+      })}`);
+    } catch (err) {
+      listBox.innerHTML = emptyHtml(`加载失败：${err.message}`, '😵');
+      pager.innerHTML = '';
+      return;
+    }
+
+    // 下拉选项用后端返回的真实值（种类 / 出现过的页面）
+    if (!kindSel.dataset.filled) {
+      const kinds = data.kinds || {};
+      kindSel.innerHTML = `<option value="all">全部类型</option>`
+        + Object.entries(kinds).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
+      kindSel.dataset.filled = '1';
+    }
+    if (!pageSel.dataset.filled) {
+      pageSel.innerHTML = `<option value="">全部页面</option>`
+        + (data.pages || []).map(p => `<option value="${esc(p.page)}">${esc(p.name)}（${p.count}）</option>`).join('');
+      pageSel.dataset.filled = '1';
+    }
+
+    if (!data.list.length) {
+      listBox.innerHTML = emptyHtml('没有符合条件的行为记录', '📭');
+      pager.innerHTML = '';
+      return;
+    }
+
+    const KIND_BADGE = {
+      login: ['badge badge-info', '登录'],
+      logout: ['badge badge-gray', '登出'],
+      page: ['badge', '浏览'],
+    };
+    listBox.innerHTML = `
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>时间</th><th>用户</th><th>类型</th><th>页面</th><th>IP</th></tr></thead>
+          <tbody>
+            ${data.list.map(a => {
+              const meta = KIND_BADGE[a.kind] || ['badge badge-gray', a.kind_text || a.kind];
+              return `<tr>
+                <td class="muted small">${esc(a.created_at || '')}</td>
+                <td>${esc(a.nickname || '（已注销）')}<div class="muted small">@${esc(a.username || '')}</div></td>
+                <td><span class="${meta[0]}">${esc(meta[1])}</span></td>
+                <td>${a.page ? `${esc(a.page_name || a.page)}<div class="muted small">${esc(a.page)}</div>` : '<span class="muted">—</span>'}</td>
+                <td class="muted small">${esc(a.ip || '—')}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>`;
+
+    renderPagination(pager, {
+      page: data.page,
+      pages: Math.max(1, Math.ceil(data.total / data.page_size)),
+      total: data.total,
+      onGo: (target) => { page = target; loadList(); },
+    });
+  }
+
+  panel.querySelector('#act-search').addEventListener('click', () => {
+    kind = kindSel.value;
+    userKw = panel.querySelector('#act-user').value.trim();
+    pagePath = pageSel.value;
+    dateFrom = panel.querySelector('#act-from').value;
+    dateTo = panel.querySelector('#act-to').value;
+    page = 1;
+    loadList();
+  });
+  panel.querySelector('#act-user').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') panel.querySelector('#act-search').click();
+  });
+  panel.querySelector('#act-reset').addEventListener('click', () => {
+    kind = 'all'; userKw = ''; pagePath = ''; dateFrom = ''; dateTo = ''; page = 1;
+    kindSel.value = 'all';
+    panel.querySelector('#act-user').value = '';
+    pageSel.value = '';
+    panel.querySelector('#act-from').value = '';
+    panel.querySelector('#act-to').value = '';
+    loadList();
+  });
+
+  await Promise.all([loadSummary(), loadList()]);
+}
+
+
 async function renderReports(panel) {
   let status = 'pending';
   let page = 1;
