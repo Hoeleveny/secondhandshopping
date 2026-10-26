@@ -846,4 +846,26 @@ MySQL 的 **3823**（CHECK 里用到的列不能同时带 `ON DELETE SET NULL` �
 **顺带修掉两条长期偶发红的老断言**（都是"拿两次独立请求互相比"，中间来了新数据就失败）：
 商品名筛选改成**容差**判断；未读数改成"比清空前多 1 条"而不是假设全局恰好 1。
 
+### 二十八·补记：折叠组「永远展开」的真因（2026-10-18）
+
+上面那条修复（把展开状态挪进 `expandedGroups` 集合）解决的是"5 秒自动刷新把展开态冲掉"，
+但用户复测后反馈**仍然不对：现在是"全都展开"**。复查发现真正的元凶是**样式**：
+
+```css
+.tl-group-items { display: flex; ... }   /* 作者样式 */
+/* 浏览器默认：[hidden] { display: none } 优先级更低 → 被压掉 */
+```
+
+于是 **`hidden` 属性一直是 true、视觉上却永远可见**。实测（初始状态）：
+`hidden=true, display=flex, height=356, visible=true` —— 点按钮只有文字在变，画面完全没动。
+
+**修复**：`.tl-group-items[hidden] { display: none; }`（属性选择器 0,2,0 高于 0,1,0，不需要 `!important`）。
+
+**测试为什么会"假绿"**：我原来断言的是 `panel.hidden`（属性），被 CSS 骗过；现在一律看**真实渲染**
+（`getBoundingClientRect().height > 0` + 把 `getComputedStyle().display` 打进断言详情），并补了「初始必须收起」。
+**反向验证**：临时撤掉那条 CSS → 功能56 立刻红 2 条，失败详情直接打出 `cssDisplay:"flex", height:356`。
+
+**两条可复用的教训**：①**`hidden` 属性不是"绝对隐藏"**——只要作者给它写了 `display`，`[hidden]` 就失效，
+必须自己补 `[hidden] { display: none }`；②**断言"元素是否可见"要看渲染结果（尺寸/计算样式），不能只看属性或类名**。
+
 
