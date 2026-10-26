@@ -822,6 +822,9 @@
 .tl-group-items { margin: 2px 0 10px 34px; padding: 6px 10px;
   border-left: 2px solid var(--primary-soft); background: var(--bg-secondary);
   border-radius: 0 8px 8px 0; display: flex; flex-direction: column; gap: 4px; }
+/* 2026-10-18 修 bug：上面给了 display:flex，会把 [hidden] 的 display:none 压掉，
+   于是面板永远可见（用户报的"浏览记录都是展开的"）。用属性选择器提高优先级兜住。 */
+.tl-group-items[hidden] { display: none; }
 .tgi-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .tgi-kind { flex: none; font-size: 11px; padding: 1px 6px; border-radius: 6px;
   background: var(--bg); color: var(--text-secondary); }

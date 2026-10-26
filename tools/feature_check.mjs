@@ -5952,7 +5952,8 @@ async function feature55(cdp) {
         summary: g ? (g.querySelector('.tl-summary').innerText || '') : '',
         panelHidden: (() => {
           const p = g ? document.querySelector('.tl-group-items[data-for="' + g.dataset.group + '"]') : null;
-          return p ? p.hidden : null;
+          // 只读 hidden 属性会被 CSS 的 display 骗过，用真实渲染高度判断
+          return p ? !(p.getBoundingClientRect().height > 0) : null;
         })(),
       };
     })()`);
@@ -5976,7 +5977,7 @@ async function feature55(cdp) {
       const panel = document.querySelector('.tl-group-items[data-for="' + g.dataset.group + '"]');
       const rows = panel ? [...panel.querySelectorAll('.tgi-row')] : [];
       return {
-        hidden: panel ? panel.hidden : null,
+        hidden: panel ? !(panel.getBoundingClientRect().height > 0) : null,
         toggleText: (g.querySelector('.tl-toggle') || {}).innerText || '',
         rows: rows.length,
         kinds: rows.map(r => (r.querySelector('.tgi-kind') || {}).innerText || ''),
@@ -6058,9 +6059,18 @@ async function feature56(cdp) {
         const g = document.querySelector('#lg-list .tl-item[data-source="page_group"]');
         if (!g) return { gone: true };
         const panel = document.querySelector('.tl-group-items[data-for="' + g.dataset.group + '"]');
-        return { hidden: panel ? panel.hidden : null,
+        // 关键：只读 panel.hidden 会被 CSS 的 display 骗过（[hidden] 的 display:none 优先级更低），
+        // 必须看**真实渲染高度/计算样式**，否则"永远展开"也测不出来
+        const cs = panel ? getComputedStyle(panel) : null;
+        return { hidden: panel ? !(panel.getBoundingClientRect().height > 0) : null,
+                 cssDisplay: cs ? cs.display : null,
+                 height: panel ? Math.round(panel.getBoundingClientRect().height) : null,
                  toggle: (g.querySelector('.tl-toggle') || {}).innerText || '' };
       })()`);
+
+    const initial = await read();
+    check('需求①：折叠组**初始是收起的**（页面上看不见组内明细）',
+      initial.hidden === true, JSON.stringify(initial));
 
     await cdp.eval(`document.querySelector('#lg-list .tl-item[data-source="page_group"]').click()`);
     await sleep(500);
