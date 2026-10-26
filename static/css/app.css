@@ -814,3 +814,19 @@
 .plain-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .plain-list li { padding: 2px 0; border-bottom: 1px dashed var(--border); }
 .plain-list li:last-child { border-bottom: 0; }
+
+/* 2026-10-18 需求②：动态监控里的「浏览记录」折叠组 */
+.tl-item.tl-group { cursor: pointer; background: var(--bg-secondary); }
+.tl-item.tl-group .tl-toggle { color: var(--primary); font-weight: 400; margin-left: 6px; }
+.tl-check-ph, .tl-del-ph { display: block; }
+.tl-group-items { margin: 2px 0 10px 34px; padding: 6px 10px;
+  border-left: 2px solid var(--primary-soft); background: var(--bg-secondary);
+  border-radius: 0 8px 8px 0; display: flex; flex-direction: column; gap: 4px; }
+.tgi-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.tgi-kind { flex: none; font-size: 11px; padding: 1px 6px; border-radius: 6px;
+  background: var(--bg); color: var(--text-secondary); }
+.tgi-kind.tgi-product { color: var(--primary); }
+.tgi-kind.tgi-post { color: var(--warning); }
+.tgi-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--text); text-decoration: none; }
+.tgi-title:hover { color: var(--primary); text-decoration: underline; }

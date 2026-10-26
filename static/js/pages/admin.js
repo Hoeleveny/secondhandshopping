@@ -420,8 +420,12 @@ async function renderTrades(panel) {
       title: d.log?.action_text || '操作日志',
       size: 'detail',
       body: logDetailBody(d),
-      footer: '<button class="btn" data-close>关闭</button>',
+      footer: `<button class="btn" data-copy-nick>📋 复制昵称</button>
+                 <button class="btn" data-close>关闭</button>`,
       onMount(modal, close) {
+        // 2026-10-18 需求②：一键复制昵称，方便拿去「动作发起人」里筛
+        modal.querySelector('[data-copy-nick]')?.addEventListener('click',
+          () => copyText(d.log?.nickname || d.log?.username, '昵称'));
         modal.querySelectorAll('[data-goto]').forEach(el =>
           el.addEventListener('click', () => {
             close();
@@ -762,7 +766,8 @@ async function renderTrades(panel) {
         <div class="row-between mb-8">
           <div class="row" style="gap:10px;align-items:center">
             ${avatarHtml(u, 36)}
-            <div><b>${esc(u.nickname || '')}</b> <span class="muted small">@${esc(u.username || '')}</span></div>
+            <div><b>${esc(u.nickname || '')}</b> <span class="muted small">@${esc(u.username || '')}</span>
+              <button class="btn btn-ghost btn-sm" id="lg-profile-copy" title="复制昵称">📋</button></div>
           </div>
           <span class="muted small">最近活跃 ${esc(data.last_active || '—')}</span>
         </div>
@@ -779,6 +784,83 @@ async function renderTrades(panel) {
             ${sessions ? `<ul class="plain-list">${sessions}</ul>` : '<div class="muted small">暂无登录记录</div>'}</div>
         </div>
       </div>`;
+    box.querySelector('#lg-profile-copy')?.addEventListener('click',
+      () => copyText(u.nickname || u.username, '昵称'));
+  }
+
+  /* ---------------- 动态监控：行渲染（业务日志 / 登录登出 / 浏览折叠组）---------------- */
+  /**
+   * 2026-10-18 需求②：浏览记录默认**折叠成一组**（后端按「同一用户、间隔 ≤30 分钟」分好组），
+   * 组内突出商品页与帖子页（带真名、可直接点进去），其它页面（首页/搜索等）只给个数。
+   */
+  function logRowHtml(log) {
+    const key = log.key || ('log-' + log.id);
+    if (log.source === 'page_group') {
+      const span = `${esc((log.start_at || '').slice(5, 16))} ~ ${esc((log.end_at || '').slice(11, 16))}`;
+      const items = (log.items || []).map(it => {
+        const label = it.kind === 'product' ? '商品' : (it.kind === 'post' ? '帖子' : '页面');
+        return `
+          <div class="tgi-row">
+            <span class="tgi-kind tgi-${esc(it.kind)}">${label}</span>
+            <a class="tgi-title" href="#${esc(it.page)}" title="${esc(it.page)}">${esc(it.title)}</a>
+            <span class="muted small">${esc((it.at || '').slice(5, 16))}</span>
+          </div>`;
+      }).join('');
+      return `
+        <div class="tl-item tl-group" data-source="page_group" data-group="${esc(key)}"
+             role="button" tabindex="0" title="点开 / 收起这一串浏览记录">
+          <span class="tl-check-box tl-check-ph"></span>
+          <span class="tl-time muted small">${span}</span>
+          <span class="tl-who">${esc(log.nickname || log.username || '')}</span>
+          <span class="tl-action">浏览记录</span>
+          <span class="tl-summary muted">${esc(log.summary)} <b class="tl-toggle">展开 ▸</b></span>
+          <span class="tl-del-ph"></span>
+        </div>
+        <div class="tl-group-items" data-for="${esc(key)}" hidden>
+          ${items || '<div class="tgi-row muted small">这一串里没有商品页或帖子页</div>'}
+          ${log.other_count ? `<div class="tgi-row muted small">另有 ${log.other_count} 次浏览首页 / 搜索等其它页面</div>` : ''}
+        </div>`;
+    }
+    const isActivity = log.source === 'activity';
+    return `
+      <div class="tl-item clickable" ${isActivity ? '' : `data-log="${log.id}"`}
+           data-source="${log.source || 'log'}" data-key="${esc(key)}" role="button" tabindex="0"
+           title="${isActivity ? '用户行为记录（登录 / 登出 / 浏览）' : '点击查看这条动作的详细交易信息'}">
+        <label class="tl-check-box" title="选中后可批量删除这条记录">
+          <input type="checkbox" class="tl-check" data-check="${esc(key)}"
+                 ${pickedLogs.has(key) ? 'checked' : ''}>
+        </label>
+        <span class="tl-time muted small">${esc(fmtTime(log.created_at))}</span>
+        <span class="tl-who" title="点一下按这个人筛选">${esc(log.nickname || log.username || '系统')}</span>
+        <span class="tl-action">${esc(log.action_text)}</span>
+        <span class="tl-summary muted">${esc(log.summary)}</span>
+        ${isActivity ? '<span class="tl-del-ph"></span>'
+          : `<button class="btn btn-ghost btn-sm tl-del" data-del="${log.id}"
+                     title="删除这条操作记录">🗑</button>`}
+      </div>`;
+  }
+
+  /** 复制文本（局域网 http 访问时 navigator.clipboard 不可用，要有兜底） */
+  async function copyText(text, label) {
+    const value = String(text || '').trim();
+    if (!value) { toast('没有可复制的内容', 'error'); return; }
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      }
+      toast(`已复制${label || ''}「${value}」`);
+    } catch (err) {
+      toast(`复制失败：${err.message}`, 'error');
+    }
   }
 
   /* ---------------- 动态监控（操作日志时间线 + 多条件筛选）---------------- */
@@ -834,22 +916,30 @@ async function renderTrades(panel) {
         <button class="btn btn-danger btn-sm" id="lg-del-selected" disabled>🗑 删除选中（0）</button>
       </div>
       <div class="timeline">
-        ${data.list.map(log => `
-          <div class="tl-item clickable" data-log="${log.id}" data-source="${log.source || 'log'}"
-               data-key="${log.key || ('log-' + log.id)}" role="button" tabindex="0"
-               title="${log.source === 'activity' ? '用户行为记录（登录/登出/浏览）' : '点击查看这条动作的详细交易信息'}">
-            <label class="tl-check-box" title="选中后可批量删除这条记录">
-              <input type="checkbox" class="tl-check" data-check="${log.key || ('log-' + log.id)}"
-                     ${pickedLogs.has(log.key || ('log-' + log.id)) ? 'checked' : ''}>
-            </label>
-            <span class="tl-time muted small">${esc(fmtTime(log.created_at))}</span>
-            <span class="tl-who">${esc(log.nickname || log.username || '系统')}</span>
-            <span class="tl-action">${esc(log.action_text)}</span>
-            <span class="tl-summary muted">${esc(log.summary)}</span>
-            <button class="btn btn-ghost btn-sm tl-del" data-del="${log.id}"
-                    title="删除这条操作记录">🗑</button>
-          </div>`).join('')}
+        ${data.list.map(logRowHtml).join('')}
       </div>`;
+
+    // 2026-10-18 需求②：浏览记录组的展开 / 收起
+    box.querySelectorAll('[data-group]').forEach(el =>
+      el.addEventListener('click', () => {
+        const items = box.querySelector(`.tl-group-items[data-for="${el.dataset.group}"]`);
+        if (!items) return;
+        items.hidden = !items.hidden;
+        const tgl = el.querySelector('.tl-toggle');
+        if (tgl) tgl.textContent = items.hidden ? '展开 ▸' : '收起 ▾';
+      }));
+    // 点发起人昵称 = 直接用这个人筛（配合详情弹窗里的「复制昵称」）
+    box.querySelectorAll('.tl-who').forEach(el =>
+      el.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const name = el.textContent.trim();
+        if (!name) return;
+        const input = panel.querySelector('#lg-user');
+        if (input) input.value = name;
+        logUser = name;
+        logPage = 1;
+        loadLogs();
+      }));
 
     // 需求②：点条目看详情（发起人、精确时间、相关订单与商品）
     // 注意：勾选区域与删除按钮的点击要**完全避开**详情弹窗，否则勾选时稍微点偏就弹详情

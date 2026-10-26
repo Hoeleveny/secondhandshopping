@@ -1945,6 +1945,46 @@ def main() -> int:
     else:
         check("需求①：行为记录也能像操作日志一样删除", False, "没找到可删的行为记录")
 
+    # ---------------- 本批需求②：浏览记录折叠 ----------------
+    section("本批需求② 浏览记录折叠")
+
+    _st, r = call("POST", "/api/auth/login",
+                  body={"username": "admin", "password": "123456", "role": "admin"})
+    _fd_at = (r.get("data") or {}).get("token")
+
+    _st, r = call("GET", "/api/admin/logs?page_size=60", token=_fd_at)
+    _fd_list = (r.get("data") or {}).get("list") or []
+    check("需求②：默认时间线里出现「浏览记录」折叠组（不再逐条铺开）",
+          any(x.get("source") == "page_group" for x in _fd_list),
+          str([x.get("source") for x in _fd_list[:8]]))
+
+    _grp = next((x for x in _fd_list if x.get("source") == "page_group"), {})
+    check("需求②：折叠组带 起止时间 / 条数 / 组内明细",
+          bool(_grp.get("start_at")) and bool(_grp.get("end_at"))
+          and isinstance(_grp.get("count"), int) and isinstance(_grp.get("items"), list),
+          str({k: _grp.get(k) for k in ("start_at", "end_at", "count")}))
+    check("需求②：组内突出商品页/帖子页（带 kind 与标题）",
+          all(it.get("kind") in ("product", "post") for it in _grp.get("items") or [])
+          and all(it.get("title") for it in _grp.get("items") or []),
+          str([(it.get("kind"), str(it.get("title"))[:12]) for it in (_grp.get("items") or [])[:3]]))
+    check("需求②：其它页面只给个数（other_count）",
+          isinstance(_grp.get("other_count"), int) and _grp["other_count"] >= 0,
+          str(_grp.get("other_count")))
+
+    _st, r = call("GET", "/api/admin/logs?action=page&page_size=10", token=_fd_at)
+    _fd_raw = (r.get("data") or {}).get("list") or []
+    check("需求②：明确按「浏览」筛时逐条列出（不折叠）",
+          bool(_fd_raw) and all(x.get("source") == "activity" and x.get("action") == "page"
+                                for x in _fd_raw),
+          str([x.get("source") for x in _fd_raw[:4]]))
+
+    _st, r = call("GET", "/api/admin/logs?page_path=/compare&page_size=10", token=_fd_at)
+    _fd_pg = (r.get("data") or {}).get("list") or []
+    check("需求②：按页面筛时也是逐条列出，摘要写明是哪类页面",
+          all(x.get("source") == "activity" for x in _fd_pg)
+          and all(str(x.get("summary", "")).startswith("浏览") for x in _fd_pg),
+          str([x.get("summary") for x in _fd_pg[:2]]))
+
     # ---------------- 本批需求①：删除自己的评论 ----------------
     section("本批需求① 删除自己的评论")
 

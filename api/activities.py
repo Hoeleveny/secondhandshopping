@@ -4,6 +4,8 @@
 - 管理员在「行为监测」页签看概览（今日登录/登出/浏览/活跃用户）、页面热度与明细；
 - 这是"使用轨迹"，与 operation_logs（业务写操作留痕）刻意分开，互不干扰。
 """
+import re
+
 from datetime import datetime, timedelta
 
 from flask import Blueprint, request
@@ -240,7 +242,7 @@ def activity_query(*, action=None, user_id=None, user_q=None,
     return q
 
 
-def activity_row(a: UserActivity) -> dict:
+def activity_row(a: UserActivity, titles=None) -> dict:
     """把一条行为记录转成「动态监控」时间线里的一行（与操作日志同构）。"""
     ts = a.created_at
     row = {
@@ -269,7 +271,9 @@ def activity_row(a: UserActivity) -> dict:
     elif a.kind == "logout":
         row["summary"] = "退出登录"
     else:
-        row["summary"] = "浏览：%s" % (a.page_name or a.page or "—")
+        title, kind = page_display_title(a, titles or {})
+        row["summary"] = "浏览%s：%s" % (REF_LABEL.get(kind, "页面"), title)
+        row["ref_kind"] = kind
     return row
 
 
@@ -346,3 +350,126 @@ def activities_profile():
         "top_pages": top_pages,
         "recent_sessions": sessions[-5:][::-1],
     })
+
+# ---------------------------------------------------------------- 浏览记录折叠（2026-10-18 需求②）
+PRODUCT_PATH = re.compile(r"^/product/(\d+)$")
+POST_PATH = re.compile(r"^/post/(\d+)$")
+PAGE_GAP = timedelta(minutes=30)     # 同一用户间隔 ≤30 分钟的浏览算"一串"
+MAX_GROUP_ITEMS = 50                 # 每组最多带出的商品/帖子条数
+
+
+def classify_page(page: str) -> tuple:
+    """浏览路径归类：/product/12 → ('product', 12)；/post/3 → ('post', 3)；其余 ('other', None)。"""
+    raw = page or ""
+    m = PRODUCT_PATH.match(raw)
+    if m:
+        return "product", int(m.group(1))
+    m = POST_PATH.match(raw)
+    if m:
+        return "post", int(m.group(1))
+    return "other", None
+
+
+def ref_titles(rows) -> dict:
+    """把浏览路径里的商品 id / 帖子 id 批量反查成名称（不新增字段，直接查现有表）。"""
+    from models import Post, Product          # 避免顶层循环导入
+
+    pids, post_ids = set(), set()
+    for r in rows:
+        kind, rid = classify_page(r.page)
+        if kind == "product":
+            pids.add(rid)
+        elif kind == "post":
+            post_ids.add(rid)
+    titles = {}
+    if pids:
+        for p in Product.query.filter(Product.id.in_(pids)).all():
+            titles[("product", p.id)] = p.name
+    if post_ids:
+        for p in Post.query.filter(Post.id.in_(post_ids)).all():
+            titles[("post", p.id)] = (p.title or p.content or "")[:60]
+    return titles
+
+
+REF_LABEL = {"product": "商品", "post": "帖子"}
+
+
+def page_display_title(a, titles: dict) -> tuple:
+    """浏览记录的可读标题与分类：(标题, kind)；商品页/帖子页优先用反查到的真名。"""
+    kind, rid = classify_page(a.page)
+    if kind == "other":
+        return (a.page_name or a.page or "—"), "other"
+    found = titles.get((kind, rid))
+    if found:
+        return found, kind
+    return "%s #%d（已删除）" % (REF_LABEL.get(kind, "对象"), rid), kind
+
+
+def _page_item(a: UserActivity, titles: dict) -> dict:
+    kind, rid = classify_page(a.page)
+    title, _ = page_display_title(a, titles)
+    return {
+        "id": a.id,
+        "at": a.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+        "page": a.page,
+        "page_name": a.page_name,
+        "kind": kind,                          # product / post / other
+        "ref_id": rid,
+        "title": title,
+        "deleted": kind in ("product", "post") and (kind, rid) not in titles,
+        "ip": a.ip,
+    }
+
+
+def group_page_views(rows) -> list:
+    """把「同一用户、间隔 ≤30 分钟」的浏览记录折成一组（rows 需按时间升序）。"""
+    groups = []
+    last = {}
+    for a in rows:
+        cur = last.get(a.user_id)
+        if cur is None or (a.created_at - cur["end_at"]) > PAGE_GAP:
+            cur = {"user_id": a.user_id, "start_at": a.created_at,
+                   "end_at": a.created_at, "items": []}
+            groups.append(cur)
+        cur["end_at"] = a.created_at
+        cur["items"].append(a)
+        last[a.user_id] = cur
+    return groups
+
+
+def page_group_row(g: dict, titles: dict) -> dict:
+    """一组浏览 → 时间线里的一行（默认折叠）。组内**突出商品页/帖子页**，其余只给个数。"""
+    user = User.query.get(g["user_id"])
+    items = [_page_item(a, titles) for a in sorted(g["items"], key=lambda x: (x.created_at, x.id),
+                                                  reverse=True)]
+    focus = [x for x in items if x["kind"] != "other"][:MAX_GROUP_ITEMS]
+    other_count = len(items) - len(focus)
+    seen, names = set(), []
+    for x in focus:                      # 同一个商品反复看只报一次
+        if x["title"] in seen:
+            continue
+        seen.add(x["title"])
+        names.append(x["title"])
+        if len(names) >= 3:
+            break
+    summary = "%s ~ %s 共浏览 %d 个页面" % (
+        g["start_at"].strftime("%m-%d %H:%M"), g["end_at"].strftime("%H:%M"), len(items))
+    if names:
+        summary += "，商品/帖子：" + "、".join(names) + ("…" if len(seen) >= 3 else "")
+    return {
+        "id": None,
+        "key": "grp-%d-%s" % (g["user_id"], g["start_at"].strftime("%Y%m%d%H%M%S")),
+        "source": "page_group",
+        "user_id": g["user_id"],
+        "nickname": user.nickname if user else "（已注销）",
+        "username": user.username if user else "",
+        "action": "page_group",
+        "action_text": "浏览记录",
+        "summary": summary,
+        "created_at": g["end_at"].strftime("%Y-%m-%d %H:%M:%S"),
+        "start_at": g["start_at"].strftime("%Y-%m-%d %H:%M:%S"),
+        "end_at": g["end_at"].strftime("%Y-%m-%d %H:%M:%S"),
+        "count": len(items),
+        "other_count": other_count,
+        "items": focus,
+    }

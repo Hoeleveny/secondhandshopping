@@ -15,7 +15,10 @@ from flask import Blueprint, current_app, send_from_directory
 from sqlalchemy import and_, case, func, or_
 
 import audit
-from api.activities import UserActivity, activity_query, activity_row
+from api.activities import (
+    UserActivity, activity_query, activity_row, group_page_views, page_group_row,
+    ref_titles,
+)
 from api.common import (
     admin_required, arg_int, arg_str, current_user, fail, json_body, ok, paginate_args,
 )
@@ -432,24 +435,64 @@ def admin_logs():
                               OperationLog.target_id.in_(rids)))
         q = q.filter(or_(*conds))
 
-    total = q.count()
-    rows = (q.order_by(OperationLog.created_at.desc(), OperationLog.id.desc())
-            .offset((page - 1) * size).limit(size).all())
-
-    # 2026-10-18 需求①：把「登录 / 登出 / 浏览页面」也并进这条时间线（用户要求合并进动态监控）。
-    # 两类数据各自筛选、各自取前 page*size 条，再按时间归并后切本页——两条都是按时间倒序的。
     aq = activity_query(action=action, user_id=user_id, user_q=user_q,
                         start=start_dt, end=end_dt, page_path=page_path,
                         exclude=bool(product or order_no))
-    act_rows = (aq.order_by(UserActivity.created_at.desc(), UserActivity.id.desc())
-                .limit(page * size).all())
-    merged = [dict(r.to_dict(), key="log-%d" % r.id, source="log") for r in rows]
-    merged += [activity_row(a) for a in act_rows]
-    merged.sort(key=lambda x: (x.get("created_at") or "", x.get("key") or ""), reverse=True)
-    start_i = (page - 1) * size
-    page_rows = merged[start_i:start_i + size]
 
-    return ok({"list": page_rows, "total": total + aq.count(),
+    # 2026-10-18 需求②：浏览记录**默认折叠成组**（同一用户间隔 ≤30 分钟算一串），
+    # 只有明确「动作=浏览」或「按浏览页面筛」时才逐条列出来。
+    browsing_raw = bool(page_path) or action == "page"
+
+    log_rows = (q.order_by(OperationLog.created_at.desc(), OperationLog.id.desc())
+                .limit(3000).all())
+    act_rows = (aq.order_by(UserActivity.created_at.desc(), UserActivity.id.desc())
+                .limit(3000).all())
+
+    merged = [dict(r.to_dict(), key="log-%d" % r.id, source="log") for r in log_rows]
+    # 登录行的「本次使用时长」要按会话再查 2~3 次库，**只对本页可见的行算**，
+    # 否则几百条登录会拖垮一次请求；先放轻量行，切页后再替换成完整行。
+    heavy = {}
+    for a in act_rows:
+        key = "act-%d" % a.id
+        nickname = a.user.nickname if a.user else "（已注销）"
+        username = a.user.username if a.user else ""
+        ts = a.created_at.strftime("%Y-%m-%d %H:%M:%S") if a.created_at else None
+        if a.kind == "page":
+            if browsing_raw:
+                heavy[key] = a
+                merged.append({"id": a.id, "key": key, "source": "activity", "user_id": a.user_id,
+                               "nickname": nickname, "username": username, "action": a.kind,
+                               "action_text": "浏览页面", "summary": "",
+                               "page": a.page, "page_name": a.page_name, "ip": a.ip,
+                               "created_at": ts})
+            continue
+        heavy[key] = a
+        merged.append({"id": a.id, "key": key, "source": "activity", "user_id": a.user_id,
+                       "nickname": nickname, "username": username, "action": a.kind,
+                       "action_text": UserActivity.KINDS.get(a.kind, a.kind),
+                       "summary": "退出登录" if a.kind == "logout" else "登录",
+                       "page": "", "page_name": "", "ip": a.ip, "created_at": ts})
+
+    if not browsing_raw:
+        page_rows_asc = sorted((a for a in act_rows if a.kind == "page"),
+                               key=lambda x: (x.created_at, x.id))
+        titles = ref_titles(page_rows_asc)
+        merged += [page_group_row(g, titles) for g in group_page_views(page_rows_asc)]
+
+    merged.sort(key=lambda x: (x.get("created_at") or "", x.get("key") or ""), reverse=True)
+    total = len(merged)
+    start_i = (page - 1) * size
+    # 本页可见的行才需要商品/帖子真名（反查一次即可）
+    page_objs = [heavy[row["key"]] for row in merged[start_i:start_i + size]
+                 if row.get("key") in heavy and row.get("source") == "activity"]
+    page_titles = ref_titles(page_objs) if page_objs else {}
+    page_rows = []
+    for row in merged[start_i:start_i + size]:
+        obj = heavy.get(row.get("key"))
+        # 本页可见的登录/浏览行换成完整行（带本次使用时长 / 商品帖子名）
+        page_rows.append(activity_row(obj, page_titles) if obj is not None else row)
+
+    return ok({"list": page_rows, "total": total,
                "page": page, "page_size": size,
                "actions": _log_actions(), "actors": _log_actors()})
 
