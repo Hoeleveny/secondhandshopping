@@ -810,3 +810,7 @@
 .input, .select, .textarea, .btn, .stat-card, .cat-card, .post-item {
   transition-property: background-color, border-color, color, box-shadow, transform;
 }
+/* 2026-10-18：使用小结里的纯文字列表（去项目符号） */
+.plain-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.plain-list li { padding: 2px 0; border-bottom: 1px dashed var(--border); }
+.plain-list li:last-child { border-bottom: 0; }

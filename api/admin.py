@@ -15,6 +15,7 @@ from flask import Blueprint, current_app, send_from_directory
 from sqlalchemy import and_, case, func, or_
 
 import audit
+from api.activities import UserActivity, activity_query, activity_row
 from api.common import (
     admin_required, arg_int, arg_str, current_user, fail, json_body, ok, paginate_args,
 )
@@ -355,8 +356,15 @@ def admin_logs():
     user_q = arg_str("user")
     product = arg_str("product")
     order_no = arg_str("order_no")
+    page_path = arg_str("page_path")     # 2026-10-18：按「浏览的页面」筛（与分页的 page 区分）
+
+    start_dt = None
+    end_dt = None
 
     q = OperationLog.query
+    if page_path:
+        # 按「浏览的页面」筛时，业务日志没有页面概念，只留行为记录
+        q = q.filter(OperationLog.id < 0)
     if action and action != "all":
         q = q.filter(OperationLog.action == action)
     if keyword:
@@ -367,16 +375,17 @@ def admin_logs():
 
     if date_from:
         try:
-            q = q.filter(OperationLog.created_at >= datetime.strptime(date_from, "%Y-%m-%d"))
+            start_dt = datetime.strptime(date_from, "%Y-%m-%d")
+            q = q.filter(OperationLog.created_at >= start_dt)
         except ValueError:
             return fail("起始日期格式应为 YYYY-MM-DD")
     if date_to:
         try:
             # 结束日期含当天整天，所以要 < 次日 00:00
-            end = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+            end_dt = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
         except ValueError:
             return fail("结束日期格式应为 YYYY-MM-DD")
-        q = q.filter(OperationLog.created_at < end)
+        q = q.filter(OperationLog.created_at < end_dt)
 
     if user_id:
         q = q.filter(OperationLog.user_id == user_id)
@@ -427,29 +436,49 @@ def admin_logs():
     rows = (q.order_by(OperationLog.created_at.desc(), OperationLog.id.desc())
             .offset((page - 1) * size).limit(size).all())
 
-    return ok({"list": [r.to_dict() for r in rows], "total": total,
+    # 2026-10-18 需求①：把「登录 / 登出 / 浏览页面」也并进这条时间线（用户要求合并进动态监控）。
+    # 两类数据各自筛选、各自取前 page*size 条，再按时间归并后切本页——两条都是按时间倒序的。
+    aq = activity_query(action=action, user_id=user_id, user_q=user_q,
+                        start=start_dt, end=end_dt, page_path=page_path,
+                        exclude=bool(product or order_no))
+    act_rows = (aq.order_by(UserActivity.created_at.desc(), UserActivity.id.desc())
+                .limit(page * size).all())
+    merged = [dict(r.to_dict(), key="log-%d" % r.id, source="log") for r in rows]
+    merged += [activity_row(a) for a in act_rows]
+    merged.sort(key=lambda x: (x.get("created_at") or "", x.get("key") or ""), reverse=True)
+    start_i = (page - 1) * size
+    page_rows = merged[start_i:start_i + size]
+
+    return ok({"list": page_rows, "total": total + aq.count(),
                "page": page, "page_size": size,
                "actions": _log_actions(), "actors": _log_actors()})
 
 
 def _log_actions() -> list[dict]:
-    """筛选下拉用：库里出现过的动作码。"""
+    """筛选下拉用：库里出现过的动作码 + 行为记录的三类动作。"""
     used = [a for (a,) in db.session.query(OperationLog.action).distinct().all()]
-    return sorted(({"action": a, "text": OperationLog.ACTIONS.get(a, a)} for a in used),
-                  key=lambda x: x["action"])
+    out = [{"action": a, "text": OperationLog.ACTIONS.get(a, a)} for a in used]
+    out += [{"action": k, "text": v} for k, v in UserActivity.KINDS.items()]
+    return sorted(out, key=lambda x: x["action"])
 
 
 def _log_actors() -> list[dict]:
-    """筛选下拉用：库里出现过的操作人。"""
+    """筛选下拉用：库里出现过的操作人 + 行为记录里出现过的用户。"""
     pairs = (db.session.query(OperationLog.user_id, OperationLog.username)
              .filter(OperationLog.user_id.isnot(None)).distinct().all())
-    ids = [uid for uid, _name in pairs]
+    ids = {uid for uid, _name in pairs}
+    ids |= {uid for (uid,) in db.session.query(UserActivity.user_id).distinct().all() if uid}
     users = {u.id: u for u in User.query.filter(User.id.in_(ids)).all()} if ids else {}
     actors = [{
         "id": uid,
         "nickname": users[uid].nickname if uid in users else (name or ""),
         "username": users[uid].username if uid in users else name,
     } for uid, name in pairs]
+    known = {a["id"] for a in actors}
+    for uid in ids - known:
+        u = users.get(uid)
+        if u:
+            actors.append({"id": uid, "nickname": u.nickname, "username": u.username})
     return sorted(actors, key=lambda x: x["nickname"] or "")
 
 

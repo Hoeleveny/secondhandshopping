@@ -172,3 +172,177 @@ def activities_summary():
         "top_users": top_users,
         "total": UserActivity.query.count(),
     })
+
+# ---------------------------------------------------------------- 会话时长（近似）
+def session_end(user_id: int, login_at) -> tuple:
+    """一次登录会话的结束时间（**近似口径**，用户 2026-10-18 拍板）。
+
+    规则：下一次「登出」或下一次「登录」（先到的那个）为界；
+    界之前该用户的最后一次活动即会话结束；什么都没有则该会话仍算进行中。
+    返回 (结束时间, 是否正常退出)。
+    """
+    nxt = (UserActivity.query
+           .filter(UserActivity.user_id == user_id,
+                   UserActivity.kind.in_(("login", "logout")),
+                   UserActivity.created_at > login_at)
+           .order_by(UserActivity.created_at.asc()).first())
+    limit = nxt.created_at if nxt else None
+    q = UserActivity.query.filter(UserActivity.user_id == user_id,
+                                  UserActivity.created_at >= login_at)
+    if limit is not None:
+        q = q.filter(UserActivity.created_at <= limit)
+    last = q.order_by(UserActivity.created_at.desc()).first()
+    end_at = last.created_at if last else login_at
+    closed = bool(nxt is not None and nxt.kind == "logout")
+    return end_at, closed
+
+
+def duration_text(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return "%d 秒" % seconds
+    minutes = seconds // 60
+    if minutes < 60:
+        return "%d 分钟" % minutes
+    hours, minutes = divmod(minutes, 60)
+    return "%d 小时 %d 分钟" % (hours, minutes) if minutes else "%d 小时" % hours
+
+
+def activity_query(*, action=None, user_id=None, user_q=None,
+                   start=None, end=None, page_path=None, kind=None,
+                   exclude=False):
+    """行为记录的统一筛选（供「动态监控」把两类数据合并时复用）。"""
+    q = UserActivity.query
+    if exclude:            # 按「商品 / 订单号」筛时，行为记录本来就没有这些概念，直接排除
+        return q.filter(UserActivity.id < 0)
+    want = kind or action
+    if want and want != "all":
+        if want in UserActivity.KINDS:
+            q = q.filter(UserActivity.kind == want)
+        else:
+            q = q.filter(UserActivity.id < 0)      # 选的是业务动作 → 行为记录不参与
+    if user_id:
+        q = q.filter(UserActivity.user_id == user_id)
+    if user_q:
+        if user_q.isdigit():
+            q = q.filter(UserActivity.user_id == int(user_q))
+        else:
+            like = f"%{user_q}%"
+            ids = [u.id for u in User.query.filter(
+                (User.username.like(like)) | (User.nickname.like(like))).limit(300).all()]
+            q = q.filter(UserActivity.user_id.in_(ids or [-1]))
+    if page_path:
+        q = q.filter(UserActivity.page.like(f"%{page_path}%"))
+    if start:
+        q = q.filter(UserActivity.created_at >= start)
+    if end:
+        q = q.filter(UserActivity.created_at < end)
+    return q
+
+
+def activity_row(a: UserActivity) -> dict:
+    """把一条行为记录转成「动态监控」时间线里的一行（与操作日志同构）。"""
+    ts = a.created_at
+    row = {
+        "id": a.id,
+        "key": "act-%d" % a.id,
+        "source": "activity",
+        "user_id": a.user_id,
+        "nickname": a.user.nickname if a.user else "（已注销）",
+        "username": a.user.username if a.user else "",
+        "action": a.kind,
+        "action_text": UserActivity.KINDS.get(a.kind, a.kind),
+        "summary": "",
+        "page": a.page,
+        "page_name": a.page_name,
+        "ip": a.ip,
+        "created_at": ts.strftime("%Y-%m-%d %H:%M:%S") if ts else None,
+    }
+    if a.kind == "login":
+        end_at, closed = session_end(a.user_id, ts)
+        secs = int((end_at - ts).total_seconds()) if end_at else 0
+        row["duration_seconds"] = secs
+        row["duration_text"] = duration_text(secs)
+        row["session_closed"] = closed
+        row["summary"] = "登录（本次使用 %s%s）" % (
+            duration_text(secs), "" if closed else "，未正常退出")
+    elif a.kind == "logout":
+        row["summary"] = "退出登录"
+    else:
+        row["summary"] = "浏览：%s" % (a.page_name or a.page or "—")
+    return row
+
+
+@bp.post("/admin/activities/delete")
+@admin_required
+def delete_activities():
+    """删除选定的行为记录（与删除操作日志同一套交互）。"""
+    ids = (json_body() or {}).get("ids") or []
+    if not isinstance(ids, list) or not ids:
+        return fail("请先勾选要删除的记录")
+    try:
+        clean = [int(x) for x in ids][:200]
+    except (TypeError, ValueError):
+        return fail("记录 id 不合法")
+    rows = UserActivity.query.filter(UserActivity.id.in_(clean)).all()
+    for r in rows:
+        db.session.delete(r)
+    db.session.commit()
+    return ok({"deleted": len(rows)}, msg="已删除 %d 条行为记录" % len(rows))
+
+
+# ---------------------------------------------------------------- 按用户小结（画像参考）
+@bp.get("/admin/activities/profile")
+@admin_required
+def activities_profile():
+    """单个用户的使用小结：登录次数、累计/平均时长、常去页面、最近活跃。"""
+    user_id = arg_int("user_id")
+    user_q = arg_str("user")
+    target = None
+    if user_id:
+        target = User.query.get(user_id)
+    elif user_q:
+        like = f"%{user_q}%"
+        target = (User.query.filter((User.username.like(like)) | (User.nickname.like(like)))
+                  .order_by(User.id.asc()).first())
+    if target is None:
+        return fail("没找到这个用户", 404)
+
+    rows = (UserActivity.query.filter(UserActivity.user_id == target.id)
+            .order_by(UserActivity.created_at.asc()).all())
+    logins = [r for r in rows if r.kind == "login"]
+    logouts = [r for r in rows if r.kind == "logout"]
+    pages = [r for r in rows if r.kind == "page"]
+
+    total_secs = 0
+    sessions = []
+    for lg in logins:
+        end_at, closed = session_end(target.id, lg.created_at)
+        secs = int((end_at - lg.created_at).total_seconds()) if end_at else 0
+        total_secs += secs
+        sessions.append({
+            "login_at": lg.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "end_at": end_at.strftime("%Y-%m-%d %H:%M:%S") if end_at else "",
+            "seconds": secs, "duration_text": duration_text(secs), "closed": closed,
+        })
+
+    page_counter: dict = {}
+    for p in pages:
+        key = (p.page, p.page_name)
+        page_counter[key] = page_counter.get(key, 0) + 1
+    top_pages = [{"page": k[0], "name": k[1] or k[0], "count": v}
+                 for k, v in sorted(page_counter.items(), key=lambda kv: -kv[1])[:5]]
+
+    return ok({
+        "user": target.to_dict(),
+        "login_count": len(logins),
+        "logout_count": len(logouts),
+        "page_count": len(pages),
+        "total_seconds": total_secs,
+        "total_text": duration_text(total_secs),
+        "avg_text": duration_text(total_secs // len(logins)) if logins else "0 秒",
+        "last_active": (max(r.created_at for r in rows).strftime("%Y-%m-%d %H:%M:%S")
+                        if rows else ""),
+        "top_pages": top_pages,
+        "recent_sessions": sessions[-5:][::-1],
+    })

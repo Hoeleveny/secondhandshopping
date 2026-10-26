@@ -14,7 +14,6 @@ const TABS = [
   { key: 'users', label: '用户管理', icon: '👥' },
   { key: 'trades', label: '交易管理', icon: '🧾' },
   { key: 'reports', label: '举报审核', icon: '🚩' },
-  { key: 'activity', label: '行为监测', icon: '🕵️' },
   { key: 'base', label: '基础数据', icon: '🗂️' },
   { key: 'data', label: '数据管理', icon: '💾' },
 ];
@@ -60,7 +59,6 @@ export default {
       if (tab === 'users') return renderUsers(panel);
       if (tab === 'trades') return renderTrades(panel);
       if (tab === 'reports') return renderReports(panel);
-      if (tab === 'activity') return renderActivity(panel);
       if (tab === 'base') return renderBaseData(panel);
       return renderDataManager(panel);
     }
@@ -229,6 +227,7 @@ async function renderTrades(panel) {
   let logFrom = '';
   let logTo = '';
   let logPage = 1;
+  let logPagePath = '';          // 2026-10-18：按「浏览的页面」筛（与分页的 page 区分）
   // 2026-10-16 修复「选了几条又自己取消」：这条时间线有 5 秒自动刷新，每次都会整体重绘，
   // 勾选状态必须存在这个**独立集合**里（而不是只依赖 DOM 的 checked），重绘时再按它回填。
   const pickedLogs = new Set();
@@ -264,8 +263,23 @@ async function renderTrades(panel) {
     <div class="card mt-16">
       <div class="row-between mb-8">
         <h3 style="margin:0">动态监控</h3>
-        <span class="muted small">点任意一条可看详细交易信息</span>
+        <span class="muted small">业务动作 + 登录/登出/浏览页面都在这里；点业务动作可看详情</span>
       </div>
+      <div class="grid grid-4 mb-8" id="lg-stats">${loadingHtml()}</div>
+      <div class="form-grid mb-8">
+        <div class="form-row">
+          <label>按用户看使用小结</label>
+          <input class="input" id="lg-profile-user" placeholder="用户名 / 昵称，回车或点右侧按钮">
+        </div>
+        <div class="form-row">
+          <label>&nbsp;</label>
+          <div class="row" style="gap:8px">
+            <button class="btn btn-sm" id="lg-profile-go">查看使用小结</button>
+            <button class="btn btn-ghost btn-sm" id="lg-profile-clear">收起</button>
+          </div>
+        </div>
+      </div>
+      <div id="lg-profile"></div>
       <div class="form-grid mb-8">
         <div class="form-row">
           <label>动作</label>
@@ -283,6 +297,10 @@ async function renderTrades(panel) {
         <div class="form-row">
           <label>订单号</label>
           <input class="input" id="lg-order" placeholder="如 CM20261015224541">
+        </div>
+        <div class="form-row">
+          <label>浏览的页面</label>
+          <select class="select" id="lg-page"><option value="">全部页面</option></select>
         </div>
         <div class="form-row">
           <label>动作时间（起）</label>
@@ -682,6 +700,87 @@ async function renderTrades(panel) {
       }));
   }
 
+  /* ---------------- 动态监控：今日概览 / 按用户使用小结（2026-10-18 需求①）---------------- */
+  async function renderLogSummary() {
+    const statsBox = panel.querySelector('#lg-stats');
+    if (!statsBox) return;
+    let data;
+    try {
+      data = await api.get('/api/admin/activities/summary');
+    } catch (err) {
+      statsBox.innerHTML = emptyHtml(`加载失败：${err.message}`, '😵');
+      return;
+    }
+    const t = data.today || {};
+    const card = (icon, label, num, hint) => `
+      <div class="stat-card">
+        <span class="sc-icon">${icon}</span>
+        <div class="sc-label">${esc(label)}</div>
+        <div class="sc-value">${esc(String(num ?? 0))}</div>
+        <div class="sc-more">${esc(hint || '')}</div>
+      </div>`;
+    statsBox.innerHTML = [
+      card('🔑', '今日登录', t.login, '含管理员'),
+      card('👋', '今日登出', t.logout, '主动退出'),
+      card('👣', '今日页面浏览', t.page, `累计 ${data.total ?? 0} 条行为`),
+      card('🔥', '今日活跃用户', t.users, `近 7 天 ${data.week_active_users ?? 0} 人`),
+    ].join('');
+
+    // 「浏览的页面」下拉：用出现过的页面（按访问次数排序）
+    const pageSel = panel.querySelector('#lg-page');
+    if (pageSel && !pageSel.dataset.filled) {
+      let pages = data.top_pages || [];
+      try {
+        const extra = await api.get('/api/admin/activities?page_size=1');
+        if ((extra.pages || []).length) pages = extra.pages;
+      } catch (err) { /* 用 summary 的 Top 兜底 */ }
+      pageSel.innerHTML = '<option value="">全部页面</option>'
+        + pages.map(p => `<option value="${esc(p.page)}">${esc(p.name)}（${p.count}）</option>`).join('');
+      pageSel.dataset.filled = '1';
+    }
+  }
+
+  async function showUserProfile(kw) {
+    const box = panel.querySelector('#lg-profile');
+    if (!box) return;
+    if (!kw) { box.innerHTML = ''; return; }
+    box.innerHTML = loadingHtml();
+    let data;
+    try {
+      data = await api.get(`/api/admin/activities/profile${qs({ user: kw })}`);
+    } catch (err) {
+      box.innerHTML = emptyHtml(`没查到：${err.message}`, '🔍');
+      return;
+    }
+    const u = data.user || {};
+    const pages = (data.top_pages || []).map((p, i) =>
+      `<li>${i + 1}. ${esc(p.name)} <span class="muted small">${esc(p.page)} · ${p.count} 次</span></li>`).join('');
+    const sessions = (data.recent_sessions || []).map(s =>
+      `<li>${esc(s.login_at.slice(5))} → ${esc((s.end_at || '').slice(5) || '进行中')} · ${esc(s.duration_text)}${s.closed ? '' : ' · 未正常退出'}</li>`).join('');
+    box.innerHTML = `
+      <div class="card mb-8">
+        <div class="row-between mb-8">
+          <div class="row" style="gap:10px;align-items:center">
+            ${avatarHtml(u, 36)}
+            <div><b>${esc(u.nickname || '')}</b> <span class="muted small">@${esc(u.username || '')}</span></div>
+          </div>
+          <span class="muted small">最近活跃 ${esc(data.last_active || '—')}</span>
+        </div>
+        <div class="grid grid-4 mb-8">
+          <div class="stat-card"><div class="sc-label">登录次数</div><div class="sc-value">${data.login_count}</div><div class="sc-more">登出 ${data.logout_count} 次</div></div>
+          <div class="stat-card"><div class="sc-label">累计使用时长</div><div class="sc-value">${esc(data.total_text)}</div><div class="sc-more">平均每次 ${esc(data.avg_text)}</div></div>
+          <div class="stat-card"><div class="sc-label">浏览页面数</div><div class="sc-value">${data.page_count}</div><div class="sc-more">按次计</div></div>
+          <div class="stat-card"><div class="sc-label">常去页面</div><div class="sc-value">${(data.top_pages || [])[0] ? esc(data.top_pages[0].name) : '—'}</div><div class="sc-more">见右侧清单</div></div>
+        </div>
+        <div class="grid" style="grid-template-columns:1fr 1fr;gap:16px">
+          <div><div class="muted small mb-8">最常去的 5 个页面</div>
+            ${pages ? `<ul class="plain-list">${pages}</ul>` : '<div class="muted small">暂无浏览记录</div>'}</div>
+          <div><div class="muted small mb-8">最近的会话（最长 5 条）</div>
+            ${sessions ? `<ul class="plain-list">${sessions}</ul>` : '<div class="muted small">暂无登录记录</div>'}</div>
+        </div>
+      </div>`;
+  }
+
   /* ---------------- 动态监控（操作日志时间线 + 多条件筛选）---------------- */
   async function loadLogs(silent = false) {
     const box = panel.querySelector('#lg-list');
@@ -691,7 +790,8 @@ async function renderTrades(panel) {
     try {
       data = await api.get(`/api/admin/logs${qs({
         action: logAction, user: logUser, product: logProduct,
-        order_no: logOrder, date_from: logFrom, date_to: logTo,
+        order_no: logOrder, page_path: logPagePath,
+        date_from: logFrom, date_to: logTo,
         page: logPage, page_size: 20,
       })}`);
     } catch (err) {
@@ -735,11 +835,12 @@ async function renderTrades(panel) {
       </div>
       <div class="timeline">
         ${data.list.map(log => `
-          <div class="tl-item clickable" data-log="${log.id}" role="button" tabindex="0"
-               title="点击查看这条动作的详细交易信息">
+          <div class="tl-item clickable" data-log="${log.id}" data-source="${log.source || 'log'}"
+               data-key="${log.key || ('log-' + log.id)}" role="button" tabindex="0"
+               title="${log.source === 'activity' ? '用户行为记录（登录/登出/浏览）' : '点击查看这条动作的详细交易信息'}">
             <label class="tl-check-box" title="选中后可批量删除这条记录">
-              <input type="checkbox" class="tl-check" data-check="${log.id}"
-                     ${pickedLogs.has(log.id) ? 'checked' : ''}>
+              <input type="checkbox" class="tl-check" data-check="${log.key || ('log-' + log.id)}"
+                     ${pickedLogs.has(log.key || ('log-' + log.id)) ? 'checked' : ''}>
             </label>
             <span class="tl-time muted small">${esc(fmtTime(log.created_at))}</span>
             <span class="tl-who">${esc(log.nickname || log.username || '系统')}</span>
@@ -753,6 +854,7 @@ async function renderTrades(panel) {
     // 需求②：点条目看详情（发起人、精确时间、相关订单与商品）
     // 注意：勾选区域与删除按钮的点击要**完全避开**详情弹窗，否则勾选时稍微点偏就弹详情
     box.querySelectorAll('[data-log]').forEach(el => {
+      if (el.dataset.source === 'activity') return;   // 行为记录没有交易详情
       el.addEventListener('click', (event) => {
         if (event.target.closest('.tl-check-box, .tl-del')) return;
         openLogDetail(el.dataset.log);
@@ -793,25 +895,31 @@ async function renderTrades(panel) {
       });
       if (!sure) return;
       try {
-        const res = await api.post('/api/admin/logs/delete', { ids });
+        // 2026-10-18：时间线里混了「操作日志」与「用户行为」两类，按 key 前缀分流到各自接口
+        const logIds = ids.filter(id => String(id).startsWith('log-')).map(id => Number(String(id).slice(4)));
+        const actIds = ids.filter(id => String(id).startsWith('act-')).map(id => Number(String(id).slice(4)));
+        let total = 0;
+        if (logIds.length) total += (await api.post('/api/admin/logs/delete', { ids: logIds })).deleted || 0;
+        if (actIds.length) total += (await api.post('/api/admin/activities/delete', { ids: actIds })).deleted || 0;
         ids.forEach(id => pickedLogs.delete(id));   // 删掉的从选中集合里去掉
-        toast(`已删除 ${res.deleted} 条记录`);
+        toast(`已删除 ${total} 条记录`);
         loadLogs();
+        renderLogSummary();
       } catch (err) { toast(err.message, 'error'); }
     };
     checkAll?.addEventListener('change', () => {
       box.querySelectorAll('.tl-check').forEach(el => {
         el.checked = checkAll.checked;
-        const id = Number(el.dataset.check);
-        if (checkAll.checked) pickedLogs.add(id); else pickedLogs.delete(id);
+        const key = el.dataset.check;      // 2026-10-18：现在是 key（log-xx / act-xx），不能转数字
+        if (checkAll.checked) pickedLogs.add(key); else pickedLogs.delete(key);
       });
       syncDel();
     });
     box.querySelectorAll('.tl-check').forEach(el =>
       el.addEventListener('click', (event) => {
         event.stopPropagation();
-        const id = Number(el.dataset.check);
-        if (el.checked) pickedLogs.add(id); else pickedLogs.delete(id);
+        const key = el.dataset.check;      // key 形如 log-12 / act-34，不能转数字
+        if (el.checked) pickedLogs.add(key); else pickedLogs.delete(key);
         syncDel();
       }));
     delBtn?.addEventListener('click', () => removeLogs(selectedIds()));
@@ -845,6 +953,17 @@ async function renderTrades(panel) {
     if (e.key === 'Enter') panel.querySelector('#td-search').click();
   });
   // ---- 动态监控的多条件筛选（需求③）----
+  panel.querySelector('#lg-profile-go')?.addEventListener('click', () => {
+    showUserProfile(panel.querySelector('#lg-profile-user').value.trim());
+  });
+  panel.querySelector('#lg-profile-user')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') panel.querySelector('#lg-profile-go').click();
+  });
+  panel.querySelector('#lg-profile-clear')?.addEventListener('click', () => {
+    panel.querySelector('#lg-profile-user').value = '';
+    panel.querySelector('#lg-profile').innerHTML = '';
+  });
+
   panel.querySelector('#lg-action').addEventListener('change', (e) => {
     logAction = e.target.value;
     logPage = 1;
@@ -852,6 +971,7 @@ async function renderTrades(panel) {
   });
   const readLogFilters = () => {
     logUser = panel.querySelector('#lg-user').value.trim();
+    logPagePath = panel.querySelector('#lg-page') ? panel.querySelector('#lg-page').value : '';
     logProduct = panel.querySelector('#lg-product').value.trim();
     logOrder = panel.querySelector('#lg-order').value.trim();
     logFrom = panel.querySelector('#lg-from').value;
@@ -893,7 +1013,7 @@ async function renderTrades(panel) {
   });
 
   await loadTrades();
-  await loadLogs();
+  await Promise.all([loadLogs(), renderLogSummary()]);
 
   // 每 5 秒刷新一次；离开本页（面板被卸载）就自动停掉
   stopTradesTimer();
@@ -1218,178 +1338,6 @@ const TARGET_META = {
 
 /* ================================================================ 举报审核 */
 /* ================================================================ 行为监测（2026-10-18 需求①） */
-async function renderActivity(panel) {
-  let kind = 'all';
-  let userKw = '';
-  let pagePath = '';
-  let dateFrom = '';
-  let dateTo = '';
-  let page = 1;
-
-  panel.innerHTML = `
-    <div class="grid grid-4 mb-16" id="act-stats">${loadingHtml()}</div>
-    <div class="card mb-16">
-      <div class="row wrap" style="gap:8px;align-items:center">
-        <select id="act-kind" class="input" style="width:130px"></select>
-        <input id="act-user" class="input" style="width:170px" placeholder="用户（用户名/昵称）">
-        <select id="act-page" class="input" style="width:190px"><option value="">全部页面</option></select>
-        <input id="act-from" type="date" class="input" style="width:150px">
-        <span class="muted small">至</span>
-        <input id="act-to" type="date" class="input" style="width:150px">
-        <button class="btn btn-primary btn-sm" id="act-search">筛选</button>
-        <button class="btn btn-ghost btn-sm" id="act-reset">重置</button>
-      </div>
-    </div>
-    <div class="grid" style="grid-template-columns:1fr 1fr;gap:16px" id="act-tops"></div>
-    <div class="card" id="act-list">${loadingHtml()}</div>
-    <div class="pagination" id="act-pager"></div>`;
-
-  const statsBox = panel.querySelector('#act-stats');
-  const topsBox = panel.querySelector('#act-tops');
-  const listBox = panel.querySelector('#act-list');
-  const pager = panel.querySelector('#act-pager');
-  const kindSel = panel.querySelector('#act-kind');
-  const pageSel = panel.querySelector('#act-page');
-
-  async function loadSummary() {
-    let data;
-    try {
-      data = await api.get('/api/admin/activities/summary');
-    } catch (err) {
-      statsBox.innerHTML = emptyHtml(`加载失败：${err.message}`, '😵');
-      return;
-    }
-    const t = data.today || {};
-    // 复用项目里已有的 .stat-card 结构（sc-icon / sc-label / sc-value / sc-more）
-    const card = (icon, label, num, hint) => `
-      <div class="stat-card">
-        <span class="sc-icon">${icon}</span>
-        <div class="sc-label">${esc(label)}</div>
-        <div class="sc-value">${esc(String(num ?? 0))}</div>
-        <div class="sc-more">${esc(hint || '')}</div>
-      </div>`;
-    statsBox.innerHTML = [
-      card('🔑', '今日登录', t.login, '含管理员'),
-      card('👋', '今日登出', t.logout, '主动退出'),
-      card('👣', '今日页面浏览', t.page, `累计 ${data.total ?? 0} 条行为`),
-      card('🔥', '今日活跃用户', t.users, `近 7 天 ${data.week_active_users ?? 0} 人`),
-    ].join('');
-
-    const pageRows = (data.top_pages || []).map((p, i) => `
-      <tr><td style="width:34px">${i + 1}</td>
-          <td>${esc(p.name || p.page)}<div class="muted small">${esc(p.page)}</div></td>
-          <td style="text-align:right">${p.count}</td></tr>`).join('');
-    const userRows = (data.top_users || []).map((u, i) => `
-      <tr><td style="width:34px">${i + 1}</td>
-          <td>${esc(u.nickname)}<div class="muted small">@${esc(u.username)}</div></td>
-          <td style="text-align:right">${u.count}<div class="muted small">${esc((u.last_at || '').slice(5, 16))}</div></td></tr>`).join('');
-
-    topsBox.innerHTML = `
-      <div class="card">
-        <div class="card-head"><h2>页面热度 Top 8</h2></div>
-        ${pageRows ? `<div class="table-wrap"><table class="table">
-          <thead><tr><th>#</th><th>页面</th><th style="text-align:right">浏览</th></tr></thead>
-          <tbody>${pageRows}</tbody></table></div>` : emptyHtml('还没有浏览记录', '👣')}
-      </div>
-      <div class="card">
-        <div class="card-head"><h2>最活跃用户 Top 8</h2></div>
-        ${userRows ? `<div class="table-wrap"><table class="table">
-          <thead><tr><th>#</th><th>用户</th><th style="text-align:right">行为数 / 最近</th></tr></thead>
-          <tbody>${userRows}</tbody></table></div>` : emptyHtml('还没有用户行为', '🙈')}
-      </div>`;
-  }
-
-  async function loadList() {
-    listBox.innerHTML = loadingHtml();
-    let data;
-    try {
-      data = await api.get(`/api/admin/activities${qs({
-        kind: kind === 'all' ? '' : kind, user: userKw, page_path: pagePath,
-        date_from: dateFrom, date_to: dateTo, page, page_size: 30,
-      })}`);
-    } catch (err) {
-      listBox.innerHTML = emptyHtml(`加载失败：${err.message}`, '😵');
-      pager.innerHTML = '';
-      return;
-    }
-
-    // 下拉选项用后端返回的真实值（种类 / 出现过的页面）
-    if (!kindSel.dataset.filled) {
-      const kinds = data.kinds || {};
-      kindSel.innerHTML = `<option value="all">全部类型</option>`
-        + Object.entries(kinds).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
-      kindSel.dataset.filled = '1';
-    }
-    if (!pageSel.dataset.filled) {
-      pageSel.innerHTML = `<option value="">全部页面</option>`
-        + (data.pages || []).map(p => `<option value="${esc(p.page)}">${esc(p.name)}（${p.count}）</option>`).join('');
-      pageSel.dataset.filled = '1';
-    }
-
-    if (!data.list.length) {
-      listBox.innerHTML = emptyHtml('没有符合条件的行为记录', '📭');
-      pager.innerHTML = '';
-      return;
-    }
-
-    const KIND_BADGE = {
-      login: ['badge badge-info', '登录'],
-      logout: ['badge badge-gray', '登出'],
-      page: ['badge', '浏览'],
-    };
-    listBox.innerHTML = `
-      <div class="table-wrap">
-        <table class="table">
-          <thead><tr><th>时间</th><th>用户</th><th>类型</th><th>页面</th><th>IP</th></tr></thead>
-          <tbody>
-            ${data.list.map(a => {
-              const meta = KIND_BADGE[a.kind] || ['badge badge-gray', a.kind_text || a.kind];
-              return `<tr>
-                <td class="muted small">${esc(a.created_at || '')}</td>
-                <td>${esc(a.nickname || '（已注销）')}<div class="muted small">@${esc(a.username || '')}</div></td>
-                <td><span class="${meta[0]}">${esc(meta[1])}</span></td>
-                <td>${a.page ? `${esc(a.page_name || a.page)}<div class="muted small">${esc(a.page)}</div>` : '<span class="muted">—</span>'}</td>
-                <td class="muted small">${esc(a.ip || '—')}</td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
-      </div>`;
-
-    renderPagination(pager, {
-      page: data.page,
-      pages: Math.max(1, Math.ceil(data.total / data.page_size)),
-      total: data.total,
-      onGo: (target) => { page = target; loadList(); },
-    });
-  }
-
-  panel.querySelector('#act-search').addEventListener('click', () => {
-    kind = kindSel.value;
-    userKw = panel.querySelector('#act-user').value.trim();
-    pagePath = pageSel.value;
-    dateFrom = panel.querySelector('#act-from').value;
-    dateTo = panel.querySelector('#act-to').value;
-    page = 1;
-    loadList();
-  });
-  panel.querySelector('#act-user').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') panel.querySelector('#act-search').click();
-  });
-  panel.querySelector('#act-reset').addEventListener('click', () => {
-    kind = 'all'; userKw = ''; pagePath = ''; dateFrom = ''; dateTo = ''; page = 1;
-    kindSel.value = 'all';
-    panel.querySelector('#act-user').value = '';
-    pageSel.value = '';
-    panel.querySelector('#act-from').value = '';
-    panel.querySelector('#act-to').value = '';
-    loadList();
-  });
-
-  await Promise.all([loadSummary(), loadList()]);
-}
-
-
 async function renderReports(panel) {
   let status = 'pending';
   let page = 1;

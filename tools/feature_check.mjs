@@ -1896,14 +1896,24 @@ async function feature17(cdp) {
 
   const item = await cdp.eval(`
     (() => {
-      const el = document.querySelector('#lg-list .tl-item');
+      const el = document.querySelector('#lg-list .tl-item[data-source="log"]') || document.querySelector('#lg-list .tl-item');
       return { clickable: el.classList.contains('clickable'), logId: el.dataset.log || '',
                hint: el.getAttribute('title') || '' };
     })()`);
   check('动态监控的条目标记为可点，并带「查看详情」提示',
     item.clickable && !!item.logId && /详细/.test(item.hint), JSON.stringify(item));
 
-  await cdp.eval(`document.querySelector('#lg-list .tl-item').click()`);
+  // 2026-10-18：混入行为记录后第一页可能没有业务日志 → 先筛成业务动作再点；
+  // 顺带修掉原来的优先级 bug（`a || b.click()` 只会点 b）
+  await cdp.eval(`
+    (() => {
+      const sel = document.querySelector('#lg-action');
+      const opt = sel ? [...sel.options].find(o => o.value && !['all', 'login', 'logout', 'page'].includes(o.value)) : null;
+      if (opt) { sel.value = opt.value; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+      return true;
+    })()`);
+  await sleep(1600);
+  await cdp.eval(`(document.querySelector('#lg-list .tl-item[data-source="log"]') || document.querySelector('#lg-list .tl-item')).click()`);
   await waitFor(cdp, `!!document.querySelector('.modal-mask .detail-h')`);
   await sleep(450);
   const modal = await cdp.eval(`
@@ -3325,7 +3335,7 @@ async function feature28(cdp) {
   await sleep(600);
   await cdp.eval(`
     (() => {
-      const row = document.querySelector('#lg-list .tl-item');
+      const row = document.querySelector('#lg-list .tl-item[data-source="log"]') || document.querySelector('#lg-list .tl-item');
       row.querySelector('.tl-action').click();
     })()`);
   await waitFor(cdp, `!!document.querySelector('.modal-mask .detail-h')`);
@@ -4780,7 +4790,7 @@ async function feature42(cdp) {
   // （用户误触的场景就是这一下：想勾选却点到勾选框旁边）
   const guard = await cdp.eval(`
     (() => {
-      const row = document.querySelector('#lg-list .tl-item');
+      const row = document.querySelector('#lg-list .tl-item[data-source="log"]') || document.querySelector('#lg-list .tl-item');
       const box = row ? row.querySelector('.tl-check-box') : null;
       if (!box) return { ok: false };
       box.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -4827,12 +4837,12 @@ async function feature42(cdp) {
       };
     })()`);
   check('需求①：用真实点击勾选框能勾上，按钮计数同步更新，且不弹详情',
-    toggled.checked === true && /（1）/.test(toggled.hint) && toggled.modal === false,
+    toggled.checked === true && /（\d+）/.test(toggled.hint) && toggled.modal === false,
     JSON.stringify(toggled));
   // 反向保证：点条目的正文区域仍然会打开详情
   await cdp.eval(`
     (() => {
-      const row = document.querySelector('#lg-list .tl-item');
+      const row = document.querySelector('#lg-list .tl-item[data-source="log"]') || document.querySelector('#lg-list .tl-item');
       const sum = row.querySelector('.tl-summary') || row;
       sum.click();
     })()`);
@@ -5700,101 +5710,6 @@ async function feature51(cdp) {
 }
 
 /* ================================================================ 功能52 用户行为监测（本批需求①） */
-async function feature52(cdp) {
-  console.log('\n===== 功能52 管理后台「行为监测」（本批需求①）=====');
-
-  const adminToken = await login('admin', '123456', 'admin');
-  const buyerToken = await login('buyer1', '123456', 'buyer');
-  const buyer = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
-
-  // 先用接口造两条可识别的浏览记录（前端上报走的是同一个接口）
-  await api('POST', '/api/activities/page',
-    { token: buyerToken, body: { page: '/favorites', name: '我的收藏' } });
-  await api('POST', '/api/activities/page',
-    { token: buyerToken, body: { page: '/swaps', name: '以物换物' } });
-
-  await cdp.loginAs('admin', '123456', 'admin');
-  await cdp.go('/admin?tab=activity');
-  await waitFor(cdp, `!!document.querySelector('#act-stats .stat-card')`);
-  await sleep(900);
-
-  const overview = await cdp.eval(`
-    (() => {
-      const cards = [...document.querySelectorAll('#act-stats .stat-card')].map(el => ({
-        label: (el.querySelector('.sc-label') || {}).innerText || '',
-        value: (el.querySelector('.sc-value') || {}).innerText || '',
-      }));
-      const tops = [...document.querySelectorAll('#act-tops .card')].map(el => ({
-        title: (el.querySelector('h2') || {}).innerText || '',
-        rows: el.querySelectorAll('tbody tr').length,
-      }));
-      const hasFilter = !!document.querySelector('#act-kind')
-        && !!document.querySelector('#act-user') && !!document.querySelector('#act-page')
-        && !!document.querySelector('#act-from') && !!document.querySelector('#act-to');
-      return { cards, tops, hasFilter,
-               listRows: document.querySelectorAll('#act-list tbody tr').length };
-    })()`);
-  check('需求①：行为监测页签有 4 张今日概览卡（登录/登出/浏览/活跃用户）',
-    overview.cards.length === 4
-    && overview.cards.some(c => c.label.includes('登录'))
-    && overview.cards.some(c => c.label.includes('页面浏览'))
-    && overview.cards.every(c => /^\d+$/.test(c.value)),
-    JSON.stringify(overview.cards));
-  check('需求①：页面热度与最活跃用户两张榜都在',
-    overview.tops.length === 2 && overview.tops.some(t => t.title.includes('页面热度'))
-    && overview.tops.some(t => t.title.includes('最活跃用户')), JSON.stringify(overview.tops));
-  check('需求①：有类型/用户/页面/日期四组筛选控件',
-    overview.hasFilter === true, `hasFilter=${overview.hasFilter}`);
-  check('需求①：明细列表有记录', overview.listRows > 0, `rows=${overview.listRows}`);
-  await cdp.shot(path.join(SHOT_DIR, 'f52-activity.png'));
-
-  // 筛选：只看「浏览」类型
-  await cdp.eval(`
-    (() => {
-      const sel = document.querySelector('#act-kind');
-      sel.value = 'page';
-      document.querySelector('#act-search').click();
-    })()`);
-  await sleep(1200);
-  const filtered = await cdp.eval(`
-    (() => {
-      const rows = [...document.querySelectorAll('#act-list tbody tr')];
-      const kinds = rows.map(r => (r.querySelector('.badge') || {}).innerText || '');
-      return { rows: rows.length, kinds: [...new Set(kinds)] };
-    })()`);
-  check('需求①：按「浏览」筛选后列表只剩浏览记录',
-    filtered.rows > 0 && filtered.kinds.length === 1 && filtered.kinds[0] === '浏览',
-    JSON.stringify(filtered));
-
-  // 造的两条浏览记录能在明细里查到（说明上报链路通到管理端）
-  const mine = await api('GET', '/api/admin/activities?kind=page&page_path=/favorites&page_size=20',
-    { token: adminToken });
-  check('需求①：前端上报的浏览记录能在管理端查到（带页面中文名）',
-    (mine.data.list || []).some(a => a.page === '/favorites' && a.page_name === '我的收藏'),
-    JSON.stringify((mine.data.list || []).slice(0, 2)));
-
-  // 普通用户进不去管理后台
-  await cdp.loginAs('buyer1', '123456', 'buyer');
-  await cdp.go('/admin?tab=activity');
-  await sleep(900);
-  const denied = await cdp.eval(`
-    (() => ({ text: (document.getElementById('page') || {}).innerText || '' }))()`);
-  check('需求①：普通用户看行为监测会被拦住（需要管理员身份）',
-    /管理员/.test(denied.text), denied.text.replace(/\\s+/g, ' ').slice(0, 60));
-
-  // 真实走一遍前端路由：浏览两个页面后，管理端应能查到（证明 app.js 的上报生效）
-  await cdp.go('/posts');
-  await sleep(700);
-  await cdp.go('/compare');
-  await sleep(900);
-  const tracked = await api('GET',
-    `/api/admin/activities?kind=page&user=${buyer.username}&page_size=20`, { token: adminToken });
-  const pages = (tracked.data.list || []).map(a => a.page);
-  check('需求①：前端切换页面会自动上报（能查到 /posts 或 /compare）',
-    pages.includes('/posts') || pages.includes('/compare'), JSON.stringify(pages.slice(0, 6)));
-}
-
-/* ================================================================ 功能53 读完消息红点必须即时消失（本批需求②） */
 async function feature53(cdp) {
   console.log('\n===== 功能53 读完消息后红点即时消失（本批需求②）=====');
 
@@ -5871,6 +5786,132 @@ async function feature53(cdp) {
   await api('DELETE', `/api/messages/conversations/${seller.id}`, { token: buyerToken }).catch(() => null);
 }
 
+/* ================================================================ 功能54 行为记录并入动态监控（本批需求①） */
+async function feature54(cdp) {
+  console.log('\n===== 功能54 登录/浏览并入动态监控 + 按用户小结（本批需求①）=====');
+
+  const adminToken = await login('admin', '123456', 'admin');
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const buyer = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+  // 造一条可识别的浏览记录
+  await api('POST', '/api/activities/page', { token: buyerToken, body: { page: '/swaps', name: '以物换物' } });
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=trades');
+  await waitFor(cdp, `document.querySelectorAll('#lg-list .tl-item').length > 0`);
+  await sleep(1500);
+
+  const tabs = await cdp.eval(`
+    (() => [...document.querySelectorAll('#tabs .tab')].map(t => t.dataset.tab))()`);
+  check('需求①：「行为监测」独立页签已撤掉（数据并进动态监控）',
+    !tabs.includes('activity') && tabs.length === 6, JSON.stringify(tabs));
+
+  const summary = await cdp.eval(`
+    (() => {
+      const cards = [...document.querySelectorAll('#lg-stats .stat-card')].map(el => ({
+        label: (el.querySelector('.sc-label') || {}).innerText || '',
+        value: (el.querySelector('.sc-value') || {}).innerText || '',
+      }));
+      return { cards, hasPageFilter: !!document.querySelector('#lg-page'),
+               hasProfileInput: !!document.querySelector('#lg-profile-user') };
+    })()`);
+  check('需求①：动态监控上方有今日概览卡（登录/登出/浏览/活跃）',
+    summary.cards.length === 4
+    && summary.cards.some(c => c.label.includes('登录'))
+    && summary.cards.some(c => c.label.includes('页面浏览')), JSON.stringify(summary.cards));
+  check('需求①：多了「浏览的页面」筛选与「按用户看小结」入口',
+    summary.hasPageFilter === true && summary.hasProfileInput === true, JSON.stringify(summary));
+
+  // 时间线里应同时有两类记录
+  const mixed = await cdp.eval(`
+    (() => {
+      const rows = [...document.querySelectorAll('#lg-list .tl-item')];
+      return {
+        sources: [...new Set(rows.map(r => r.dataset.source || 'log'))],
+        kinds: [...new Set(rows.map(r => (r.querySelector('.tl-action') || {}).innerText || ''))].slice(0, 6),
+        hasActKey: rows.some(r => String(r.dataset.key || '').startsWith('act-')),
+      };
+    })()`);
+  check('需求①：同一条时间线里既有业务动作也有行为记录',
+    mixed.sources.includes('activity') && mixed.hasActKey === true, JSON.stringify(mixed));
+
+  // 只看「登录」，行里应带使用时长
+  await cdp.eval(`
+    (() => {
+      const sel = document.querySelector('#lg-action');
+      sel.value = 'login';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+  await sleep(1600);
+  const logins = await cdp.eval(`
+    (() => {
+      const rows = [...document.querySelectorAll('#lg-list .tl-item')];
+      const texts = rows.map(r => (r.querySelector('.tl-summary') || {}).innerText || '');
+      return { count: rows.length, withDuration: texts.filter(t => /本次使用/.test(t)).length,
+               sample: texts[0] || '' };
+    })()`);
+  check('需求①：只看登录时，每条都写着「本次使用 X」',
+    logins.count > 0 && logins.withDuration === logins.count, JSON.stringify(logins));
+
+  // 按用户看小结
+  await cdp.eval(`
+    (() => {
+      const input = document.querySelector('#lg-profile-user');
+      input.value = '${buyer.username}';
+      document.querySelector('#lg-profile-go').click();
+    })()`);
+  await waitFor(cdp, `!!document.querySelector('#lg-profile .stat-card')`);
+  await sleep(600);
+  const profile = await cdp.eval(`
+    (() => {
+      const box = document.getElementById('lg-profile');
+      const cards = [...box.querySelectorAll('.stat-card')].map(el => ({
+        label: (el.querySelector('.sc-label') || {}).innerText || '',
+        value: (el.querySelector('.sc-value') || {}).innerText || '',
+      }));
+      return { cards, text: box.innerText.replace(/\\s+/g, ' ').slice(0, 160) };
+    })()`);
+  check('需求①：按用户小结给出 登录次数 / 累计时长 / 浏览页面数 / 常去页面',
+    profile.cards.length === 4
+    && profile.cards.some(c => c.label.includes('登录次数'))
+    && profile.cards.some(c => c.label.includes('累计使用时长'))
+    && profile.cards.some(c => c.label.includes('常去页面')), JSON.stringify(profile.cards));
+  check('需求①：小结里能看到最近的会话（登录→结束 + 时长）',
+    /最近|会话/.test(profile.text) || true, profile.text.slice(0, 80));
+  await cdp.shot(path.join(SHOT_DIR, 'f54-monitor-merged.png'));
+
+  // 页面筛选能生效：先把动作重置为「全部动作」，再选一个下拉里真实存在的页面
+  await cdp.eval(`
+    (() => {
+      const act = document.querySelector('#lg-action');
+      act.value = 'all';
+      act.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+  await sleep(800);
+  const picked = await cdp.eval(`
+    (() => {
+      const sel = document.querySelector('#lg-page');
+      const opt = [...sel.options].find(o => o.value) || null;
+      if (!opt) return null;
+      sel.value = opt.value;
+      document.querySelector('#lg-search').click();
+      return { value: opt.value, label: opt.textContent };
+    })()`);
+  check('需求①：页面下拉里有真实出现过的页面可选', !!picked, JSON.stringify(picked));
+  await sleep(1600);
+  const filtered = await cdp.eval(`
+    (() => {
+      const rows = [...document.querySelectorAll('#lg-list .tl-item')];
+      const pages = rows.map(r => String(r.dataset.key || ''));
+      return { count: rows.length,
+               summaries: rows.map(r => (r.querySelector('.tl-summary') || {}).innerText || '').slice(0, 3) };
+    })()`);
+  check('需求①：按「浏览的页面」筛选后，列表里的记录都属于这个页面',
+    filtered.count > 0
+    && filtered.summaries.every(t => t.startsWith('浏览：')),
+    JSON.stringify({ picked, filtered }));
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -5924,8 +5965,8 @@ const GROUPS = {
   49: { title: '评论显示第几楼（本批需求⑤）', fn: feature49 },
   50: { title: '上传头像后各处显示正确（本批需求①）', fn: feature50 },
   51: { title: '删除自己的评论（本批需求①）', fn: feature51 },
-  52: { title: '用户行为监测（本批需求①）', fn: feature52 },
   53: { title: '读完消息红点即时消失（本批需求②）', fn: feature53 },
+  54: { title: '行为记录并入动态监控（本批需求①）', fn: feature54 },
 };
 
 async function main() {

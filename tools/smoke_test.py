@@ -1882,6 +1882,69 @@ def main() -> int:
     _st, r = call("POST", "/api/activities/page", body={"page": "/home"})
     check("需求①：未登录不能上报页面浏览", r.get("code") != 0, str(r)[:120])
 
+    # ---------------- 本批需求①：行为记录合并进动态监控 ----------------
+    section("本批需求① 行为记录并入动态监控")
+
+    _st, r = call("POST", "/api/auth/login",
+                  body={"username": "admin", "password": "123456", "role": "admin"})
+    _mg_at = (r.get("data") or {}).get("token")
+    _st, r = call("POST", "/api/activities/page", token=token,
+                  body={"page": "/compare", "name": "比价"})
+
+    _st, r = call("GET", "/api/admin/logs?page_size=50", token=_mg_at)
+    _mg_all = (r.get("data") or {}).get("list") or []
+    check("需求①：动态监控里同时有「业务动作」与「登录/浏览」两类记录",
+          any(x.get("source") in ("log", None) for x in _mg_all)
+          and any(x.get("source") == "activity" for x in _mg_all),
+          str([x.get("source") for x in _mg_all[:8]]))
+
+    _st, r = call("GET", "/api/admin/logs?action=login&page_size=20", token=_mg_at)
+    _mg_login = (r.get("data") or {}).get("list") or []
+    check("需求①：只看「登录」时，每行都带本次使用时长",
+          bool(_mg_login) and all("duration_text" in x for x in _mg_login),
+          str([x.get("duration_text") for x in _mg_login[:3]]))
+    check("需求①：登录行的摘要把时长写进去了",
+          all("本次使用" in (x.get("summary") or "") for x in _mg_login),
+          str((_mg_login[0] or {}).get("summary"))[:60])
+
+    _st, r = call("GET", "/api/admin/logs?action=page&page_path=/compare&page_size=20", token=_mg_at)
+    _mg_pages = (r.get("data") or {}).get("list") or []
+    check("需求①：能按「浏览的页面」筛出浏览记录（带页面名）",
+          any(x.get("page") == "/compare" and x.get("page_name") == "比价" for x in _mg_pages),
+          str([(x.get("page"), x.get("page_name")) for x in _mg_pages[:3]]))
+
+    _st, r = call("GET", "/api/admin/logs?product=保温杯&page_size=50", token=_mg_at)
+    _mg_prod = (r.get("data") or {}).get("list") or []
+    check("需求①：按商品筛时，行为记录不混进来（行为记录没有商品概念）",
+          all(x.get("source") != "activity" for x in _mg_prod), str(len(_mg_prod)))
+
+    _st, r = call("GET", "/api/admin/logs?page_size=50", token=_mg_at)
+    _mg_any = next((x for x in (r.get("data") or {}).get("list") or [] if x.get("source") == "activity"), {})
+    check("需求①：行为记录带 key（log-xx / act-xx）便于统一勾选删除",
+          str(_mg_any.get("key", "")).startswith("act-"), str(_mg_any.get("key")))
+
+    _st, r = call("GET", "/api/admin/activities/profile?user=buyer1", token=_mg_at)
+    _mg_prof = r.get("data") or {}
+    check("需求①：按用户小结给出登录次数/累计时长/常去页面/最近活跃",
+          r.get("code") == 0 and "login_count" in _mg_prof and "total_text" in _mg_prof
+          and isinstance(_mg_prof.get("top_pages"), list)
+          and "last_active" in _mg_prof,
+          "%s 次 / %s / %s" % (_mg_prof.get("login_count"), _mg_prof.get("total_text"),
+                              [p.get("name") for p in (_mg_prof.get("top_pages") or [])][:3]))
+
+    _st, r = call("GET", "/api/admin/activities/profile?user=buyer1", token=token)
+    check("需求①：普通用户看不到别人的使用小结", r.get("code") != 0, str(r)[:100])
+
+    # 删一条行为记录（用刚造的那条 /compare 浏览）
+    _st, r = call("GET", "/api/admin/activities?kind=page&page_path=/compare&page_size=5", token=_mg_at)
+    _mg_act = ((r.get("data") or {}).get("list") or [{}])[0]
+    if _mg_act.get("id"):
+        _st, r = call("POST", "/api/admin/activities/delete", token=_mg_at, body={"ids": [_mg_act["id"]]})
+        check("需求①：行为记录也能像操作日志一样删除", r.get("code") == 0 and (r.get("data") or {}).get("deleted") == 1,
+              str(r.get("data")))
+    else:
+        check("需求①：行为记录也能像操作日志一样删除", False, "没找到可删的行为记录")
+
     # ---------------- 本批需求①：删除自己的评论 ----------------
     section("本批需求① 删除自己的评论")
 
