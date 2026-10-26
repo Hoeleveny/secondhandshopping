@@ -6031,24 +6031,119 @@ async function feature55(cdp) {
     await sleep(400);
   }
 
-  // 点昵称直接筛这个人
-  await cdp.eval(`
-    (() => {
-      const who = document.querySelector('#lg-list .tl-who');
-      who.click();
-    })()`);
-  await sleep(1600);
-  const filtered = await cdp.eval(`
-    (() => ({
-      userValue: document.querySelector('#lg-user').value,
-      whoSet: [...new Set([...document.querySelectorAll('#lg-list .tl-who')].map(e => e.innerText.trim()))],
-    }))()`);
-  check('需求②：点昵称会用这个人筛，列表只剩他的记录',
-    !!filtered.userValue && filtered.whoSet.length === 1
-    && filtered.whoSet[0] === filtered.userValue, JSON.stringify(filtered));
-
   // 清理：删商品 + 收尾（浏览记录由 cleanup 脚本按测试账号清）
   await api('DELETE', `/api/products/${pid}`, { token: sellerToken }).catch(() => null);
+}
+
+/* ================================================================ 功能56 折叠持久 / 去掉昵称筛选 / 用户类型（本批需求①③④） */
+async function feature56(cdp) {
+  console.log('\n===== 功能56 折叠可正常使用 + 用户类型归类（本批需求①③④）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer2', '123456', 'buyer');
+  const buyer = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=trades');
+  await waitFor(cdp, `!!document.querySelector('#lg-list .tl-item')`);
+  await sleep(1200);
+
+  const anyGroup = await cdp.eval(`
+    (() => !!document.querySelector('#lg-list .tl-item[data-source="page_group"]'))()`);
+  check('需求①：动态监控里存在「浏览记录」折叠组（用于验证展开）', anyGroup === true, String(anyGroup));
+
+  if (anyGroup) {
+    const read = () => cdp.eval(`
+      (() => {
+        const g = document.querySelector('#lg-list .tl-item[data-source="page_group"]');
+        if (!g) return { gone: true };
+        const panel = document.querySelector('.tl-group-items[data-for="' + g.dataset.group + '"]');
+        return { hidden: panel ? panel.hidden : null,
+                 toggle: (g.querySelector('.tl-toggle') || {}).innerText || '' };
+      })()`);
+
+    await cdp.eval(`document.querySelector('#lg-list .tl-item[data-source="page_group"]').click()`);
+    await sleep(500);
+    const opened = await read();
+    check('需求①：点一下就展开，按钮变「收起」',
+      opened.hidden === false && /收起/.test(opened.toggle), JSON.stringify(opened));
+
+    // 关键：动态监控每 5 秒自动刷新重绘，展开状态必须活下来（原来会被重绘冲掉 = 用户说的"展不开"）
+    await sleep(7000);
+    const survived = await read();
+    check('需求①：自动刷新（5 秒）之后，展开状态**依然保持**（这是原来坏掉的地方）',
+      survived.hidden === false && /收起/.test(survived.toggle), JSON.stringify(survived));
+
+    // 反向：收起之后也要保持收起
+    await cdp.eval(`document.querySelector('#lg-list .tl-item[data-source="page_group"]').click()`);
+    await sleep(500);
+    await sleep(7000);
+    const stillClosed = await read();
+    check('需求①：收起后经过一次自动刷新，也保持是收起的',
+      stillClosed.hidden === true && /展开/.test(stillClosed.toggle), JSON.stringify(stillClosed));
+  }
+
+  // ---- 需求②：点昵称不再触发筛选（只保留复制昵称）----
+  const beforeClick = await cdp.eval(`
+    (() => ({ user: document.querySelector('#lg-user').value,
+              rows: document.querySelectorAll('#lg-list .tl-item').length }))()`);
+  await cdp.eval(`document.querySelector('#lg-list .tl-who').click()`);
+  await sleep(1500);
+  const afterClick = await cdp.eval(`
+    (() => ({ user: document.querySelector('#lg-user').value,
+              rows: document.querySelectorAll('#lg-list .tl-item').length,
+              whoTip: document.querySelector('#lg-list .tl-who').getAttribute('title') || '' }))()`);
+  check('需求②：点昵称不再把「动作发起人」填上、也不触发筛选',
+    afterClick.user === beforeClick.user && afterClick.rows === beforeClick.rows,
+    JSON.stringify({ beforeClick, afterClick }));
+
+  // ---- 需求③④：用户类型归类（用 6 件教材商品把 buyer2 造成「学业备考型」）----
+  const stamp = String(Date.now()).slice(-6);
+  const pids = [];
+  for (let i = 0; i < 6; i += 1) {
+    pids.push(await makeProduct(`自动化测试-类型偏好-${stamp}-${i}`, 10 + i, sellerToken));
+  }
+  for (const pid of pids) {
+    await api('POST', '/api/activities/page',
+      { token: buyerToken, body: { page: `/product/${pid}`, name: '搜索与筛选' } });
+  }
+
+  const prof = (await api('GET', `/api/admin/activities/profile?user=${buyer.username}`,
+    { token: (await login('admin', '123456', 'admin')) })).data;
+  const ut = prof.utype || {};
+  check('需求③：小结里给出「用户类型」（单一主类型）',
+    typeof ut.main === 'string' && ut.main.length > 0, String(ut.main));
+  check('需求④：只浏览教材类商品 → 归类为「学业备考型」并给出依据',
+    ut.main === '学业备考型' && /教材/.test(ut.reason || '') && (ut.share || 0) >= 0.4,
+    JSON.stringify({ main: ut.main, reason: ut.reason, share: ut.share }));
+  check('需求④：给出商品分类占比明细（用于核对归类）',
+    Array.isArray(ut.breakdown) && ut.breakdown.some(b => b.name === '教材' && b.count >= 6),
+    JSON.stringify((ut.breakdown || []).slice(0, 3)));
+  check('需求④：归类规则写清楚（阈值与样本数）',
+    typeof ut.rule === 'string' && /40%|40/.test(ut.rule), String(ut.rule));
+
+  // 页面上也能看到（小结卡）
+  await cdp.eval(`
+    (() => {
+      document.querySelector('#lg-profile-user').value = '${buyer.username}';
+      document.querySelector('#lg-profile-go').click();
+    })()`);
+  await waitFor(cdp, `!!document.querySelector('#lg-profile .badge')`);
+  await sleep(800);
+  const card = await cdp.eval(`
+    (() => {
+      const box = document.getElementById('lg-profile');
+      return { text: box.innerText.replace(/\\s+/g, ' ').slice(0, 220),
+               hasType: /用户类型/.test(box.innerText), badges: box.querySelectorAll('.badge').length };
+    })()`);
+  check('需求③：小结卡上显示「用户类型」标签与分类占比',
+    card.hasType === true && /教材/.test(card.text), JSON.stringify(card));
+  await cdp.shot(path.join(SHOT_DIR, 'f56-utype.png'));
+
+  // 清理
+  for (const pid of pids) {
+    await api('DELETE', `/api/products/${pid}`, { token: sellerToken }).catch(() => null);
+  }
 }
 
 /* ================================================================ 主流程 */
@@ -6106,7 +6201,8 @@ const GROUPS = {
   51: { title: '删除自己的评论（本批需求①）', fn: feature51 },
   53: { title: '读完消息红点即时消失（本批需求②）', fn: feature53 },
   54: { title: '行为记录并入动态监控（本批需求①）', fn: feature54 },
-  55: { title: '浏览记录折叠 + 复制昵称（本批需求②）', fn: feature55 },
+  55: { title: '浏览记录折叠 + 复制昵称', fn: feature55 },
+  56: { title: '折叠持久 + 用户类型归类（本批需求①③④）', fn: feature56 },
 };
 
 async function main() {

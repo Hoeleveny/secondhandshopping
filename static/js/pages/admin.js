@@ -231,6 +231,9 @@ async function renderTrades(panel) {
   // 2026-10-16 修复「选了几条又自己取消」：这条时间线有 5 秒自动刷新，每次都会整体重绘，
   // 勾选状态必须存在这个**独立集合**里（而不是只依赖 DOM 的 checked），重绘时再按它回填。
   const pickedLogs = new Set();
+  // 2026-10-18：动态监控每 5 秒自动刷新会整块重绘，展开状态若只存在 DOM 上就会"自己合上"，
+  // 所以和勾选一样存进集合，重绘后按它回填。
+  const expandedGroups = new Set();
 
   panel.innerHTML = `
     <div class="grid grid-4 mb-16" id="td-stats">${loadingHtml()}</div>
@@ -777,6 +780,32 @@ async function renderTrades(panel) {
           <div class="stat-card"><div class="sc-label">浏览页面数</div><div class="sc-value">${data.page_count}</div><div class="sc-more">按次计</div></div>
           <div class="stat-card"><div class="sc-label">常去页面</div><div class="sc-value">${(data.top_pages || [])[0] ? esc(data.top_pages[0].name) : '—'}</div><div class="sc-more">见右侧清单</div></div>
         </div>
+        ${(() => {
+          const ut = data.utype || {};
+          const bars = (ut.breakdown || []).map(b => `
+            <div class="tgi-row">
+              <span class="tgi-kind">${esc(b.name)}</span>
+              <span class="tgi-title">${b.count} 次 · ${Math.round((b.share || 0) * 100)}%</span>
+            </div>`).join('');
+          const tags = (ut.post_breakdown || []).map(b => `
+            <div class="tgi-row"><span class="tgi-kind tgi-post">${esc(b.name)}</span>
+              <span class="tgi-title">${b.count} 次 · ${Math.round((b.share || 0) * 100)}%</span></div>`).join('');
+          return `
+          <div class="card mb-8" style="box-shadow:none;border:1px solid var(--border)">
+            <div class="row wrap mb-8" style="gap:10px;align-items:center">
+              <span class="badge badge-info" style="font-size:13px">用户类型：${esc(ut.main || '—')}</span>
+              ${ut.focus ? `<span class="badge">${esc(ut.focus)}</span>` : ''}
+              <span class="muted small">${esc(ut.reason || '')}</span>
+            </div>
+            <div class="grid" style="grid-template-columns:1fr 1fr;gap:16px">
+              <div><div class="muted small mb-8">商品分类偏好（共 ${ut.product_total || 0} 次浏览）</div>
+                ${bars || '<div class="muted small">还没有浏览商品</div>'}</div>
+              <div><div class="muted small mb-8">帖子关注点（共 ${ut.post_total || 0} 次浏览）</div>
+                ${tags || '<div class="muted small">还没有浏览帖子</div>'}</div>
+            </div>
+            <div class="muted small" style="margin-top:8px">归类规则：${esc(ut.rule || '')}</div>
+          </div>`;
+        })()}
         <div class="grid" style="grid-template-columns:1fr 1fr;gap:16px">
           <div><div class="muted small mb-8">最常去的 5 个页面</div>
             ${pages ? `<ul class="plain-list">${pages}</ul>` : '<div class="muted small">暂无浏览记录</div>'}</div>
@@ -813,10 +842,10 @@ async function renderTrades(panel) {
           <span class="tl-time muted small">${span}</span>
           <span class="tl-who">${esc(log.nickname || log.username || '')}</span>
           <span class="tl-action">浏览记录</span>
-          <span class="tl-summary muted">${esc(log.summary)} <b class="tl-toggle">展开 ▸</b></span>
+          <span class="tl-summary muted">${esc(log.summary)} <b class="tl-toggle">${expandedGroups.has(key) ? '收起 ▾' : '展开 ▸'}</b></span>
           <span class="tl-del-ph"></span>
         </div>
-        <div class="tl-group-items" data-for="${esc(key)}" hidden>
+        <div class="tl-group-items" data-for="${esc(key)}" ${expandedGroups.has(key) ? '' : 'hidden'}>
           ${items || '<div class="tgi-row muted small">这一串里没有商品页或帖子页</div>'}
           ${log.other_count ? `<div class="tgi-row muted small">另有 ${log.other_count} 次浏览首页 / 搜索等其它页面</div>` : ''}
         </div>`;
@@ -831,7 +860,7 @@ async function renderTrades(panel) {
                  ${pickedLogs.has(key) ? 'checked' : ''}>
         </label>
         <span class="tl-time muted small">${esc(fmtTime(log.created_at))}</span>
-        <span class="tl-who" title="点一下按这个人筛选">${esc(log.nickname || log.username || '系统')}</span>
+        <span class="tl-who">${esc(log.nickname || log.username || '系统')}</span>
         <span class="tl-action">${esc(log.action_text)}</span>
         <span class="tl-summary muted">${esc(log.summary)}</span>
         ${isActivity ? '<span class="tl-del-ph"></span>'
@@ -922,25 +951,15 @@ async function renderTrades(panel) {
     // 2026-10-18 需求②：浏览记录组的展开 / 收起
     box.querySelectorAll('[data-group]').forEach(el =>
       el.addEventListener('click', () => {
-        const items = box.querySelector(`.tl-group-items[data-for="${el.dataset.group}"]`);
+        const key = el.dataset.group;
+        const items = box.querySelector(`.tl-group-items[data-for="${key}"]`);
         if (!items) return;
-        items.hidden = !items.hidden;
+        const open = !expandedGroups.has(key);
+        if (open) expandedGroups.add(key); else expandedGroups.delete(key);
+        items.hidden = !open;
         const tgl = el.querySelector('.tl-toggle');
-        if (tgl) tgl.textContent = items.hidden ? '展开 ▸' : '收起 ▾';
+        if (tgl) tgl.textContent = open ? '收起 ▾' : '展开 ▸';
       }));
-    // 点发起人昵称 = 直接用这个人筛（配合详情弹窗里的「复制昵称」）
-    box.querySelectorAll('.tl-who').forEach(el =>
-      el.addEventListener('click', (event) => {
-        event.stopPropagation();
-        const name = el.textContent.trim();
-        if (!name) return;
-        const input = panel.querySelector('#lg-user');
-        if (input) input.value = name;
-        logUser = name;
-        logPage = 1;
-        loadLogs();
-      }));
-
     // 需求②：点条目看详情（发起人、精确时间、相关订单与商品）
     // 注意：勾选区域与删除按钮的点击要**完全避开**详情弹窗，否则勾选时稍微点偏就弹详情
     box.querySelectorAll('[data-log]').forEach(el => {

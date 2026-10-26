@@ -16,7 +16,7 @@ from api.common import (
     ok, paginate_args,
 )
 from extensions import db
-from models import User, UserActivity
+from models import Category, Post, Product, User, UserActivity
 
 bp = Blueprint("activities", __name__, url_prefix="/api")
 
@@ -337,6 +337,77 @@ def activities_profile():
     top_pages = [{"page": k[0], "name": k[1] or k[0], "count": v}
                  for k, v in sorted(page_counter.items(), key=lambda kv: -kv[1])[:5]]
 
+    # ---- 用户类型（2026-10-18 需求③）：只看 TA 浏览过的【商品大类】与【帖子 tag】 ----
+    product_ids, post_ids = [], []
+    for p in pages:
+        kind, rid = classify_page(p.page)
+        if kind == "product":
+            product_ids.append(rid)
+        elif kind == "post":
+            post_ids.append(rid)
+
+    cat_counter: dict = {}
+    if product_ids:
+        prods = {x.id: x for x in Product.query.filter(
+            Product.id.in_(set(product_ids))).all()}
+        cats = {c.id: c for c in Category.query.all()}
+        for pid in product_ids:
+            pr = prods.get(pid)
+            if pr is None:
+                continue                      # 商品已被删，不计入偏好
+            c = cats.get(pr.category_id)
+            name = c.name if c else "未知"
+            cat_counter[name] = cat_counter.get(name, 0) + 1
+
+    tag_counter: dict = {}
+    if post_ids:
+        posts = {x.id: x for x in Post.query.filter(Post.id.in_(set(post_ids))).all()}
+        for pid in post_ids:
+            po = posts.get(pid)
+            if po is not None:
+                tag_counter[po.tag] = tag_counter.get(po.tag, 0) + 1
+
+    def _breakdown(counter: dict) -> list:
+        total = sum(counter.values())
+        if not total:
+            return []
+        return sorted(({"name": k, "count": v, "share": round(v / total, 3)}
+                       for k, v in counter.items()), key=lambda x: -x["count"])
+
+    TYPE_MAP = {"教材": "学业备考型", "数码": "数码装备型", "生活用品": "日用生活型",
+                "运动": "运动户外型", "其他": "杂货猎奇型"}
+    product_total = sum(cat_counter.values())
+    post_total = sum(tag_counter.values())
+    breakdown = _breakdown(cat_counter)
+    post_breakdown = _breakdown(tag_counter)
+
+    MIN_SAMPLES = 5          # 样本太少不硬归类
+    MIN_SHARE = 0.4          # 最高占比 ≥40% 才算有明确偏好
+    if product_total < MIN_SAMPLES:
+        main_type, main_reason = "样本不足", "浏览过的商品不足 %d 件" % MIN_SAMPLES
+    elif breakdown[0]["share"] >= MIN_SHARE:
+        top = breakdown[0]["name"]
+        main_type = TYPE_MAP.get(top, "%s偏好型" % top)
+        main_reason = "%s 占商品浏览的 %d%%（%d/%d）" % (
+            top, round(breakdown[0]["share"] * 100), breakdown[0]["count"], product_total)
+    else:
+        main_type = "广泛浏览型"
+        main_reason = "各类都看，最高只占 %d%%" % round(breakdown[0]["share"] * 100)
+
+    focus = ("关注" + post_breakdown[0]["name"]) if post_breakdown else ""
+    utype = {
+        "main": main_type,
+        "reason": main_reason,
+        "share": breakdown[0]["share"] if breakdown else 0,
+        "product_total": product_total,
+        "post_total": post_total,
+        "breakdown": breakdown,
+        "post_breakdown": post_breakdown,
+        "focus": focus,
+        "rule": "最高占比 ≥%d%% 且商品浏览 ≥%d 次才归类，否则算广泛浏览 / 样本不足" % (
+            round(MIN_SHARE * 100), MIN_SAMPLES),
+    }
+
     return ok({
         "user": target.to_dict(),
         "login_count": len(logins),
@@ -349,6 +420,7 @@ def activities_profile():
                         if rows else ""),
         "top_pages": top_pages,
         "recent_sessions": sessions[-5:][::-1],
+        "utype": utype,
     })
 
 # ---------------------------------------------------------------- 浏览记录折叠（2026-10-18 需求②）
