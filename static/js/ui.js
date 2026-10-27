@@ -118,7 +118,7 @@ export const skeletonHtml = (count = 4) =>
   `<div class="grid-cards">${'<div class="skeleton"></div>'.repeat(count)}</div>`;
 
 /* ------------------------------------------------------------------ 分页 */
-export function renderPagination(container, { page, pages, total, onGo }) {
+export function renderPagination(container, { page, pages, total, onGo, jump }) {
   if (!container) return;
   if (!total || pages <= 1) {
     container.innerHTML = total ? `<span class="pg-info">共 ${total} 条</span>` : '';
@@ -137,13 +137,33 @@ export function renderPagination(container, { page, pages, total, onGo }) {
   if (end < pages) { if (end < pages - 1) buttons.push('<span class="muted">…</span>'); push(String(pages), pages, page === pages); }
   push('›', page + 1, false, page >= pages);
 
-  container.innerHTML = buttons.join('') + `<span class="pg-info">共 ${total} 条 / ${pages} 页</span>`;
+  // 2026-10-18 需求②：可选「跳到第 N 页」（只有传 jump 的调用方才有）
+  const jumpHtml = jump ? `<span class="pg-jump">
+      <input type="number" min="1" max="${pages}" placeholder="页码" aria-label="跳转页码">
+      <button data-jump>跳转</button></span>` : '';
+  container.innerHTML = buttons.join('')
+    + `<span class="pg-info">共 ${total} 条 / ${pages} 页</span>` + jumpHtml;
   container.querySelectorAll('button[data-page]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const target = Number(btn.dataset.page);
       if (target >= 1 && target <= pages && target !== page) onGo(target);
     });
   });
+  if (jump) {
+    const input = container.querySelector('.pg-jump input');
+    const go = () => {
+      const target = Math.floor(Number(input.value));
+      if (!Number.isFinite(target) || target < 1 || target > pages) {
+        input.value = '';
+        input.placeholder = `1 ~ ${pages}`;
+        return;
+      }
+      if (target !== page) onGo(target);
+      else input.value = '';
+    };
+    container.querySelector('[data-jump]').addEventListener('click', go);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+  }
 }
 
 /* ------------------------------------------------------------------ 格式化 */

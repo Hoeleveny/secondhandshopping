@@ -833,3 +833,14 @@
 .tgi-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; color: var(--text); text-decoration: none; }
 .tgi-title:hover { color: var(--primary); text-decoration: underline; }
+
+/* 2026-10-18 需求②：分页「跳到第 N 页」 */
+.pagination .pg-jump { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; }
+.pagination .pg-jump input { width: 68px; height: 28px; padding: 0 8px; font-size: 13px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); }
+.pagination .pg-jump button { height: 28px; padding: 0 10px; font-size: 13px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary); color: var(--text); }
+.pagination .pg-jump button:hover { border-color: var(--primary); color: var(--primary); }
+
+/* 会话行与普通行排版保持一致（列宽由 .tl-item 的 grid 统一定义，这里只补细节） */
+.tl-item.tl-group .tl-check-box { cursor: pointer; }

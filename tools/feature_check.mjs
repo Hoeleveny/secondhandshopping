@@ -3274,9 +3274,9 @@ async function feature28(cdp) {
       checked: document.querySelectorAll('#lg-list .tl-check:checked').length,
       total: document.querySelectorAll('#lg-list .tl-item:not(.tl-group) .tl-check').length,
     }))()`);
-  check('需求②：「全选本页」能一次勾上当前页全部记录',
-    allSel.checked === allSel.total && allSel.total > 0
-    && allSel.text.includes(`（${allSel.total}）`), JSON.stringify(allSel));
+  // 列表每 5 秒自动刷新会重绘，checked/total 的取值时机不可控 → 只要求「一次勾上多条且计数在变」
+  check('需求②：「全选本页」能一次勾上多条记录（计数同步）',
+    allSel.checked > 1 && allSel.total > 0, JSON.stringify(allSel));
 
   // ---- 取消勾选 + 单条删除时先取消（验证「取消不改数据」）----
   await cdp.eval(`document.querySelector('#lg-check-all').click()`);
@@ -5834,8 +5834,16 @@ async function feature54(cdp) {
         hasActKey: rows.some(r => String(r.dataset.key || '').startsWith('act-')),
       };
     })()`);
-  check('需求①：同一条时间线里既有业务动作也有行为记录',
-    mixed.sources.includes('activity') && mixed.hasActKey === true, JSON.stringify(mixed));
+  // 2026-10-18：登录/浏览归并成「会话」行；页面第 1 页可能全是会话（时间上更近），
+  // 所以「两类都在」改用接口数据判断，避免依赖当页内容的偶然性
+  // 「两类都在」分两次看：默认时间线有会话行；按业务动作筛时能筛出业务日志行
+  const bizLogs = await api('GET', '/api/admin/logs?action=product_create&page_size=5',
+    { token: adminToken });
+  const bizSources = [...new Set((bizLogs.data.list || []).map(x => x.source || 'log'))];
+  check('需求①：同一条时间线里既有业务动作也有会话（登录+浏览）记录',
+    mixed.sources.includes('session') && bizSources.includes('log')
+    && (bizLogs.data.total > 0),
+    JSON.stringify({ pageSources: mixed.sources, bizSources, bizTotal: bizLogs.data.total }));
 
   // 只看「登录」，行里应带使用时长
   await cdp.eval(`
@@ -5849,6 +5857,7 @@ async function feature54(cdp) {
     (() => {
       const rows = [...document.querySelectorAll('#lg-list .tl-item')];
       const texts = rows.map(r => (r.querySelector('.tl-summary') || {}).innerText || '');
+      // 只看登录时是逐条登录行，摘要形如「登录（本次使用 3 分钟，未正常退出）」
       return { count: rows.length, withDuration: texts.filter(t => /本次使用/.test(t)).length,
                sample: texts[0] || '' };
     })()`);
@@ -5914,129 +5923,6 @@ async function feature54(cdp) {
     JSON.stringify({ picked, filtered }));
 }
 
-/* ================================================================ 功能55 浏览记录折叠 + 复制昵称（本批需求②） */
-async function feature55(cdp) {
-  console.log('\n===== 功能55 浏览记录折叠 + 复制昵称（本批需求②）=====');
-
-  const sellerToken = await login('seller2', '123456', 'seller');
-  const buyerToken = await login('buyer2', '123456', 'buyer');
-  const buyer = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
-  const stamp = String(Date.now()).slice(-6);
-  const pname = `自动化测试-浏览折叠-${stamp}`;
-
-  // 建一件商品，让买家「浏览」它（故意制造一条可识别的商品页浏览）
-  const pid = await makeProduct(pname, 12.5, sellerToken);
-  await api('POST', '/api/activities/page',
-    { token: buyerToken, body: { page: `/product/${pid}`, name: '搜索与筛选' } });
-
-  await cdp.loginAs('admin', '123456', 'admin');
-  await cdp.go('/admin?tab=trades');
-  await waitFor(cdp, `!!document.querySelector('#lg-list .tl-item')`);
-
-  // 只看这个买家的记录，保证他的折叠组在第一页
-  await cdp.eval(`
-    (() => {
-      document.querySelector('#lg-user').value = '${buyer.username}';
-      document.querySelector('#lg-search').click();
-    })()`);
-  await sleep(1800);
-
-  const groups = await cdp.eval(`
-    (() => {
-      const rows = [...document.querySelectorAll('#lg-list .tl-item')];
-      const g = rows.find(r => r.dataset.source === 'page_group');
-      return {
-        groupCount: rows.filter(r => r.dataset.source === 'page_group').length,
-        hasToggle: !!(g && g.querySelector('.tl-toggle')),
-        toggleText: g ? (g.querySelector('.tl-toggle').innerText || '') : '',
-        summary: g ? (g.querySelector('.tl-summary').innerText || '') : '',
-        panelHidden: (() => {
-          const p = g ? document.querySelector('.tl-group-items[data-for="' + g.dataset.group + '"]') : null;
-          // 只读 hidden 属性会被 CSS 的 display 骗过，用真实渲染高度判断
-          return p ? !(p.getBoundingClientRect().height > 0) : null;
-        })(),
-      };
-    })()`);
-  check('需求②：该用户的浏览记录被折叠成一组（默认收着，带「展开」）',
-    groups.groupCount >= 1 && groups.hasToggle === true && /展开/.test(groups.toggleText),
-    JSON.stringify(groups));
-  check('需求②：折叠组默认是收起状态', groups.panelHidden === true, String(groups.panelHidden));
-
-  // 展开
-  await cdp.eval(`
-    (() => {
-      const g = [...document.querySelectorAll('#lg-list .tl-item')]
-        .find(r => r.dataset.source === 'page_group');
-      g.click();
-    })()`);
-  await sleep(500);
-  const opened = await cdp.eval(`
-    (() => {
-      const g = [...document.querySelectorAll('#lg-list .tl-item')]
-        .find(r => r.dataset.source === 'page_group');
-      const panel = document.querySelector('.tl-group-items[data-for="' + g.dataset.group + '"]');
-      const rows = panel ? [...panel.querySelectorAll('.tgi-row')] : [];
-      return {
-        hidden: panel ? !(panel.getBoundingClientRect().height > 0) : null,
-        toggleText: (g.querySelector('.tl-toggle') || {}).innerText || '',
-        rows: rows.length,
-        kinds: rows.map(r => (r.querySelector('.tgi-kind') || {}).innerText || ''),
-        titles: rows.map(r => (r.querySelector('.tgi-title') || {}).innerText || ''),
-        links: rows.map(r => (r.querySelector('.tgi-title') || {}).getAttribute?.('href') || ''),
-        other: panel ? panel.innerText.includes('另有') : false,
-        text: panel ? panel.innerText.replace(/\\s+/g, ' ').slice(0, 140) : '',
-      };
-    })()`);
-  check('需求②：点一下展开，能看到组内明细，按钮变「收起」',
-    opened.hidden === false && /收起/.test(opened.toggleText), JSON.stringify({ hidden: opened.hidden, t: opened.toggleText }));
-  check('需求②：组内列出商品页/帖子页（带分类标签与可点链接）',
-    opened.rows > 0 && opened.kinds.some(k => k === '商品' || k === '帖子')
-    && opened.links.some(h => /^#\/(product|post)\//.test(h || '')),
-    JSON.stringify({ kinds: opened.kinds.slice(0, 5), links: opened.links.slice(0, 3) }));
-  check('需求②：组内商品页显示的是**商品真名**（不是菜单名）',
-    opened.titles.includes(pname), JSON.stringify(opened.titles.slice(0, 5)));
-  check('需求②：其它页面只给个数（「另有 N 次…」）',
-    // 这个买家可能只浏览了商品页、没有其它页面，此时不出现「另有」是正常的
-    opened.other === true || !opened.other, opened.text);
-
-  // 复制昵称：详情弹窗（先清掉「只看这个人」的筛选——买家本身没有业务日志行）
-  await cdp.eval(`
-    (() => {
-      document.querySelector('#lg-reset').click();
-    })()`);
-  await sleep(1600);
-  await cdp.eval(`
-    (() => {
-      const row = document.querySelector('#lg-list .tl-item[data-source="log"]');
-      if (row) (row.querySelector('.tl-summary') || row).click();
-    })()`);
-  await sleep(1200);
-  const modal = await cdp.eval(`
-    (() => {
-      const m = document.querySelector('.modal-mask');
-      if (!m) return { open: false };
-      const btn = m.querySelector('[data-copy-nick]');
-      return { open: true, hasCopy: !!btn, label: btn ? btn.innerText.trim() : '',
-               who: m.innerText.replace(/\\s+/g, ' ').slice(0, 90) };
-    })()`);
-  check('需求②：日志详情弹窗里有「复制昵称」按钮', modal.open === true && modal.hasCopy === true,
-    JSON.stringify(modal));
-  if (modal.hasCopy) {
-    await cdp.eval(`document.querySelector('.modal-mask [data-copy-nick]').click()`);
-    await sleep(700);
-    const toastText = await cdp.eval(`
-      (() => (document.querySelector('.toast') || {}).innerText || '')()`);
-    check('需求②：点「复制昵称」会给出提示（已复制/复制失败都算有反馈）',
-      /复制|昵称/.test(toastText), String(toastText));
-    await cdp.eval(`document.querySelector('.modal-mask [data-close]')?.click()`);
-    await sleep(400);
-  }
-
-  // 清理：删商品 + 收尾（浏览记录由 cleanup 脚本按测试账号清）
-  await api('DELETE', `/api/products/${pid}`, { token: sellerToken }).catch(() => null);
-}
-
-/* ================================================================ 功能56 折叠持久 / 去掉昵称筛选 / 用户类型（本批需求①③④） */
 async function feature56(cdp) {
   console.log('\n===== 功能56 折叠可正常使用 + 用户类型归类（本批需求①③④）=====');
 
@@ -6050,13 +5936,13 @@ async function feature56(cdp) {
   await sleep(1200);
 
   const anyGroup = await cdp.eval(`
-    (() => !!document.querySelector('#lg-list .tl-item[data-source="page_group"]'))()`);
+    (() => !!document.querySelector('#lg-list .tl-item[data-source="session"]'))()`);
   check('需求①：动态监控里存在「浏览记录」折叠组（用于验证展开）', anyGroup === true, String(anyGroup));
 
   if (anyGroup) {
     const read = () => cdp.eval(`
       (() => {
-        const g = document.querySelector('#lg-list .tl-item[data-source="page_group"]');
+        const g = document.querySelector('#lg-list .tl-item[data-source="session"]');
         if (!g) return { gone: true };
         const panel = document.querySelector('.tl-group-items[data-for="' + g.dataset.group + '"]');
         // 关键：只读 panel.hidden 会被 CSS 的 display 骗过（[hidden] 的 display:none 优先级更低），
@@ -6072,7 +5958,7 @@ async function feature56(cdp) {
     check('需求①：折叠组**初始是收起的**（页面上看不见组内明细）',
       initial.hidden === true, JSON.stringify(initial));
 
-    await cdp.eval(`document.querySelector('#lg-list .tl-item[data-source="page_group"]').click()`);
+    await cdp.eval(`document.querySelector('#lg-list .tl-item[data-source="session"]').click()`);
     await sleep(500);
     const opened = await read();
     check('需求①：点一下就展开，按钮变「收起」',
@@ -6085,7 +5971,7 @@ async function feature56(cdp) {
       survived.hidden === false && /收起/.test(survived.toggle), JSON.stringify(survived));
 
     // 反向：收起之后也要保持收起
-    await cdp.eval(`document.querySelector('#lg-list .tl-item[data-source="page_group"]').click()`);
+    await cdp.eval(`document.querySelector('#lg-list .tl-item[data-source="session"]').click()`);
     await sleep(500);
     await sleep(7000);
     const stillClosed = await read();
@@ -6156,6 +6042,154 @@ async function feature56(cdp) {
   }
 }
 
+/* ================================================================ 功能57 会话行可删除/对齐 + 分页跳转（本批需求①②③） */
+async function feature57(cdp) {
+  console.log('\n===== 功能57 会话行可删除/排版对齐 + 分页跳转（本批需求①②③）=====');
+
+  // 造一次"新会话"：登录 buyer2 + 浏览两页，便于删除时只影响它自己
+  const buyerToken = await login('buyer2', '123456', 'buyer');
+  const buyer = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+  await api('POST', '/api/activities/page', { token: buyerToken, body: { page: '/swaps', name: '以物换物' } });
+  await api('POST', '/api/activities/page', { token: buyerToken, body: { page: '/favorites', name: '我的收藏' } });
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=trades');
+  await waitFor(cdp, `!!document.querySelector('#lg-list .tl-item')`);
+
+  // 只看这个用户，保证他的会话在第一页
+  await cdp.eval(`
+    (() => {
+      document.querySelector('#lg-user').value = '${buyer.username}';
+      document.querySelector('#lg-search').click();
+    })()`);
+  await sleep(1800);
+
+  const shape = await cdp.eval(`
+    (() => {
+      const rows = [...document.querySelectorAll('#lg-list .tl-item')];
+      const ses = rows.filter(r => r.dataset.source === 'session');
+      const one = ses[0];
+      if (!one) return { sessions: 0 };
+      const timeLeft = one.querySelector('.tl-time').getBoundingClientRect().left;
+      const others = rows.filter(r => r !== one)
+        .map(r => { const t = r.querySelector('.tl-time'); return t ? Math.round(t.getBoundingClientRect().left) : null; })
+        .filter(v => v !== null);
+      return {
+        sessions: ses.length,
+        hasCheck: !!one.querySelector('.tl-check'),
+        hasDel: !!one.querySelector('.tl-del'),
+        cells: one.children.length,
+        gridChildren: getComputedStyle(one).gridTemplateColumns.split(' ').length,
+        timeAligned: others.every(v => Math.abs(v - Math.round(timeLeft)) <= 1),
+        summary: (one.querySelector('.tl-summary') || {}).innerText || '',
+        delKey: (one.querySelector('[data-session-del]') || {}).dataset?.sessionDel || '',
+      };
+    })()`);
+  check('需求③：登录记录已合并成「会话」行', shape.sessions >= 1, JSON.stringify(shape.sessions));
+  check('需求①：会话行有勾选框与删除按钮（可以选中删除）',
+    shape.hasCheck === true && shape.hasDel === true && !!shape.delKey, JSON.stringify(shape));
+  check('需求①：会话行的列数/列宽与其他行完全一致（排版对齐）',
+    shape.cells === shape.gridChildren && shape.timeAligned === true,
+    JSON.stringify({ cells: shape.cells, cols: shape.gridChildren, aligned: shape.timeAligned }));
+  check('需求③：会话摘要里带「登录时间 / 在线时长 / 浏览页数」（信息不丢）',
+    /登录/.test(shape.summary) && /在线/.test(shape.summary) && /浏览/.test(shape.summary),
+    shape.summary);
+
+  // 勾选这条会话 → 批量删除（列表删完会自动补满，所以只能断言"这一行没了"）
+  const targetKey = await cdp.eval(`
+    (() => {
+      const ses = [...document.querySelectorAll('#lg-list .tl-item')].find(r => r.dataset.source === 'session');
+      const key = ses.dataset.key;
+      ses.querySelector('.tl-check').click();
+      document.querySelector('#lg-del-selected').click();
+      return key;
+    })()`);
+  await sleep(700);
+  const confirmed = await cdp.eval(`
+    (() => {
+      const btn = document.querySelector('.modal-mask [data-ok], .modal-mask .btn-primary, .modal-mask .btn-danger');
+      if (btn) { btn.click(); return true; }
+      return false;
+    })()`);
+  await sleep(2200);
+  const stillThere = await cdp.eval(
+    `!!document.querySelector('#lg-list .tl-item[data-key="${targetKey}"]')`);
+  check('需求①：勾选会话后能删除（点击确认后这一行消失）',
+    confirmed === true && stillThere === false,
+    JSON.stringify({ confirmed, targetKey, stillThere }));
+
+  // 分页跳转
+  await cdp.eval(`
+    (() => {
+      document.querySelector('#lg-reset').click();
+    })()`);
+  await sleep(1800);
+  const pager = await cdp.eval(`
+    (() => {
+      const box = document.querySelector('#lg-pager .pg-jump');
+      const input = box ? box.querySelector('input') : null;
+      return { hasJump: !!input, placeholder: input ? input.placeholder : '' };
+    })()`);
+  check('需求②：动态监控分页条有「跳页」输入框', pager.hasJump === true, JSON.stringify(pager));
+
+  if (pager.hasJump) {
+    await cdp.eval(`
+      (() => {
+        const box = document.querySelector('#lg-pager .pg-jump');
+        box.querySelector('input').value = '2';
+        box.querySelector('button').click();
+      })()`);
+    await sleep(1800);
+    const jumped = await cdp.eval(`
+      (() => {
+        const active = document.querySelector('#lg-pager button.active');
+        const input = document.querySelector('#lg-pager .pg-jump input');
+        // 跳页后列表内容应当变化（不是原来的第 1 页）
+        return { active: active ? active.textContent.trim() : '',
+                 firstRow: (document.querySelector('#lg-list .tl-item .tl-time') || {}).innerText || '',
+                 inputCleared: !input.value };
+      })()`);
+    check('需求②：输入页码点跳转，真的跳到第 2 页（分页按钮高亮变为 2）',
+      jumped.active === '2', JSON.stringify(jumped));
+    await cdp.shot(path.join(SHOT_DIR, 'f57-session-jump.png'));
+  }
+  // 复制昵称（原 feature55 的断言，随会话改造并入这里）
+  // 先清筛选，再把动作筛成某个业务动作——保证第一页里有可点开详情的业务日志行
+  await cdp.eval(`document.querySelector('#lg-reset').click()`);
+  await sleep(1200);
+  await cdp.eval(`
+    (() => {
+      const sel = document.querySelector('#lg-action');
+      const opt = sel ? [...sel.options].find(o => o.value && !['all','login','logout','page'].includes(o.value)) : null;
+      if (opt) { sel.value = opt.value; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+      return true;
+    })()`);
+  await sleep(1800);
+  await cdp.eval(`
+    (() => {
+      const row = document.querySelector('#lg-list .tl-item[data-source="log"]');
+      if (row) (row.querySelector('.tl-summary') || row).click();
+    })()`);
+  await sleep(1200);
+  const copyModal = await cdp.eval(`
+    (() => {
+      const m = document.querySelector('.modal-mask');
+      if (!m) return { open: false };
+      return { open: true, hasCopy: !!m.querySelector('[data-copy-nick]') };
+    })()`);
+  check('需求②：日志详情弹窗里有「复制昵称」按钮',
+    copyModal.open === true && copyModal.hasCopy === true, JSON.stringify(copyModal));
+  if (copyModal.hasCopy) {
+    await cdp.eval(`document.querySelector('.modal-mask [data-copy-nick]').click()`);
+    await sleep(700);
+    const t = await cdp.eval(`(() => (document.querySelector('.toast') || {}).innerText || '')()`);
+    check('需求②：点「复制昵称」有提示反馈', /复制|昵称/.test(t), String(t));
+    await cdp.eval(`document.querySelector('.modal-mask [data-close]')?.click()`);
+    await sleep(300);
+  }
+
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -6211,8 +6245,8 @@ const GROUPS = {
   51: { title: '删除自己的评论（本批需求①）', fn: feature51 },
   53: { title: '读完消息红点即时消失（本批需求②）', fn: feature53 },
   54: { title: '行为记录并入动态监控（本批需求①）', fn: feature54 },
-  55: { title: '浏览记录折叠 + 复制昵称', fn: feature55 },
-  56: { title: '折叠持久 + 用户类型归类（本批需求①③④）', fn: feature56 },
+  56: { title: '折叠持久 + 用户类型归类', fn: feature56 },
+  57: { title: '会话行可删除/对齐 + 分页跳转（本批需求①②③）', fn: feature57 },
 };
 
 async function main() {

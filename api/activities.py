@@ -493,55 +493,131 @@ def _page_item(a: UserActivity, titles: dict) -> dict:
     }
 
 
-def group_page_views(rows) -> list:
-    """把「同一用户、间隔 ≤30 分钟」的浏览记录折成一组（rows 需按时间升序）。"""
-    groups = []
-    last = {}
+def group_sessions(rows) -> list:
+    """把行为记录整理成「会话」（2026-10-18 需求③：登录记录太多，简化但不丢信息）。
+
+    rows 需按 (created_at, id) **升序**。一次会话 = 一次登录 → 期间的浏览 → 登出
+    （没有登出就以最后一次活动结束，标"未正常退出"）。
+    没有登录记录的浏览（数据从中途开始）也各自成组，按 30 分钟间隔切分。
+    """
+    sessions, current = [], {}
+
+    def _new(user_id, at, kind=None, aid=None):
+        s = {"user_id": user_id, "start_at": at, "end_at": at, "closed_at": None,
+             "login_id": None, "logout_id": None, "items": [], "orphan": True}
+        if kind == "login":
+            s["login_id"] = aid
+            s["orphan"] = False
+        elif kind == "logout":
+            s["logout_id"] = aid
+        sessions.append(s)
+        current[user_id] = s
+        return s
+
     for a in rows:
-        cur = last.get(a.user_id)
-        if cur is None or (a.created_at - cur["end_at"]) > PAGE_GAP:
-            cur = {"user_id": a.user_id, "start_at": a.created_at,
-                   "end_at": a.created_at, "items": []}
-            groups.append(cur)
-        cur["end_at"] = a.created_at
-        cur["items"].append(a)
-        last[a.user_id] = cur
-    return groups
+        if a.kind == "login":
+            _new(a.user_id, a.created_at, "login", a.id)
+        elif a.kind == "logout":
+            s = current.get(a.user_id)
+            if s is None or s["closed_at"] is not None:
+                s = _new(a.user_id, a.created_at, "logout", a.id)
+            s["logout_id"] = a.id
+            s["closed_at"] = a.created_at
+            s["end_at"] = a.created_at
+        else:                                   # page
+            s = current.get(a.user_id)
+            if s is None:
+                s = _new(a.user_id, a.created_at)
+            elif s["closed_at"] is not None:
+                s = _new(a.user_id, a.created_at)          # 登出之后又来浏览 → 新的一段
+            elif (a.created_at - s["end_at"]) > PAGE_GAP and not s["login_id"]:
+                s = _new(a.user_id, a.created_at)          # 无登录记录的浏览：间隔太大就切开
+            s["end_at"] = a.created_at
+            s["items"].append(a)
+    return sessions
 
 
-def page_group_row(g: dict, titles: dict) -> dict:
-    """一组浏览 → 时间线里的一行（默认折叠）。组内**突出商品页/帖子页**，其余只给个数。"""
-    user = User.query.get(g["user_id"])
-    items = [_page_item(a, titles) for a in sorted(g["items"], key=lambda x: (x.created_at, x.id),
-                                                  reverse=True)]
+def session_row(s: dict, titles: dict) -> dict:
+    """把一次会话变成时间线里的一行（默认折叠，点开看它浏览过的商品/帖子）。"""
+    user = User.query.get(s["user_id"])
+    items = [_page_item(a, titles) for a in sorted(s["items"], key=lambda x: (x.created_at, x.id),
+                                                   reverse=True)]
     focus = [x for x in items if x["kind"] != "other"][:MAX_GROUP_ITEMS]
     other_count = len(items) - len(focus)
+    secs = int((s["end_at"] - s["start_at"]).total_seconds()) if s["end_at"] else 0
+    closed = s["closed_at"] is not None
+
     seen, names = set(), []
-    for x in focus:                      # 同一个商品反复看只报一次
+    for x in focus:
         if x["title"] in seen:
             continue
         seen.add(x["title"])
         names.append(x["title"])
         if len(names) >= 3:
             break
-    summary = "%s ~ %s 共浏览 %d 个页面" % (
-        g["start_at"].strftime("%m-%d %H:%M"), g["end_at"].strftime("%H:%M"), len(items))
+
+    start_txt = s["start_at"].strftime("%m-%d %H:%M")
+    end_txt = s["end_at"].strftime("%H:%M")
+    if s["login_id"]:
+        head = "登录 %s，在线 %s" % (start_txt, duration_text(secs))
+    else:
+        head = "%s ~ %s 的浏览" % (start_txt, end_txt)
+    if items:
+        head += "，浏览 %d 个页面" % len(items)
     if names:
-        summary += "，商品/帖子：" + "、".join(names) + ("…" if len(seen) >= 3 else "")
+        head += "（%s%s）" % ("、".join(names), "…" if len(seen) >= 3 else "")
+    if s["login_id"]:
+        head += "，已退出" if closed else "，未正常退出"
+
     return {
         "id": None,
-        "key": "grp-%d-%s" % (g["user_id"], g["start_at"].strftime("%Y%m%d%H%M%S")),
-        "source": "page_group",
-        "user_id": g["user_id"],
+        "key": "ses-%d-%s" % (s["user_id"], s["start_at"].strftime("%Y%m%d%H%M%S")),
+        "source": "session",
+        "user_id": s["user_id"],
         "nickname": user.nickname if user else "（已注销）",
         "username": user.username if user else "",
-        "action": "page_group",
-        "action_text": "浏览记录",
-        "summary": summary,
-        "created_at": g["end_at"].strftime("%Y-%m-%d %H:%M:%S"),
-        "start_at": g["start_at"].strftime("%Y-%m-%d %H:%M:%S"),
-        "end_at": g["end_at"].strftime("%Y-%m-%d %H:%M:%S"),
+        "action": "session",
+        "action_text": "会话",
+        "summary": head,
+        "created_at": s["end_at"].strftime("%Y-%m-%d %H:%M:%S"),
+        "start_at": s["start_at"].strftime("%Y-%m-%d %H:%M:%S"),
+        "end_at": s["end_at"].strftime("%Y-%m-%d %H:%M:%S"),
+        "duration_seconds": secs,
+        "duration_text": duration_text(secs),
+        "session_closed": closed,
         "count": len(items),
         "other_count": other_count,
         "items": focus,
+        # 删除整次会话时用它定位（后端按 user + 时间范围删）
+        "session_start": s["start_at"].strftime("%Y-%m-%d %H:%M:%S"),
+        "session_end": s["end_at"].strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+
+@bp.post("/admin/activities/delete-session")
+@admin_required
+def delete_session():
+    """删掉一次会话的全部行为记录（需求①：折叠的浏览记录也要能选中删除）。"""
+    body = json_body() or {}
+    try:
+        user_id = int(body.get("user_id"))
+    except (TypeError, ValueError):
+        return fail("缺少用户")
+    start = (body.get("start_at") or "").strip()
+    end = (body.get("end_at") or "").strip()
+    if not start or not end:
+        return fail("缺少会话时间范围")
+    try:
+        t0 = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
+        t1 = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return fail("时间格式不正确")
+    rows = UserActivity.query.filter(
+        UserActivity.user_id == user_id,
+        UserActivity.created_at >= t0,
+        UserActivity.created_at <= t1,
+    ).all()
+    for r in rows:
+        db.session.delete(r)
+    db.session.commit()
+    return ok({"deleted": len(rows)}, msg="已删除 %d 条行为记录" % len(rows))

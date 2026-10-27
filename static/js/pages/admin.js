@@ -234,6 +234,8 @@ async function renderTrades(panel) {
   // 2026-10-18：动态监控每 5 秒自动刷新会整块重绘，展开状态若只存在 DOM 上就会"自己合上"，
   // 所以和勾选一样存进集合，重绘后按它回填。
   const expandedGroups = new Set();
+  // 会话行的删除要带「用户 + 时间范围」，渲染时把 key 对应的信息存起来
+  let sessionIndex = new Map();
 
   panel.innerHTML = `
     <div class="grid grid-4 mb-16" id="td-stats">${loadingHtml()}</div>
@@ -824,7 +826,7 @@ async function renderTrades(panel) {
    */
   function logRowHtml(log) {
     const key = log.key || ('log-' + log.id);
-    if (log.source === 'page_group') {
+    if (log.source === 'session') {
       const span = `${esc((log.start_at || '').slice(5, 16))} ~ ${esc((log.end_at || '').slice(11, 16))}`;
       const items = (log.items || []).map(it => {
         const label = it.kind === 'product' ? '商品' : (it.kind === 'post' ? '帖子' : '页面');
@@ -835,15 +837,23 @@ async function renderTrades(panel) {
             <span class="muted small">${esc((it.at || '').slice(5, 16))}</span>
           </div>`;
       }).join('');
+      sessionIndex.set(key, { user_id: log.user_id, start_at: log.session_start,
+                             end_at: log.session_end });
       return `
-        <div class="tl-item tl-group" data-source="page_group" data-group="${esc(key)}"
-             role="button" tabindex="0" title="点开 / 收起这一串浏览记录">
-          <span class="tl-check-box tl-check-ph"></span>
+        <div class="tl-item tl-group" data-source="session" data-group="${esc(key)}" data-key="${esc(key)}"
+             data-ses-user="${esc(String(log.user_id))}" data-ses-start="${esc(log.session_start || '')}"
+             data-ses-end="${esc(log.session_end || '')}"
+             role="button" tabindex="0" title="点开 / 收起这次会话看过的页面">
+          <label class="tl-check-box" title="选中后可批量删除这次会话的记录">
+            <input type="checkbox" class="tl-check" data-check="${esc(key)}"
+                   ${pickedLogs.has(key) ? 'checked' : ''}>
+          </label>
           <span class="tl-time muted small">${span}</span>
           <span class="tl-who">${esc(log.nickname || log.username || '')}</span>
-          <span class="tl-action">浏览记录</span>
+          <span class="tl-action">${esc(log.action_text)}</span>
           <span class="tl-summary muted">${esc(log.summary)} <b class="tl-toggle">${expandedGroups.has(key) ? '收起 ▾' : '展开 ▸'}</b></span>
-          <span class="tl-del-ph"></span>
+          <button class="btn btn-ghost btn-sm tl-del" data-session-del="${esc(key)}"
+                  title="删除这次会话的全部记录">🗑</button>
         </div>
         <div class="tl-group-items" data-for="${esc(key)}" ${expandedGroups.has(key) ? '' : 'hidden'}>
           ${items || '<div class="tgi-row muted small">这一串里没有商品页或帖子页</div>'}
@@ -895,6 +905,14 @@ async function renderTrades(panel) {
   /* ---------------- 动态监控（操作日志时间线 + 多条件筛选）---------------- */
   async function loadLogs(silent = false) {
     const box = panel.querySelector('#lg-list');
+
+    // 2026-10-18 需求①：会话行末尾的 🗑 用事件委托（容器稳定，赋值型绑定不会重复叠加）
+    box.onclick = (event) => {
+      const del = event.target.closest('[data-session-del]');
+      if (!del) return;
+      event.stopPropagation();
+      removeLogs([del.dataset.sessionDel]);
+    };
     if (!box) return;
     if (!silent) box.innerHTML = loadingHtml();
     let data;
@@ -1007,9 +1025,20 @@ async function renderTrades(panel) {
         // 2026-10-18：时间线里混了「操作日志」与「用户行为」两类，按 key 前缀分流到各自接口
         const logIds = ids.filter(id => String(id).startsWith('log-')).map(id => Number(String(id).slice(4)));
         const actIds = ids.filter(id => String(id).startsWith('act-')).map(id => Number(String(id).slice(4)));
+        const sesKeys = ids.filter(id => String(id).startsWith('ses-'));
         let total = 0;
         if (logIds.length) total += (await api.post('/api/admin/logs/delete', { ids: logIds })).deleted || 0;
         if (actIds.length) total += (await api.post('/api/admin/activities/delete', { ids: actIds })).deleted || 0;
+        for (const k of sesKeys) {
+          // 优先从这一行的 data-ses-* 读（会话行一定在页面上；sessionIndex 只作兜底）
+          const row = document.querySelector(`#lg-list .tl-item[data-key="${k}"]`);
+          const info = row
+            ? { user_id: Number(row.dataset.sesUser), start_at: row.dataset.sesStart,
+                end_at: row.dataset.sesEnd }
+            : sessionIndex.get(k);
+          if (!info || !info.user_id) continue;
+          total += (await api.post('/api/admin/activities/delete-session', info)).deleted || 0;
+        }
         ids.forEach(id => pickedLogs.delete(id));   // 删掉的从选中集合里去掉
         toast(`已删除 ${total} 条记录`);
         loadLogs();
@@ -1044,6 +1073,7 @@ async function renderTrades(panel) {
       pages: Math.max(1, Math.ceil(data.total / data.page_size)),
       total: data.total,
       onGo: (p) => { logPage = p; loadLogs(); },
+      jump: true,
     });
   }
 

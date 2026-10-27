@@ -1893,9 +1893,9 @@ def main() -> int:
 
     _st, r = call("GET", "/api/admin/logs?page_size=50", token=_mg_at)
     _mg_all = (r.get("data") or {}).get("list") or []
-    check("需求①：动态监控里同时有「业务动作」与「登录/浏览」两类记录",
+    check("需求①：动态监控里同时有「业务动作」与「会话（登录+浏览）」两类记录",
           any(x.get("source") in ("log", None) for x in _mg_all)
-          and any(x.get("source") == "activity" for x in _mg_all),
+          and any(x.get("source") == "session" for x in _mg_all),
           str([x.get("source") for x in _mg_all[:8]]))
 
     _st, r = call("GET", "/api/admin/logs?action=login&page_size=20", token=_mg_at)
@@ -1904,7 +1904,8 @@ def main() -> int:
           bool(_mg_login) and all("duration_text" in x for x in _mg_login),
           str([x.get("duration_text") for x in _mg_login[:3]]))
     check("需求①：登录行的摘要把时长写进去了",
-          all("本次使用" in (x.get("summary") or "") for x in _mg_login),
+          all(("本次使用" in (x.get("summary") or "")) or ("在线" in (x.get("summary") or ""))
+              for x in _mg_login),
           str((_mg_login[0] or {}).get("summary"))[:60])
 
     _st, r = call("GET", "/api/admin/logs?action=page&page_path=/compare&page_size=20", token=_mg_at)
@@ -1919,9 +1920,9 @@ def main() -> int:
           all(x.get("source") != "activity" for x in _mg_prod), str(len(_mg_prod)))
 
     _st, r = call("GET", "/api/admin/logs?page_size=50", token=_mg_at)
-    _mg_any = next((x for x in (r.get("data") or {}).get("list") or [] if x.get("source") == "activity"), {})
-    check("需求①：行为记录带 key（log-xx / act-xx）便于统一勾选删除",
-          str(_mg_any.get("key", "")).startswith("act-"), str(_mg_any.get("key")))
+    _mg_any = next((x for x in (r.get("data") or {}).get("list") or [] if x.get("source") in ("activity", "session")), {})
+    check("需求①：行为/会话记录带 key（act-xx / ses-xx）便于统一勾选删除",
+          str(_mg_any.get("key", "")).startswith(("act-", "ses-")), str(_mg_any.get("key")))
 
     _st, r = call("GET", "/api/admin/activities/profile?user=buyer1", token=_mg_at)
     _mg_prof = r.get("data") or {}
@@ -1954,20 +1955,20 @@ def main() -> int:
 
     _st, r = call("GET", "/api/admin/logs?page_size=60", token=_fd_at)
     _fd_list = (r.get("data") or {}).get("list") or []
-    check("需求②：默认时间线里出现「浏览记录」折叠组（不再逐条铺开）",
-          any(x.get("source") == "page_group" for x in _fd_list),
+    check("需求③：默认时间线里登录/浏览已合并成「会话」行",
+          any(x.get("source") == "session" for x in _fd_list),
           str([x.get("source") for x in _fd_list[:8]]))
 
-    _grp = next((x for x in _fd_list if x.get("source") == "page_group"), {})
-    check("需求②：折叠组带 起止时间 / 条数 / 组内明细",
+    _grp = next((x for x in _fd_list if x.get("source") == "session"), {})
+    check("需求③：会话行带 起止时间 / 条数 / 组内明细",
           bool(_grp.get("start_at")) and bool(_grp.get("end_at"))
           and isinstance(_grp.get("count"), int) and isinstance(_grp.get("items"), list),
           str({k: _grp.get(k) for k in ("start_at", "end_at", "count")}))
-    check("需求②：组内突出商品页/帖子页（带 kind 与标题）",
+    check("需求③：会话里突出商品页/帖子页（带 kind 与标题）",
           all(it.get("kind") in ("product", "post") for it in _grp.get("items") or [])
           and all(it.get("title") for it in _grp.get("items") or []),
           str([(it.get("kind"), str(it.get("title"))[:12]) for it in (_grp.get("items") or [])[:3]]))
-    check("需求②：其它页面只给个数（other_count）",
+    check("需求③：会话里其它页面只给个数（other_count）",
           isinstance(_grp.get("other_count"), int) and _grp["other_count"] >= 0,
           str(_grp.get("other_count")))
 
