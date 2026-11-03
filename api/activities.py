@@ -69,6 +69,31 @@ def report_page_view():
     return ok(msg="ok")
 
 
+@bp.post("/activities/image-view")
+@login_required
+def report_image_view():
+    """详情页图片级埋点（2026-10-18 画像需求）：看的是第几张图、停留多久。
+
+    前端只在「切换图片」和「离开页面」时各报一次，很轻。
+    """
+    from models import ProductImageView
+
+    me = current_user()
+    body = json_body() or {}
+    try:
+        product_id = int(body.get("product_id"))
+        index = max(0, int(body.get("index") or 0))
+        dwell = max(0, min(int(body.get("dwell_ms") or 0), 30 * 60 * 1000))
+    except (TypeError, ValueError):
+        return fail("参数不合法")
+    if Product.query.get(product_id) is None:
+        return fail("商品不存在", 404)
+    db.session.add(ProductImageView(user_id=me.id, product_id=product_id,
+                                    image_index=index, dwell_ms=dwell))
+    db.session.commit()
+    return ok(msg="ok")
+
+
 # ---------------------------------------------------------------- 管理端
 @bp.get("/admin/activities")
 @admin_required
@@ -395,6 +420,107 @@ def activities_profile():
         main_reason = "各类都看，最高只占 %d%%" % round(breakdown[0]["share"] * 100)
 
     focus = ("关注" + post_breakdown[0]["name"]) if post_breakdown else ""
+
+    # ================= 多维画像（2026-10-18 需求）=================
+    from models import Favorite, Order, ProductImageView
+
+    # ⑦ 停留时长：用「相邻两条页面记录的时间差」近似；>30 分钟视为挂机截断；最后一条无下一跳、不计
+    page_rows = [r for r in rows if r.kind == "page"]
+    dwells = []
+    for i, r in enumerate(page_rows[:-1]):
+        gap = (page_rows[i + 1].created_at - r.created_at).total_seconds()
+        if gap <= 30 * 60:
+            dwells.append((r.page, gap))
+    total_dwell = int(sum(g for _p, g in dwells))
+    product_dwells = [g for pg, g in dwells if classify_page(pg)[0] == "product"]
+    avg_dwell = int(total_dwell / len(dwells)) if dwells else 0
+    avg_product_dwell = int(sum(product_dwells) / len(product_dwells)) if product_dwells else 0
+
+    # ② 价格带偏好
+    PRICE_BANDS = [("0-50", 0, 50), ("50-200", 50, 200), ("200-500", 200, 500),
+                   ("500-1000", 500, 1000), ("1000 以上", 1000, None)]
+    price_counter = {}
+    seen_products = set()
+    revisit = 0
+    for pid in product_ids:
+        pr = prods.get(pid) if product_ids else None
+        if pr is None:
+            continue
+        if pid in seen_products:
+            revisit += 1
+        seen_products.add(pid)
+        price = float(pr.price or 0)
+        for name, low, high in PRICE_BANDS:
+            if price >= low and (high is None or price < high):
+                price_counter[name] = price_counter.get(name, 0) + 1
+                break
+    price_breakdown = _breakdown(price_counter)
+
+    # ④ 活跃时段（按小时）
+    hour_counter = {}
+    for r in rows:
+        if r.kind in ("login", "page") and r.created_at:
+            h = r.created_at.hour
+            hour_counter[h] = hour_counter.get(h, 0) + 1
+    peak_hours = sorted(hour_counter.items(), key=lambda kv: -kv[1])[:3]
+    hours = [{"hour": h, "count": c} for h, c in sorted(hour_counter.items())]
+    peak_text = ("、".join("%d:00" % h for h, _c in peak_hours)) if peak_hours else ""
+
+    # ⑤ 深度 vs 广度
+    depth = {
+        "distinct_products": len(seen_products),
+        "revisit_count": revisit,
+        "avg_dwell_text": duration_text(avg_dwell),
+        "avg_product_dwell_text": duration_text(avg_product_dwell),
+        "total_dwell_text": duration_text(total_dwell),
+        "style": ("深挖型" if revisit >= 3 and revisit >= len(seen_products) * 0.5
+                  else ("广泛浏览型" if len(seen_products) >= 10 else "轻度浏览")),
+    }
+
+    # ⑥ 转化倾向：浏览过的商品里，收藏/下单了多少
+    fav = Order = None
+    try:
+        fav = (db.session.query(Favorite).filter(Favorite.user_id == target.id)
+               .filter(Favorite.product_id.in_(list(seen_products) or [-1])).count())
+        Order = None
+        order_cnt = (db.session.query(Order).filter(Order.buyer_id == target.id)
+                     .filter(Order.product_id.in_(list(seen_products) or [-1])).count())
+    except Exception:                       # noqa: BLE001 —— 画像不该因统计失败而中断
+        fav, order_cnt = 0, 0
+    conv = {
+        "favorites": fav or 0,
+        "orders": order_cnt if isinstance(order_cnt, int) else 0,
+    }
+    conv["rate"] = round((conv["favorites"] + conv["orders"]) / max(1, len(seen_products)), 3)
+
+    # ⑧ 图片偏好（图片级埋点）
+    imgs = (ProductImageView.query.filter(ProductImageView.user_id == target.id)
+            .order_by(ProductImageView.created_at.desc()).limit(500).all())
+    img_total = len(imgs)
+    head_views = sum(1 for x in imgs if x.image_index == 0)
+    img_dwell = [x.dwell_ms for x in imgs if x.dwell_ms > 0]
+    img_products = {x.product_id for x in imgs}
+    img_dim = {
+        "views": img_total,
+        "products": len(img_products),
+        "avg_images_per_product": round(img_total / len(img_products), 1) if img_products else 0,
+        "head_share": round(head_views / img_total, 3) if img_total else 0,
+        "avg_dwell_ms": int(sum(img_dwell) / len(img_dwell)) if img_dwell else 0,
+        "style": ("偏爱头图，很少翻图" if img_total and head_views / img_total >= 0.8
+                  else ("爱翻细节图" if img_total and head_views / img_total < 0.6 else "两者都有")),
+    }
+
+    # 把多维信息汇总成一句画像
+    bits = [main_type]
+    if price_breakdown:
+        bits.append("价格带 " + price_breakdown[0]["name"])
+    if depth["style"]:
+        bits.append(depth["style"])
+    if img_dim["views"]:
+        bits.append("头图党" if img_dim["head_share"] >= 0.8 else "细节党")
+    if peak_text:
+        bits.append("常在线 " + peak_text)
+    portrait = " · ".join(bits)
     utype = {
         "main": main_type,
         "reason": main_reason,
@@ -421,6 +547,13 @@ def activities_profile():
         "top_pages": top_pages,
         "recent_sessions": sessions[-5:][::-1],
         "utype": utype,
+        "price_breakdown": price_breakdown,
+        "hours": hours,
+        "peak_text": peak_text,
+        "depth": depth,
+        "conversion": conv,
+        "images": img_dim,
+        "portrait": portrait,
     })
 
 # ---------------------------------------------------------------- 浏览记录折叠（2026-10-18 需求②）

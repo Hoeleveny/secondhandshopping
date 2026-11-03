@@ -806,7 +806,50 @@ async function renderTrades(panel) {
                 ${tags || '<div class="muted small">还没有浏览帖子</div>'}</div>
             </div>
             <div class="muted small" style="margin-top:8px">归类规则：${esc(ut.rule || '')}</div>
+          </div>
+          ${(() => {
+            // 2026-10-18 多维画像：价格带 / 停留时长 / 深度 / 转化 / 图片偏好 / 活跃时段
+            const d = data.depth || {};
+            const cv = data.conversion || {};
+            const im = data.images || {};
+            const bars = (data.price_breakdown || []).map(b => `
+              <div class="tgi-row"><span class="tgi-kind">${esc(b.name)}</span>
+                <span class="tgi-title">${b.count} 件 · ${Math.round((b.share || 0) * 100)}%</span></div>`).join('');
+            const hours = (data.hours || []).map(h => `
+              <div class="tgi-row"><span class="tgi-kind">${h.hour}:00</span>
+                <span class="tgi-title">${h.count} 次</span></div>`).join('');
+            const secs = im.avg_dwell_ms ? Math.round(im.avg_dwell_ms / 100) / 10 : 0;
+            return `
+          <div class="card mb-8" style="box-shadow:none;border:1px solid var(--border)">
+            <div class="row wrap mb-8" style="gap:10px;align-items:center">
+              <span class="badge badge-info" style="font-size:13px">多维画像</span>
+              <span class="muted small">${esc(data.portrait || '')}</span>
+            </div>
+            <div class="grid grid-4 mb-8">
+              <div class="stat-card"><div class="sc-label">平均停留</div>
+                <div class="sc-value">${esc(d.avg_dwell_text || '—')}</div>
+                <div class="sc-more">商品页 ${esc(d.avg_product_dwell_text || '—')}</div></div>
+              <div class="stat-card"><div class="sc-label">浏览深度</div>
+                <div class="sc-value">${esc(d.style || '—')}</div>
+                <div class="sc-more">看过 ${d.distinct_products ?? 0} 件 · 回访 ${d.revisit_count ?? 0} 次</div></div>
+              <div class="stat-card"><div class="sc-label">转化倾向</div>
+                <div class="sc-value">${Math.round((cv.rate || 0) * 100)}%</div>
+                <div class="sc-more">收藏 ${cv.favorites ?? 0} · 下单 ${cv.orders ?? 0}</div></div>
+              <div class="stat-card"><div class="sc-label">图片偏好</div>
+                <div class="sc-value">${esc(im.style || '暂无数据')}</div>
+                <div class="sc-more">共 ${im.views ?? 0} 次 · 头图占 ${Math.round((im.head_share || 0) * 100)}%${secs ? ` · 平均 ${secs} 秒/张` : ''}</div></div>
+            </div>
+            <div class="grid" style="grid-template-columns:1fr 1fr;gap:16px">
+              <div><div class="muted small mb-8">价格带偏好</div>
+                ${bars || '<div class="muted small">还没有浏览带价格的商品</div>'}</div>
+              <div><div class="muted small mb-8">活跃时段（在线/浏览次数）</div>
+                ${hours || '<div class="muted small">暂无数据</div>'}</div>
+            </div>
+            <div class="muted small" style="margin-top:8px">
+              停留时长算法：用相邻两条浏览记录的时间差近似（超过 30 分钟视为挂机截断）；图片偏好来自详情页的图片切换埋点。
+            </div>
           </div>`;
+          })()}`;
         })()}
         <div class="grid" style="grid-template-columns:1fr 1fr;gap:16px">
           <div><div class="muted small mb-8">最常去的 5 个页面</div>

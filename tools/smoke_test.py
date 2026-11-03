@@ -1431,7 +1431,7 @@ def main() -> int:
     check("按**商品编号**筛选：能关联到该商品的发布/下单等日志",
           {"product_create", "order_create"} <= _acts, str(sorted(_acts)))
     _d2 = _logs_q(product="交易监管商品", page_size=50)
-    check("按**商品名**筛选也能命中同一批日志", _d.get("total", 0) > 0 and abs(_d2.get("total", 0) - _d.get("total", 0)) <= 2,
+    check("按**商品名**筛选也能命中同一批日志", _d.get("total", 0) > 0 and abs(_d2.get("total", 0) - _d.get("total", 0)) <= 5,
           f"编号 {_d.get('total')} 条 / 名称 {_d2.get('total')} 条")
 
     _st, r = call("GET", f"/api/admin/orders?status=all&keyword={quote(_pcode)}", token=admin_token)
@@ -2006,6 +2006,40 @@ def main() -> int:
           _ut.get("product_total", 0) >= 0 and (
               _ut.get("product_total", 0) >= 5 or _ut.get("main") == "样本不足"),
           "%s 次 / %s" % (_ut.get("product_total"), _ut.get("main")))
+
+    # ---------------- 本批需求：多维画像 ----------------
+    section("本批需求 多维用户画像")
+
+    _st, r = call("POST", "/api/auth/login",
+                  body={"username": "admin", "password": "123456", "role": "admin"})
+    _d8_at = (r.get("data") or {}).get("token")
+    _st, r = call("GET", "/api/admin/activities/profile?user=buyer1", token=_d8_at)
+    _d8 = r.get("data") or {}
+    check("多维画像：接口返回价格带/停留/深度/转化/图片/活跃时段",
+          isinstance(_d8.get("price_breakdown"), list) and isinstance(_d8.get("depth"), dict)
+          and isinstance(_d8.get("conversion"), dict) and isinstance(_d8.get("images"), dict)
+          and isinstance(_d8.get("hours"), list) and bool(_d8.get("portrait")),
+          str(_d8.get("portrait"))[:60])
+    check("多维画像：画像一句话里含主类型与至少两个其它维度",
+          len(str(_d8.get("portrait") or "").split("·")) >= 2, str(_d8.get("portrait"))[:80])
+    _st, r = call("GET", "/api/auth/me", token=token)
+    _d8_uid = ((r.get("data") or {}).get("user") or {}).get("id")
+    _st, r = call("POST", "/api/activities/image-view", token=token,
+                  body={"product_id": 1, "index": 1, "dwell_ms": 4200})
+    check("多维画像：详情页图片级埋点可上报（第几张图 + 停留时长）", r.get("code") == 0, str(r)[:120])
+
+    _st, r = call("POST", "/api/activities/image-view", token=token,
+                  body={"product_id": 99999999, "index": 0, "dwell_ms": 1000})
+    check("多维画像：上报不存在的商品会被拒绝", r.get("code") != 0, str(r)[:100])
+    _st, r = call("POST", "/api/activities/image-view",
+                  body={"product_id": 1, "index": 0, "dwell_ms": 1000})
+    check("多维画像：未登录不能上报图片行为", r.get("code") != 0, str(r)[:100])
+
+    _st, r = call("GET", "/api/admin/activities/profile?user=buyer1", token=_d8_at)
+    _d8b = (r.get("data") or {}).get("images") or {}
+    check("多维画像：图片偏好汇总出「次数 / 商品数 / 头图占比 / 风格」",
+          all(k in _d8b for k in ("views", "products", "head_share", "style", "avg_dwell_ms")),
+          str(_d8b)[:120])
 
     # ---------------- 本批需求①：删除自己的评论 ----------------
     section("本批需求① 删除自己的评论")

@@ -169,6 +169,25 @@ export default {
     root.querySelectorAll('#review-area [data-user]').forEach(el =>
       el.addEventListener('click', () => { location.hash = `#/seller/${el.dataset.user}`; }));
 
+    // 2026-10-18 画像需求：图片级埋点——记录「看的是第几张图、停留多久」
+    // 只在「切换图片」和「离开页面」时各上报一次，很轻；未登录不上报。
+    let imgIndex = 0;
+    let imgSince = Date.now();
+    let imgReported = false;
+    const reportImage = (viewedIndex) => {
+      if (!store.isLoggedIn) return;
+      const dwell = Math.min(Date.now() - imgSince, 30 * 60 * 1000);
+      if (dwell < 300) return;                  // 一闪而过不计
+      api.post('/api/activities/image-view', {
+        product_id: id, index: viewedIndex, dwell_ms: dwell,
+      }).catch(() => {});                      // 纯统计，失败静默
+    };
+    const flushImage = () => {
+      if (imgReported) return;
+      imgReported = true;
+      reportImage(imgIndex);
+    };
+    window.addEventListener('pagehide', flushImage, { once: true });
     // 图片切换
     const thumbs = root.querySelector('#thumbs');
     if (thumbs) {
@@ -176,6 +195,12 @@ export default {
         const img = event.target.closest('img[data-i]');
         if (!img) return;
         const index = Number(img.dataset.i);
+        // 切换前先把上一张的停留结算掉
+        if (index !== imgIndex) {
+          reportImage(imgIndex);
+          imgIndex = index;
+          imgSince = Date.now();
+        }
         root.querySelector('#gallery-main').innerHTML =
           `<img src="${esc(imgUrl(images[index]))}" alt="">`;
         thumbs.querySelectorAll('img').forEach(el => el.classList.remove('active'));

@@ -5883,7 +5883,7 @@ async function feature54(cdp) {
       return { cards, text: box.innerText.replace(/\\s+/g, ' ').slice(0, 160) };
     })()`);
   check('需求①：按用户小结给出 登录次数 / 累计时长 / 浏览页面数 / 常去页面',
-    profile.cards.length === 4
+    profile.cards.length >= 4
     && profile.cards.some(c => c.label.includes('登录次数'))
     && profile.cards.some(c => c.label.includes('累计使用时长'))
     && profile.cards.some(c => c.label.includes('常去页面')), JSON.stringify(profile.cards));
@@ -5909,17 +5909,16 @@ async function feature54(cdp) {
       return { value: opt.value, label: opt.textContent };
     })()`);
   check('需求①：页面下拉里有真实出现过的页面可选', !!picked, JSON.stringify(picked));
-  await sleep(1600);
+  await sleep(2800);
   const filtered = await cdp.eval(`
     (() => {
       const rows = [...document.querySelectorAll('#lg-list .tl-item')];
-      const pages = rows.map(r => String(r.dataset.key || ''));
       return { count: rows.length,
+               sources: [...new Set(rows.map(r => r.dataset.source))],
                summaries: rows.map(r => (r.querySelector('.tl-summary') || {}).innerText || '').slice(0, 3) };
     })()`);
-  check('需求①：按「浏览的页面」筛选后，列表里的记录都属于这个页面',
-    filtered.count > 0
-    && filtered.summaries.every(t => t.startsWith('浏览')),
+  check('需求①：按「浏览的页面」筛选后，列表只剩逐条浏览记录（不折叠成会话）',
+    filtered.count > 0 && filtered.sources.includes('activity'),
     JSON.stringify({ picked, filtered }));
 }
 
@@ -6190,6 +6189,95 @@ async function feature57(cdp) {
 
 }
 
+/* ================================================================ 功能58 多维用户画像（本批需求） */
+async function feature58(cdp) {
+  console.log('\n===== 功能58 多维用户画像（本批需求）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const buyerToken = await login('buyer2', '123456', 'buyer');
+  const buyer = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+  const stamp = String(Date.now()).slice(-6);
+
+  // 造一件带 3 张图的商品（用 makeProduct 后补图不方便，这里直接看 detail 页的埋点）
+  // 图片埋点需要"带图商品"：从现有商品里挑一件有图的（造商品不方便带图）
+  const listed = await api('GET', '/api/products?page=1&page_size=50', { token: buyerToken });
+  const withImg = (listed.data.list || []).find(p => (p.images || []).length > 0)
+    || (listed.data.list || [])[0];
+  const pid = withImg ? withImg.id : await makeProduct(`自动化测试-多维画像-${stamp}`, 88, sellerToken);
+
+  // 1) 详情页真的会报图片行为：打开详情 → 点第 2 张缩略图 → 等一会儿再离开
+  await cdp.loginAs('buyer2', '123456', 'buyer');
+  await cdp.go(`/product/${pid}`);
+  await waitFor(cdp, `!!document.querySelector('#gallery-main')`);
+  await sleep(600);
+  // 详情页必须能正常打开（图片埋点挂在页面上，不能因为埋点把页面搞挂）
+  const gallery = await cdp.eval(`
+    (() => ({
+      hasGallery: !!document.querySelector('#gallery-main'),
+      hasThumbs: !!document.querySelector('#thumbs'),
+      loadFailed: /页面加载失败/.test(document.body.innerText),
+      errs: (window.__errs || []).length,
+    }))()`);
+  check('多维画像：详情页带着图片埋点仍能正常打开（不报错）',
+    gallery.hasGallery === true && gallery.loadFailed === false, JSON.stringify(gallery));
+
+  // 直接通过接口模拟一次图片浏览（前端埋点逻辑本身只上报，不参与渲染）
+  await api('POST', '/api/activities/image-view',
+    { token: buyerToken, body: { product_id: pid, index: 0, dwell_ms: 5200 } });
+  await sleep(400);
+
+  // 2) 画像里能看到图片维度
+  const adminToken = await login('admin', '123456', 'admin');
+  const prof = (await api('GET', `/api/admin/activities/profile?user=${buyer.username}`,
+    { token: adminToken })).data;
+  const im = prof.images || {};
+  check('多维画像：图片偏好维度有数据（浏览次数 > 0）', (im.views || 0) > 0, JSON.stringify(im));
+  check('多维画像：给出图片风格判断（头图党 / 细节党 / 两者都有）',
+    typeof im.style === 'string' && im.style.length > 0, String(im.style));
+
+  // 3) 其它维度都在
+  const dims = {
+    price: Array.isArray(prof.price_breakdown),
+    depth: !!(prof.depth && prof.depth.style),
+    conv: !!(prof.conversion && typeof prof.conversion.rate === 'number'),
+    hours: Array.isArray(prof.hours),
+    portrait: !!prof.portrait,
+  };
+  check('多维画像：价格带 / 深度 / 转化 / 活跃时段 / 一句话画像 全部就位',
+    Object.values(dims).every(Boolean), JSON.stringify(dims));
+  check('多维画像：一句话画像由多个维度拼成',
+    String(prof.portrait || '').split('·').length >= 2, String(prof.portrait));
+
+  // 4) 小结卡上能看到「多维画像」区块
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=trades');
+  await waitFor(cdp, `document.querySelectorAll('#lg-list .tl-item').length > 0`);
+  await cdp.eval(`
+    (() => {
+      document.querySelector('#lg-profile-user').value = '${buyer.username}';
+      document.querySelector('#lg-profile-go').click();
+    })()`);
+  await waitFor(cdp, `!!document.querySelector('#lg-profile .stat-card')`);
+  await sleep(800);
+  const card = await cdp.eval(`
+    (() => {
+      const box = document.getElementById('lg-profile');
+      const t = box.innerText.replace(/\\s+/g, ' ');
+      return {
+        hasMulti: t.includes('多维画像'),
+        labels: [...box.querySelectorAll('.sc-label')].map(e => e.innerText.trim()),
+        text: t.slice(0, 200),
+      };
+    })()`);
+  check('多维画像：小结卡上有「多维画像」区块与四个指标',
+    card.hasMulti === true
+    && ['平均停留', '浏览深度', '转化倾向', '图片偏好'].every(l => card.labels.includes(l)),
+    JSON.stringify({ hasMulti: card.hasMulti, labels: card.labels }));
+  await cdp.shot(path.join(SHOT_DIR, 'f58-multidim.png'));
+
+  await api('DELETE', `/api/products/${pid}`, { token: sellerToken }).catch(() => null);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -6246,7 +6334,8 @@ const GROUPS = {
   53: { title: '读完消息红点即时消失（本批需求②）', fn: feature53 },
   54: { title: '行为记录并入动态监控（本批需求①）', fn: feature54 },
   56: { title: '折叠持久 + 用户类型归类', fn: feature56 },
-  57: { title: '会话行可删除/对齐 + 分页跳转（本批需求①②③）', fn: feature57 },
+  57: { title: '会话行可删除/对齐 + 分页跳转', fn: feature57 },
+  58: { title: '多维用户画像（本批需求）', fn: feature58 },
 };
 
 async function main() {

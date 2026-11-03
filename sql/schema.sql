@@ -508,4 +508,23 @@ CREATE TABLE `user_activities` (
   CONSTRAINT `fk_activities_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户行为监测（登录/登出/页面浏览）';
 
+
+-- -------------------------------------------------------------
+-- 表 25：product_image_views（商品图片级浏览）—— 迁移 020
+-- -------------------------------------------------------------
+DROP TABLE IF EXISTS `product_image_views`;
+CREATE TABLE `product_image_views` (
+  `id`         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`    BIGINT UNSIGNED NOT NULL,
+  `product_id` BIGINT UNSIGNED NOT NULL,
+  `image_index` INT UNSIGNED   NOT NULL DEFAULT 0,
+  `dwell_ms`   INT UNSIGNED   NOT NULL DEFAULT 0,
+  `created_at` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_imgviews_user` (`user_id`, `created_at`),
+  KEY `idx_imgviews_product` (`product_id`),
+  CONSTRAINT `fk_imgviews_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_imgviews_product` FOREIGN KEY (`product_id`) REFERENCES `products` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商品图片级浏览行为';
+
 SET FOREIGN_KEY_CHECKS = 1;

@@ -951,6 +951,35 @@ class UserActivity(db.Model):
         }
 
 
+
+class ProductImageView(db.Model):
+    """商品图片级浏览行为（2026-10-18 画像需求）：看了哪个商品的第几张图、停留多久。"""
+
+    __tablename__ = "product_image_views"
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete="CASCADE"),
+                        nullable=False)
+    product_id = db.Column(db.BigInteger, db.ForeignKey("products.id", ondelete="CASCADE"),
+                           nullable=False)
+    image_index = db.Column(db.Integer, nullable=False, default=0)
+    dwell_ms = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
+
+    user = db.relationship("User")
+    product = db.relationship("Product")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "product_id": self.product_id,
+            "image_index": self.image_index,
+            "dwell_ms": self.dwell_ms,
+            "created_at": _dt(self.created_at),
+        }
+
+
 # ---------------------------------------------------------------- 工具函数
 def _dt(value: datetime | None) -> str | None:
     return value.strftime("%Y-%m-%d %H:%M:%S") if value else None
