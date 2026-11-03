@@ -187,6 +187,30 @@ export default {
       imgReported = true;
       reportImage(imgIndex);
     };
+
+    // 2026-10-18 需求②：点大图全屏放大查看（更实用的图片呈现）
+    const mainImg = root.querySelector('#gallery-main');
+    const openImageZoom = (src) => {
+      if (!src) return;
+      const mask = document.createElement('div');
+      mask.className = 'img-zoom';
+      mask.innerHTML = '<img alt=""><button class="img-zoom-close" title="关闭">✕</button>';
+      mask.querySelector('img').src = src;
+      const onKey = (e) => { if (e.key === 'Escape') closeIt(); };
+      const closeIt = () => { mask.remove(); document.removeEventListener('keydown', onKey); };
+      mask.addEventListener('click', (event) => {
+        if (event.target === mask || event.target.closest('.img-zoom-close')) closeIt();
+      });
+      document.addEventListener('keydown', onKey);
+      document.body.appendChild(mask);
+    };
+    if (mainImg) {
+      mainImg.style.cursor = 'zoom-in';
+      mainImg.addEventListener('click', () => {
+        const im = mainImg.querySelector('img');
+        if (im) openImageZoom(im.getAttribute('src'));
+      });
+    }
     window.addEventListener('pagehide', flushImage, { once: true });
     // 图片切换
     const thumbs = root.querySelector('#thumbs');

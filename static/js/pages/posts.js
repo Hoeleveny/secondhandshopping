@@ -175,7 +175,7 @@ export function openPostModal(onDone) {
         <label>配图（最多 ${maxImages} 张，jpg / png / webp，单张 ≤ 2MB）</label>
         <input type="file" id="po-images" accept="image/jpeg,image/png,image/webp" multiple style="display:none">
         <button type="button" class="btn" id="po-pick">📎 选择图片</button>
-        <div class="gallery-thumbs" id="po-image-list"></div>
+        <div class="gallery-thumbs img-grid" id="po-image-list"></div>
       </div>`,
     footer: `<button class="btn" data-close>取消</button>
              <button class="btn btn-primary" id="po-submit">发布</button>`,

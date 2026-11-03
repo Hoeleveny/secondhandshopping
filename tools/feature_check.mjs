@@ -6361,6 +6361,64 @@ async function feature59(cdp) {
   await cdp.shot(path.join(SHOT_DIR, 'f59-user-edit.png'));
 }
 
+/* ================================================================ 功能60 图片排布与放大（本批需求②） */
+async function feature60(cdp) {
+  console.log('\n===== 功能60 图片排布与放大（本批需求②）=====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  await cdp.loginAs('seller1', '123456', 'seller');
+  await cdp.go('/publish');
+  await waitFor(cdp, `!!document.querySelector('#image-list')`);
+  const form = await cdp.eval(`
+    (() => {
+      const list = document.querySelector('#image-list');
+      const input = document.querySelector('#f-images');
+      const cs = list ? getComputedStyle(list) : null;
+      return {
+        hasList: !!list,
+        gridClass: !!list && list.classList.contains('img-grid'),
+        display: cs ? cs.display : null,
+        cols: cs ? cs.gridTemplateColumns.split(' ').length : 0,
+        multiple: input ? input.multiple : null,
+      };
+    })()`);
+  check('需求②：发布表单的图片区是「九宫格」排布（3 列网格）',
+    form.hasList === true && form.gridClass === true && form.display === 'grid' && form.cols === 3,
+    JSON.stringify(form));
+  check('需求②：图片输入仍是多选（多图发布）', form.multiple === true, String(form.multiple));
+
+  // 详情页大图可点开放大——用一件带图商品
+  const listed = await api('GET', '/api/products?page=1&page_size=50', { token: sellerToken });
+  const withImg = (listed.data.list || []).find(p => (p.images || []).length > 0);
+  check('需求②：能找到一个带图商品用于验证放大', !!withImg, withImg ? String(withImg.id) : 'none');
+  if (withImg) {
+    await cdp.go(`/product/${withImg.id}`);
+    await waitFor(cdp, `!!document.querySelector('#gallery-main img')`);
+    await sleep(700);
+    const cursor = await cdp.eval(`getComputedStyle(document.querySelector('#gallery-main')).cursor`);
+    check('需求②：详情页大图可点击（鼠标变放大镜）', cursor === 'zoom-in', String(cursor));
+
+    await cdp.eval(`document.querySelector('#gallery-main').click()`);
+    await sleep(600);
+    const zoom = await cdp.eval(`
+      (() => {
+        const m = document.querySelector('.img-zoom');
+        return { open: !!m, hasImg: !!(m && m.querySelector('img')),
+                 src: m && m.querySelector('img') ? (m.querySelector('img').getAttribute('src') || '').slice(0, 30) : '',
+                 hasClose: !!(m && m.querySelector('.img-zoom-close')) };
+      })()`);
+    check('需求②：点大图能全屏放大（有图 + 有关闭按钮）',
+      zoom.open === true && zoom.hasImg === true && zoom.hasClose === true, JSON.stringify(zoom));
+    await cdp.shot(path.join(SHOT_DIR, 'f60-image-zoom.png'));
+
+    // 关闭
+    await cdp.eval(`document.querySelector('.img-zoom-close').click()`);
+    await sleep(500);
+    const closed = await cdp.eval(`!document.querySelector('.img-zoom')`);
+    check('需求②：点关闭按钮能退出放大', closed === true, String(closed));
+  }
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -6419,7 +6477,8 @@ const GROUPS = {
   56: { title: '折叠持久 + 用户类型归类', fn: feature56 },
   57: { title: '会话行可删除/对齐 + 分页跳转', fn: feature57 },
   58: { title: '多维用户画像', fn: feature58 },
-  59: { title: '管理员编辑用户资料（本批需求①）', fn: feature59 },
+  59: { title: '管理员编辑用户资料', fn: feature59 },
+  60: { title: '图片九宫格与全屏放大（本批需求②）', fn: feature60 },
 };
 
 async function main() {

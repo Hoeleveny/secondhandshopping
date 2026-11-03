@@ -844,3 +844,24 @@
 
 /* 会话行与普通行排版保持一致（列宽由 .tl-item 的 grid 统一定义，这里只补细节） */
 .tl-item.tl-group .tl-check-box { cursor: pointer; }
+
+/* 2026-10-18 需求②：图片九宫格预览（发布/编辑时的已选图） */
+.gallery-thumbs.img-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.gallery-thumbs.img-grid > * { width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: cover;
+  border-radius: 8px; }
+.gallery-thumbs.img-grid .img-item { position: relative; }
+.gallery-thumbs.img-grid .img-item img { width: 100%; height: 100%; object-fit: cover;
+  border-radius: 8px; border: 1px solid var(--border); }
+
+/* 2026-10-18 需求②：详情页大图全屏查看 */
+.img-zoom { position: fixed; inset: 0; z-index: 3000; background: rgba(0,0,0,.86);
+  display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
+.img-zoom img { max-width: 92vw; max-height: 92vh; object-fit: contain; border-radius: 6px; }
+.img-zoom-close { position: absolute; top: 18px; right: 22px; width: 36px; height: 36px;
+  border-radius: 50%; border: 0; font-size: 18px; cursor: pointer;
+  background: rgba(255,255,255,.16); color: #fff; }
+.img-zoom-close:hover { background: rgba(255,255,255,.3); }

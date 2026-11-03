@@ -92,7 +92,7 @@ export default {
               <label>商品图片（最多 ${maxImages} 张，jpg / png / webp，单张 ≤ 2MB）</label>
               <input type="file" id="f-images" accept="image/jpeg,image/png,image/webp" multiple style="display:none">
               <button type="button" class="btn" id="btn-pick-images">📎 选择图片</button>
-              <div class="gallery-thumbs" id="image-list"></div>
+              <div class="gallery-thumbs img-grid" id="image-list"></div>
             </div>
 
             <div class="divider"></div>
