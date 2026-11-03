@@ -1375,6 +1375,56 @@ async function renderUsers(panel) {
   await load();
 }
 
+/** 2026-10-18 需求①：管理员编辑用户资料（昵称 / 用户名 / 重置密码 / 简介） */
+function openUserEdit(u, refresh) {
+  const body = `
+    <div class="form-grid">
+      <div class="form-row">
+        <label>昵称</label>
+        <input class="input" id="ue-nickname" maxlength="50" value="${esc(u.nickname || '')}">
+      </div>
+      <div class="form-row">
+        <label>用户名（登录名）</label>
+        <input class="input" id="ue-username" maxlength="50" value="${esc(u.username || '')}">
+        <div class="muted small">3~50 位，只能字母 / 数字 / 下划线 / 短横线，不能和别人重复</div>
+      </div>
+      <div class="form-row">
+        <label>重置密码（留空则不改）</label>
+        <input class="input" id="ue-password" type="password" maxlength="50"
+               placeholder="至少 6 位，留空表示不修改" autocomplete="new-password">
+      </div>
+      <div class="form-row">
+        <label>简介</label>
+        <input class="input" id="ue-bio" maxlength="100" value="${esc(u.bio || '')}">
+      </div>
+    </div>
+    <div class="muted small mt-8">注意：角色 / 头像 / 封禁状态不在这里改（封禁走封禁接口）。</div>`;
+  openModal({
+    title: `编辑资料：${u.nickname || u.username}`,
+    size: 'detail',
+    body,
+    footer: `<button class="btn" data-close>取消</button>
+             <button class="btn btn-primary" id="ue-save">保存</button>`,
+    onMount(modal, close) {
+      modal.querySelector('#ue-save').addEventListener('click', async () => {
+        const payload = {
+          nickname: modal.querySelector('#ue-nickname').value.trim(),
+          username: modal.querySelector('#ue-username').value.trim(),
+          password: modal.querySelector('#ue-password').value,
+          bio: modal.querySelector('#ue-bio').value.trim(),
+        };
+        if (!payload.nickname) { toast('昵称不能为空', 'error'); return; }
+        try {
+          const res = await api.put(`/api/admin/users/${u.id}`, payload);
+          toast(res.msg || '已保存');
+          close();
+          if (typeof refresh === 'function') refresh();
+        } catch (err) { toast(err.message, 'error'); }
+      });
+    },
+  });
+}
+
 async function openUserDetail(uid, refresh) {
   let d;
   try {
@@ -1395,6 +1445,7 @@ async function openUserDetail(uid, refresh) {
           ${d.banned ? '<span class="badge badge-danger">已封禁</span>' : ''}</div>
         <div class="muted small">@${esc(d.username)}　${esc(d.bio || '未填写简介')}</div>
       </div>
+      ${d.role === 'admin' ? '' : '<button class="btn btn-sm" id="ud-edit" style="margin-left:auto">✏️ 编辑资料</button>'}
     </div>
     <div class="kv-list cols-2">
       ${kvLines([
@@ -1457,6 +1508,10 @@ async function openUserDetail(uid, refresh) {
       : `<button class="btn btn-danger" data-ban="${d.id}">封禁用户</button>`)}
       <button class="btn" data-close>关闭</button>`,
     onMount(modal, close) {
+      modal.querySelector('#ud-edit')?.addEventListener('click', () => {
+        close();
+        openUserEdit(d, refresh);
+      });
       modal.querySelectorAll('[data-goto]').forEach(el =>
         el.addEventListener('click', () => { close(); location.hash = el.dataset.goto; }));
       modal.querySelector('[data-ban]')?.addEventListener('click', () => {

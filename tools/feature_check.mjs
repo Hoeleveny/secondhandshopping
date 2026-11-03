@@ -6278,6 +6278,89 @@ async function feature58(cdp) {
   await api('DELETE', `/api/products/${pid}`, { token: sellerToken }).catch(() => null);
 }
 
+/* ================================================================ 功能59 管理员编辑用户资料（本批需求①） */
+async function feature59(cdp) {
+  console.log('\n===== 功能59 管理员编辑用户资料（本批需求①）=====');
+
+  // 用一个「已封禁」的测试账号最安全：不干扰演示数据
+  const adminToken = await login('admin', '123456', 'admin');
+  const buyerToken = await login('buyer2', '123456', 'buyer');
+  const buyer = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+  const oldNick = buyer.nickname;
+  const newNick = `自动化测试-改名-${String(Date.now()).slice(-5)}`;
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=users');
+  await waitFor(cdp, `document.querySelectorAll('tr[data-uid]').length > 0`);
+  await sleep(800);
+
+  // 打开该用户详情
+  await cdp.eval(`
+    (() => {
+      const row = document.querySelector('tr[data-uid="${buyer.id}"]');
+      if (row) row.click();
+    })()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask #ud-edit')`);
+  const hasBtn = await cdp.eval(`!!document.querySelector('.modal-mask #ud-edit')`);
+  check('需求①：用户详情弹窗里有「编辑资料」按钮', hasBtn === true, String(hasBtn));
+
+  // 点开编辑 → 改昵称 → 保存
+  await cdp.eval(`document.querySelector('.modal-mask #ud-edit').click()`);
+  await waitFor(cdp, `!!document.querySelector('#ue-nickname')`);
+  await sleep(400);
+  await cdp.eval(`
+    (() => {
+      const input = document.querySelector('#ue-nickname');
+      input.value = '${newNick}';
+      document.querySelector('#ue-save').click();
+    })()`);
+  await sleep(1800);
+
+  const saved = await api('GET', `/api/admin/users/${buyer.id}`, { token: adminToken });
+  check('需求①：在界面上改昵称后真的保存了（接口里已是新昵称）',
+    saved.data.nickname === newNick, JSON.stringify({ oldNick, now: saved.data.nickname }));
+
+  // 校验类错误要在界面上给出提示（用重复用户名试一次）
+  await cdp.eval(`
+    (() => {
+      const row = document.querySelector('tr[data-uid="${buyer.id}"]');
+      if (row) row.click();
+    })()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask #ud-edit')`);
+  await cdp.eval(`document.querySelector('.modal-mask #ud-edit').click()`);
+  await waitFor(cdp, `!!document.querySelector('#ue-username')`);
+  await sleep(300);
+  await cdp.eval(`
+    (() => {
+      document.querySelector('#ue-username').value = 'buyer1';
+      document.querySelector('#ue-save').click();
+    })()`);
+  await sleep(1200);
+  const err = await cdp.eval(`
+    (() => ({
+      toast: [...document.querySelectorAll('.toast')].map(t => t.innerText.trim()).join(' '),
+      stillOpen: !!document.querySelector('#ue-username'),
+    }))()`);
+  check('需求①：用户名重复时给出错误提示（弹窗不关）',
+    /占用|用户名/.test(err.toast) && err.stillOpen === true, JSON.stringify(err));
+
+  // 还原昵称 + 关弹窗
+  await cdp.eval(`
+    (() => {
+      document.querySelector('#ue-username').value = '${buyer.username}';
+      document.querySelector('#ue-nickname').value = '${oldNick}';
+      document.querySelector('#ue-save').click();
+    })()`);
+  await sleep(1500);
+  await cdp.eval(`document.querySelector('.modal-mask [data-close]')?.click()`);
+  await sleep(300);
+
+  const restored = await api('GET', `/api/admin/users/${buyer.id}`, { token: adminToken });
+  check('需求①：还原昵称成功（测试不留脏数据）', restored.data.nickname === oldNick,
+    String(restored.data.nickname));
+  await cdp.shot(path.join(SHOT_DIR, 'f59-user-edit.png'));
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -6335,7 +6418,8 @@ const GROUPS = {
   54: { title: '行为记录并入动态监控（本批需求①）', fn: feature54 },
   56: { title: '折叠持久 + 用户类型归类', fn: feature56 },
   57: { title: '会话行可删除/对齐 + 分页跳转', fn: feature57 },
-  58: { title: '多维用户画像（本批需求）', fn: feature58 },
+  58: { title: '多维用户画像', fn: feature58 },
+  59: { title: '管理员编辑用户资料（本批需求①）', fn: feature59 },
 };
 
 async function main() {

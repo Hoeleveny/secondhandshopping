@@ -1192,6 +1192,66 @@ def user_detail(uid: int):
     return ok(data)
 
 
+@bp.put("/users/<int:uid>")
+@admin_required
+def update_user(uid: int):
+    """管理员编辑用户资料（2026-10-18 需求①）：昵称 / 用户名 / 重置密码 / 简介。
+
+    刻意不开放：角色（防止越权提权）、头像（本人上传）、封禁字段（走封禁接口）。
+    """
+    from werkzeug.security import generate_password_hash
+
+    user = User.query.get(uid)
+    if user is None:
+        return fail("用户不存在", 404)
+    if user.role == ROLE_ADMIN:
+        return fail("管理员账号的资料不在这里修改", 403)
+
+    body = json_body() or {}
+    changed = []
+
+    nickname = (body.get("nickname") or "").strip()
+    if nickname and nickname != user.nickname:
+        if len(nickname) > 50:
+            return fail("昵称最长 50 个字")
+        changed.append("昵称「%s」→「%s」" % (user.nickname, nickname))
+        user.nickname = nickname
+
+    username = (body.get("username") or "").strip()
+    if username and username != user.username:
+        if len(username) < 3 or len(username) > 50:
+            return fail("用户名长度应为 3~50 个字符")
+        if not all(c.isalnum() or c in "_-" for c in username):
+            return fail("用户名只能包含字母、数字、下划线和短横线")
+        if User.query.filter(User.username == username, User.id != user.id).first():
+            return fail("这个用户名已经被占用了")
+        changed.append("用户名「%s」→「%s」" % (user.username, username))
+        user.username = username
+
+    password = (body.get("password") or "").strip()
+    if password:
+        if len(password) < 6:
+            return fail("密码至少 6 位")
+        user.password_hash = generate_password_hash(password)
+        changed.append("重置了密码")
+
+    bio = body.get("bio")
+    if bio is not None:
+        bio = str(bio).strip()
+        if len(bio) > 100:
+            return fail("简介最长 100 个字")
+        if bio != (user.bio or ""):
+            changed.append("更新了简介")
+            user.bio = bio or None
+
+    if not changed:
+        return fail("没有要修改的内容")
+
+    db.session.commit()
+    audit.record("user_update", "user", user.id, "修改用户资料：" + "；".join(changed)[:200])
+    return ok({"user": user.to_dict()}, msg="已保存：" + "；".join(changed))
+
+
 @bp.post("/users/<int:uid>/ban")
 @admin_required
 def ban_user(uid: int):

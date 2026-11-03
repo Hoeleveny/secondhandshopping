@@ -2041,6 +2041,43 @@ def main() -> int:
           all(k in _d8b for k in ("views", "products", "head_share", "style", "avg_dwell_ms")),
           str(_d8b)[:120])
 
+    # ---------------- 本批需求①：管理员编辑用户资料 ----------------
+    section("本批需求① 管理员编辑用户资料")
+
+    _st, r = call("POST", "/api/auth/login",
+                  body={"username": "admin", "password": "123456", "role": "admin"})
+    _ue_at = (r.get("data") or {}).get("token")
+    _st, r = call("GET", "/api/auth/me", token=token)
+    _ue_me = ((r.get("data") or {}).get("user") or {})
+    _ue_uid = _ue_me.get("id")
+    _ue_old = _ue_me.get("nickname")
+
+    _st, r = call("PUT", f"/api/admin/users/{_ue_uid}", token=_ue_at,
+                  body={"nickname": "冒烟测试-改名"})
+    check("需求①：管理员能改用户昵称", r.get("code") == 0, str(r)[:120])
+    _st, r = call("GET", f"/api/admin/users/{_ue_uid}", token=_ue_at)
+    check("需求①：改完立刻生效（详情里是新昵称）",
+          ((r.get("data") or {}).get("nickname")) == "冒烟测试-改名", str((r.get("data") or {}).get("nickname")))
+
+    _st, r = call("PUT", f"/api/admin/users/{_ue_uid}", token=_ue_at,
+                  body={"username": "buyer1"})
+    check("需求①：用户名重复会被拒绝", r.get("code") != 0, str(r)[:100])
+    _st, r = call("PUT", f"/api/admin/users/{_ue_uid}", token=_ue_at,
+                  body={"password": "123"})
+    check("需求①：密码太短会被拒绝", r.get("code") != 0, str(r)[:100])
+    _st, r = call("PUT", f"/api/admin/users/{_ue_uid}", token=_ue_at, body={})
+    check("需求①：没有任何修改时提示「没有要修改的内容」", r.get("code") != 0, str(r)[:100])
+    _st, r = call("PUT", "/api/admin/users/1", token=_ue_at, body={"nickname": "改管理员"})
+    check("需求①：管理员账号的资料不在这里改", r.get("code") != 0, str(r)[:100])
+
+    _st, r = call("PUT", f"/api/admin/users/{_ue_uid}", token=token, body={"nickname": "x"})
+    check("需求①：普通用户不能改别人的资料", r.get("code") != 0, str(r)[:100])
+
+    # 还原昵称
+    _st, r = call("PUT", f"/api/admin/users/{_ue_uid}", token=_ue_at,
+                  body={"nickname": _ue_old})
+    check("需求①：改回原名也成功（往返都不丢）", r.get("code") == 0, str(r)[:100])
+
     # ---------------- 本批需求①：删除自己的评论 ----------------
     section("本批需求① 删除自己的评论")
 
