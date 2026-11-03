@@ -805,7 +805,10 @@ async function renderTrades(panel) {
               <div><div class="muted small mb-8">帖子关注点（共 ${ut.post_total || 0} 次浏览）</div>
                 ${tags || '<div class="muted small">还没有浏览帖子</div>'}</div>
             </div>
-            <div class="muted small" style="margin-top:8px">归类规则：${esc(ut.rule || '')}</div>
+            <div class="row-between" style="margin-top:8px">
+              <span class="muted small">归类规则：${esc(ut.rule || '')}</span>
+              <button class="btn btn-sm" id="lg-profile-charts">📊 查看图表</button>
+            </div>
           </div>
           ${(() => {
             // 2026-10-18 多维画像：价格带 / 停留时长 / 深度 / 转化 / 图片偏好 / 活跃时段
@@ -860,6 +863,7 @@ async function renderTrades(panel) {
       </div>`;
     box.querySelector('#lg-profile-copy')?.addEventListener('click',
       () => copyText(u.nickname || u.username, '昵称'));
+    box.querySelector('#lg-profile-charts')?.addEventListener('click', () => openProfileCharts(data));
   }
 
   /* ---------------- 动态监控：行渲染（业务日志 / 登录登出 / 浏览折叠组）---------------- */
@@ -1373,6 +1377,123 @@ async function renderUsers(panel) {
   });
 
   await load();
+}
+
+/** 2026-10-18：用户画像图表弹窗（悬停显示详细数据；图表全部手绘，不引第三方库） */
+function openProfileCharts(d) {
+  const ut = d.utype || {};
+  const cats = ut.breakdown || [];              // 商品品类占比
+  const tags = ut.post_breakdown || [];         // 帖子关注点
+  const prices = d.price_breakdown || [];       // 价格带
+  const hours = d.hours || [];                  // 活跃时段
+  const im = d.images || {};
+
+  const pct = (v) => Math.round((v || 0) * 100);
+  const COLORS = ['var(--primary)', 'var(--primary)', 'var(--warning)',
+                  'var(--danger)', 'var(--text-secondary)', 'var(--text-sub)'];
+
+  // 环形图（SVG：用 stroke-dasharray 画每段）
+  const ringSegments = () => {
+    const total = cats.reduce((a, b) => a + (b.count || 0), 0) || 1;
+    let offset = 0;
+    const R = 52, C = 2 * Math.PI * R;
+    return cats.map((c, i) => {
+      const len = (c.count / total) * C;
+      const seg = `<circle class="ring-seg" cx="70" cy="70" r="${R}" fill="none"
+          stroke="${COLORS[i % COLORS.length]}" stroke-width="22"
+          stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-offset}"
+          data-chart="cat" data-label="${esc(c.name)}" data-count="${c.count}"
+          data-pct="${pct(c.share)}"><title></title></circle>`;
+      offset += len;
+      return seg;
+    }).join('');
+  };
+
+  // 柱状图（HTML/CSS，高度按最大值归一）
+  const bars = (rows, key) => {
+    const max = Math.max(1, ...rows.map(r => r.count || 0));
+    return rows.map(r => `
+      <div class="ch-bar-wrap" data-chart="${key}" data-label="${esc(r.name || (r.hour + ':00'))}"
+           data-count="${r.count}" data-pct="${pct(r.share)}"
+           title="">
+        <div class="ch-bar" style="height:${Math.max(4, Math.round((r.count / max) * 100))}%"></div>
+      </div>`).join('');
+  };
+
+  const hbars = (rows, key) => {
+    const max = Math.max(1, ...rows.map(r => r.count || 0));
+    return rows.map(r => `
+      <div class="ch-hrow" data-chart="${key}" data-label="${esc(r.name)}"
+           data-count="${r.count}" data-pct="${pct(r.share)}">
+        <span class="ch-hlabel">${esc(r.name)}</span>
+        <span class="ch-htrack"><span class="ch-hfill"
+          style="width:${Math.max(3, Math.round((r.count / max) * 100))}%"></span></span>
+        <span class="ch-hval">${r.count}</span>
+      </div>`).join('');
+  };
+
+  const body = `
+    <div class="ch-grid">
+      <div class="ch-card">
+        <div class="ch-title">商品品类占比 <span class="muted small">（共 ${ut.product_total || 0} 次浏览）</span></div>
+        ${cats.length ? `<div class="ch-ring-box">
+          <svg class="ch-ring" viewBox="0 0 140 140">${ringSegments()}</svg>
+          <div class="ch-legend">${cats.map((c, i) => `
+            <div class="ch-leg"><i style="background:${COLORS[i % COLORS.length]}"></i>
+              ${esc(c.name)} · ${c.count} 次 · ${pct(c.share)}%</div>`).join('')}</div>
+        </div>` : '<div class="muted small">还没有浏览商品</div>'}
+      </div>
+
+      <div class="ch-card">
+        <div class="ch-title">价格带偏好</div>
+        ${prices.length ? `<div class="ch-bars">${bars(prices.slice().reverse(), 'price')}</div>
+          <div class="ch-xaxis">${prices.slice().reverse().map(r => `<span>${esc(r.name)}</span>`).join('')}</div>`
+          : '<div class="muted small">还没有浏览带价格的商品</div>'}
+      </div>
+
+      <div class="ch-card">
+        <div class="ch-title">活跃时段 <span class="muted small">（登录 + 浏览次数）</span></div>
+        ${hours.length ? `<div class="ch-bars">${bars(hours, 'hour')}</div>
+          <div class="ch-xaxis">${hours.map(h => `<span>${h.hour}</span>`).join('')}</div>`
+          : '<div class="muted small">暂无数据</div>'}
+      </div>
+
+      <div class="ch-card">
+        <div class="ch-title">帖子关注点</div>
+        ${tags.length ? `<div class="ch-hbars">${hbars(tags, 'tag')}</div>`
+          : '<div class="muted small">还没有浏览帖子</div>'}
+      </div>
+    </div>
+    <div class="ch-foot muted small">
+      图片偏好：${esc(im.style || '暂无数据')}　·　共 ${im.views || 0} 次看图、头图占 ${pct(im.head_share)}%
+      　·　平均停留 ${esc((d.depth || {}).avg_dwell_text || '—')}
+    </div>
+    <div class="ch-tip" id="ch-tip" hidden></div>`;
+
+  openModal({
+    title: `画像图表 · ${d.nickname || d.username || ''}`,
+    size: 'detail',
+    body,
+    footer: '<button class="btn" data-close>关闭</button>',
+    onMount(modal) {
+      const tip = modal.querySelector('#ch-tip');
+      const show = (event, el) => {
+        const label = el.dataset.label || '';
+        const count = el.dataset.count || '0';
+        const share = el.dataset.pct ? `　占 ${el.dataset.pct}%` : '';
+        tip.textContent = `${label}：${count} 次${share}`;
+        tip.hidden = false;
+        const box = modal.getBoundingClientRect();
+        tip.style.left = `${event.clientX - box.left + 12}px`;
+        tip.style.top = `${event.clientY - box.top + 12}px`;
+      };
+      modal.querySelectorAll('[data-chart]').forEach(el => {
+        el.addEventListener('mousemove', (e) => show(e, el));
+        el.addEventListener('mouseenter', (e) => show(e, el));
+        el.addEventListener('mouseleave', () => { tip.hidden = true; });
+      });
+    },
+  });
 }
 
 /** 2026-10-18 需求①：管理员编辑用户资料（昵称 / 用户名 / 重置密码 / 简介） */

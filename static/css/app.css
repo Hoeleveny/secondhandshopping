@@ -865,3 +865,32 @@
   border-radius: 50%; border: 0; font-size: 18px; cursor: pointer;
   background: rgba(255,255,255,.16); color: #fff; }
 .img-zoom-close:hover { background: rgba(255,255,255,.3); }
+
+/* 2026-10-18：用户画像图表（手绘 SVG/HTML，悬停显示详情，颜色走主题变量） */
+.ch-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.ch-card { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--bg-secondary); }
+.ch-title { font-weight: 600; margin-bottom: 10px; font-size: 14px; }
+.ch-ring-box { display: flex; gap: 14px; align-items: center; }
+.ch-ring { width: 140px; height: 140px; flex: none; }
+.ch-ring .ring-seg { cursor: pointer; transition: opacity .15s; }
+.ch-ring .ring-seg:hover { opacity: .75; }
+.ch-legend { display: flex; flex-direction: column; gap: 4px; font-size: 12px; min-width: 0; }
+.ch-leg { display: flex; align-items: center; gap: 6px; color: var(--text-sub); }
+.ch-leg i { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.ch-bars { display: flex; align-items: flex-end; gap: 6px; height: 110px; padding-top: 6px; }
+.ch-bar-wrap { flex: 1 1 0; height: 100%; display: flex; align-items: flex-end; cursor: pointer; }
+.ch-bar { width: 100%; background: var(--primary); border-radius: 4px 4px 0 0; transition: filter .15s; }
+.ch-bar-wrap:hover .ch-bar { filter: brightness(1.15); }
+.ch-xaxis { display: flex; gap: 6px; margin-top: 4px; font-size: 11px; color: var(--text-sub); }
+.ch-xaxis span { flex: 1 1 0; text-align: center; overflow: hidden; white-space: nowrap; }
+.ch-hbars { display: flex; flex-direction: column; gap: 6px; }
+.ch-hrow { display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer; }
+.ch-hlabel { width: 56px; flex: none; color: var(--text-sub); }
+.ch-htrack { flex: 1 1 auto; height: 12px; background: var(--bg); border-radius: 6px; overflow: hidden; }
+.ch-hfill { display: block; height: 100%; background: var(--primary); border-radius: 6px; }
+.ch-hrow:hover .ch-hfill { filter: brightness(1.15); }
+.ch-hval { width: 26px; text-align: right; color: var(--text-sub); }
+.ch-foot { margin-top: 10px; }
+.ch-tip { position: absolute; z-index: 10; pointer-events: none; padding: 5px 9px; font-size: 12px;
+  border-radius: 6px; background: var(--text); color: var(--bg); white-space: nowrap;
+  box-shadow: 0 2px 10px rgba(0,0,0,.18); }

@@ -1924,7 +1924,7 @@ def main() -> int:
     check("需求①：行为/会话记录带 key（act-xx / ses-xx）便于统一勾选删除",
           str(_mg_any.get("key", "")).startswith(("act-", "ses-")), str(_mg_any.get("key")))
 
-    _st, r = call("GET", "/api/admin/activities/profile?user=buyer1", token=_mg_at)
+    _st, r = call("GET", "/api/admin/activities/profile?user_id=2", token=_mg_at)
     _mg_prof = r.get("data") or {}
     check("需求①：按用户小结给出登录次数/累计时长/常去页面/最近活跃",
           r.get("code") == 0 and "login_count" in _mg_prof and "total_text" in _mg_prof
@@ -1933,7 +1933,7 @@ def main() -> int:
           "%s 次 / %s / %s" % (_mg_prof.get("login_count"), _mg_prof.get("total_text"),
                               [p.get("name") for p in (_mg_prof.get("top_pages") or [])][:3]))
 
-    _st, r = call("GET", "/api/admin/activities/profile?user=buyer1", token=token)
+    _st, r = call("GET", "/api/admin/activities/profile?user_id=2", token=token)
     check("需求①：普通用户看不到别人的使用小结", r.get("code") != 0, str(r)[:100])
 
     # 删一条行为记录（用刚造的那条 /compare 浏览）
@@ -1993,7 +1993,7 @@ def main() -> int:
     _st, r = call("POST", "/api/auth/login",
                   body={"username": "admin", "password": "123456", "role": "admin"})
     _ut_at = (r.get("data") or {}).get("token")
-    _st, r = call("GET", "/api/admin/activities/profile?user=buyer1", token=_ut_at)
+    _st, r = call("GET", "/api/admin/activities/profile?user_id=2", token=_ut_at)
     _ut = (r.get("data") or {}).get("utype") or {}
     check("需求③：按用户小结返回「用户类型」（主类型 + 依据 + 规则）",
           r.get("code") == 0 and isinstance(_ut.get("main"), str) and bool(_ut.get("reason"))
@@ -2013,7 +2013,7 @@ def main() -> int:
     _st, r = call("POST", "/api/auth/login",
                   body={"username": "admin", "password": "123456", "role": "admin"})
     _d8_at = (r.get("data") or {}).get("token")
-    _st, r = call("GET", "/api/admin/activities/profile?user=buyer1", token=_d8_at)
+    _st, r = call("GET", "/api/admin/activities/profile?user_id=2", token=_d8_at)
     _d8 = r.get("data") or {}
     check("多维画像：接口返回价格带/停留/深度/转化/图片/活跃时段",
           isinstance(_d8.get("price_breakdown"), list) and isinstance(_d8.get("depth"), dict)
@@ -2035,7 +2035,7 @@ def main() -> int:
                   body={"product_id": 1, "index": 0, "dwell_ms": 1000})
     check("多维画像：未登录不能上报图片行为", r.get("code") != 0, str(r)[:100])
 
-    _st, r = call("GET", "/api/admin/activities/profile?user=buyer1", token=_d8_at)
+    _st, r = call("GET", "/api/admin/activities/profile?user_id=2", token=_d8_at)
     _d8b = (r.get("data") or {}).get("images") or {}
     check("多维画像：图片偏好汇总出「次数 / 商品数 / 头图占比 / 风格」",
           all(k in _d8b for k in ("views", "products", "head_share", "style", "avg_dwell_ms")),

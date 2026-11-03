@@ -5926,7 +5926,11 @@ async function feature56(cdp) {
   console.log('\n===== 功能56 折叠可正常使用 + 用户类型归类（本批需求①③④）=====');
 
   const sellerToken = await login('seller1', '123456', 'seller');
-  const buyerToken = await login('buyer2', '123456', 'buyer');
+  // 2026-10-18：画像分类用例必须用**干净账号**——共用演示账号时，别的测试留下的浏览记录
+  // 会把占比冲淡（曾出现"只看了教材却判成数码装备型"）
+  const uname = `自动化测试_画像${String(Date.now()).slice(-6)}`;
+  await api('POST', '/api/auth/register', { body: { username: uname, password: '123456' } });
+  const buyerToken = await login(uname, '123456', 'buyer');
   const buyer = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
 
   await cdp.loginAs('admin', '123456', 'admin');
@@ -6473,6 +6477,102 @@ async function feature61(cdp) {
   await cdp.shot(path.join(SHOT_DIR, 'f61-recommend.png'));
 }
 
+/* ================================================================ 功能62 用户画像图表 + 悬停详情（本批需求） */
+async function feature62(cdp) {
+  console.log('\n===== 功能62 用户画像图表 + 悬停详情 =====');
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=trades');
+  await waitFor(cdp, `document.querySelectorAll('#lg-list .tl-item').length > 0`);
+  await sleep(1200);
+
+  // 打开某个用户的使用小结
+  await cdp.eval(`
+    (() => {
+      document.querySelector('#lg-profile-user').value = 'buyer1';
+      document.querySelector('#lg-profile-go').click();
+    })()`);
+  await waitFor(cdp, `!!document.querySelector('#lg-profile-charts')`);
+  await sleep(400);
+  const hasBtn = await cdp.eval(`!!document.querySelector('#lg-profile-charts')`);
+  check('需求：小结卡上有「📊 查看图表」按钮', hasBtn === true, String(hasBtn));
+
+  await cdp.eval(`document.querySelector('#lg-profile-charts').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask .ch-card')`);
+  await sleep(600);
+
+  const charts = await cdp.eval(`
+    (() => {
+      const m = document.querySelector('.modal-mask');
+      if (!m) return { open: false };
+      const titles = [...m.querySelectorAll('.ch-title')].map(e => e.innerText.trim());
+      return {
+        open: true,
+        cards: m.querySelectorAll('.ch-card').length,
+        titles,
+        rings: m.querySelectorAll('.ring-seg').length,
+        bars: m.querySelectorAll('.ch-bar-wrap').length,
+        hbars: m.querySelectorAll('.ch-hrow').length,
+        hasTip: !!m.querySelector('#ch-tip'),
+        noCanvas: m.querySelectorAll('canvas').length === 0,
+      };
+    })()`);
+  check('需求：画像弹窗里有四张图表（品类/价格带/时段/帖子）',
+    charts.open === true && charts.cards === 4
+    && charts.titles.some(t => t.startsWith('商品品类占比'))
+    && charts.titles.some(t => t.startsWith('价格带偏好'))
+    && charts.titles.some(t => t.startsWith('活跃时段'))
+    && charts.titles.some(t => t.startsWith('帖子关注点')),
+    JSON.stringify(charts.titles));
+  check('需求：图表是手绘的（环形图有分段、柱状图有柱、横条有行，且没用 canvas 库）',
+    charts.rings > 0 && charts.bars > 0 && charts.hbars > 0 && charts.noCanvas === true,
+    JSON.stringify({ rings: charts.rings, bars: charts.bars, hbars: charts.hbars }));
+
+  // 悬停一根柱子 → 出现详细数据
+  const hover = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('.modal-mask .ch-bar-wrap[data-chart]');
+      if (!el) return { ok: false };
+      const r = el.getBoundingClientRect();
+      el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+      el.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+      const tip = document.querySelector('#ch-tip');
+      return { ok: true, hidden: tip.hidden, text: tip.textContent.trim(),
+               label: el.dataset.label, count: el.dataset.count };
+    })()`);
+  check('需求：鼠标悬停在柱子上会显示详细数据（标签 + 次数）',
+    hover.ok === true && hover.hidden === false && hover.text.length > 0
+    && hover.text.includes(hover.label || ''),
+    JSON.stringify(hover));
+
+  // 移出后提示消失
+  const left = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('.modal-mask .ch-bar-wrap[data-chart]');
+      el.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
+      return document.querySelector('#ch-tip').hidden;
+    })()`);
+  check('需求：鼠标移开提示框自动隐藏', left === true, String(left));
+
+  // 环形图分段也能悬停出详情
+  const ringHover = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('.modal-mask .ring-seg');
+      if (!el) return { ok: false };
+      const r = el.getBoundingClientRect();
+      el.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: r.left + 4, clientY: r.top + 4 }));
+      const tip = document.querySelector('#ch-tip');
+      return { ok: true, hidden: tip.hidden, text: tip.textContent.trim() };
+    })()`);
+  check('需求：环形图分段悬停也能看到品类占比详情',
+    ringHover.ok === true && ringHover.hidden === false && /次/.test(ringHover.text),
+    JSON.stringify(ringHover));
+
+  await cdp.shot(path.join(SHOT_DIR, 'f62-profile-charts.png'));
+  await cdp.eval(`document.querySelector('.modal-mask [data-close]')?.click()`);
+  await sleep(300);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -6533,7 +6633,8 @@ const GROUPS = {
   58: { title: '多维用户画像', fn: feature58 },
   59: { title: '管理员编辑用户资料', fn: feature59 },
   60: { title: '图片九宫格与全屏放大', fn: feature60 },
-  61: { title: '首页猜你喜欢（本批需求③）', fn: feature61 },
+  61: { title: '首页猜你喜欢', fn: feature61 },
+  62: { title: '用户画像图表 + 悬停详情（本批需求）', fn: feature62 },
 };
 
 async function main() {
