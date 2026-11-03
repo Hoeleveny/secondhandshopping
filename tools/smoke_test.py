@@ -2078,6 +2078,36 @@ def main() -> int:
                   body={"nickname": _ue_old})
     check("需求①：改回原名也成功（往返都不丢）", r.get("code") == 0, str(r)[:100])
 
+    # ---------------- 本批需求③：猜你喜欢 ----------------
+    section("本批需求③ 猜你喜欢")
+
+    _st, r = call("GET", "/api/products/recommend?limit=5")
+    _rc_guest = r.get("data") or {}
+    check("需求③：未登录也能拿到推荐（按热门回落）",
+          r.get("code") == 0 and isinstance(_rc_guest.get("list"), list),
+          str(_rc_guest.get("reason")))
+    check("需求③：未登录时标记为「非个性化」", _rc_guest.get("personalized") is False,
+          str(_rc_guest.get("personalized")))
+
+    # 先给这个账号造一条商品浏览，画像才有东西可算
+    call("POST", "/api/activities/page", token=token,
+         body={"page": "/product/1", "name": "搜索与筛选"})
+    _st, r = call("GET", "/api/products/recommend?limit=5", token=token)
+    _rc = r.get("data") or {}
+    check("需求③：登录后返回推荐商品（不超过 limit）",
+          r.get("code") == 0 and 0 < len(_rc.get("list") or []) <= 5,
+          str(len(_rc.get("list") or [])))
+    check("需求③：有浏览记录时会给个性化标记与依据",
+          _rc.get("personalized") is True and bool(_rc.get("reason")),
+          "%s / %s" % (_rc.get("personalized"), _rc.get("reason")))
+    _rc_ids = [p["id"] for p in (_rc.get("list") or [])]
+    _st, r = call("GET", "/api/auth/me", token=token)
+    _rc_me = ((r.get("data") or {}).get("user") or {}).get("id")
+    check("需求③：推荐里不含自己发布的商品",
+          all(p.get("seller", {}).get("id") != _rc_me for p in (_rc.get("list") or []) if p.get("seller")),
+          str([p.get("name") for p in (_rc.get("list") or [])][:3]))
+    check("需求③：推荐结果不重复", len(_rc_ids) == len(set(_rc_ids)), str(_rc_ids))
+
     # ---------------- 本批需求①：删除自己的评论 ----------------
     section("本批需求① 删除自己的评论")
 

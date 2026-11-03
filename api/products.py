@@ -192,6 +192,92 @@ def my_products():
 
 
 # ------------------------------------------------------------------ 商品详情
+@bp.get("/products/recommend")
+def recommend_products():
+    """猜你喜欢（2026-10-18 需求③）：按用户画像给在售商品打分排序。
+
+    打分依据（都用现成数据，不新增埋点）：
+    - 品类偏好：看过的大类占比 → 命中的大类加权
+    - 价格带：看过的商品落在哪个价位段 → 同段加权
+    - 热度：被收藏 / 被浏览（有则加一点，冷启动也有东西推）
+    - 排除：自己发布的、已售/已下架/已删除的
+    未登录或没有画像时，纯按「热度 + 最新」回落。
+    """
+    from models import ProductImageView, UserActivity
+    from api.activities import classify_page
+
+    me = current_user()
+    limit = arg_int("limit", 8) or 8
+    limit = max(1, min(limit, 20))
+
+    q = Product.query.filter(Product.status == PRODUCT_ON_SALE)
+    if me is not None:
+        q = q.filter(Product.seller_id != me.id)
+    pool = q.order_by(Product.created_at.desc()).limit(300).all()
+    if not pool:
+        return ok({"list": [], "personalized": False, "reason": "没有在售商品"})
+
+    pref_cats, pref_prices, viewed = {}, [], set()
+    if me is not None:
+        rows = (UserActivity.query.filter(UserActivity.user_id == me.id,
+                                          UserActivity.kind == "page")
+                .order_by(UserActivity.created_at.desc()).limit(500).all())
+        pids = []
+        for r in rows:
+            kind, rid = classify_page(r.page)
+            if kind == "product":
+                pids.append(rid)
+        if pids:
+            prods = {x.id: x for x in Product.query.filter(Product.id.in_(set(pids))).all()}
+            for pid in pids:
+                pr = prods.get(pid)
+                if pr is None:
+                    continue
+                viewed.add(pid)
+                pref_cats[pr.category_id] = pref_cats.get(pr.category_id, 0) + 1
+                pref_prices.append(float(pr.price or 0))
+
+    total_cat = sum(pref_cats.values())
+    avg_price = (sum(pref_prices) / len(pref_prices)) if pref_prices else None
+
+    scored = []
+    for pr in pool:
+        score = 0.0
+        # 品类偏好（占比越高越加分，最高 3 分）
+        if total_cat and pr.category_id in pref_cats:
+            score += 3.0 * (pref_cats[pr.category_id] / total_cat)
+        # 价格带接近（相差 50% 以内加分）
+        if avg_price:
+            price = float(pr.price or 0)
+            if price > 0:
+                ratio = abs(price - avg_price) / max(avg_price, 1)
+                if ratio <= 0.5:
+                    score += 1.5 * (1 - ratio)
+        # 热度：收藏数（0~2 分）
+        from models import Favorite
+        fav = db.session.query(Favorite).filter(Favorite.product_id == pr.id).count()
+        score += min(fav, 10) * 0.2
+        # 看过的商品本身略降（避免全是已经看过的）
+        if pr.id in viewed:
+            score -= 0.8
+        # 新鲜度微调
+        scored.append((score, pr))
+
+    scored.sort(key=lambda x: (-x[0], -(x[1].id or 0)))
+    items = [pr.to_dict() for _s, pr in scored[:limit]]
+    personalized = bool(total_cat)
+    return ok({
+        "list": items,
+        "personalized": personalized,
+        "reason": "按你的浏览偏好推荐" if personalized else "热门在售商品",
+        "profile": {
+            "categories": len(pref_cats),
+            "avg_price": round(avg_price, 2) if avg_price else None,
+            "viewed": len(viewed),
+        },
+    })
+
+
 @bp.get("/products/<int:pid>")
 def product_detail(pid: int):
     product = Product.query.get(pid)

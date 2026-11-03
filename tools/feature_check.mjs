@@ -6419,6 +6419,60 @@ async function feature60(cdp) {
   }
 }
 
+/* ================================================================ 功能61 猜你喜欢（本批需求③） */
+async function feature61(cdp) {
+  console.log('\n===== 功能61 首页「猜你喜欢」（本批需求③）=====');
+
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const buyer = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+
+  // 先让他「看」几件教材类商品，强化画像（接口造数据）
+  const listed = await api('GET', '/api/products?page=1&page_size=30');
+  const books = (listed.data.list || []).filter(p => p.category_id === 1).slice(0, 3);
+  for (const b of books) {
+    await api('POST', '/api/activities/page',
+      { token: buyerToken, body: { page: `/product/${b.id}`, name: '搜索与筛选' } });
+  }
+
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go('/home');
+  await waitFor(cdp, `!!document.querySelector('#reco-card')`);
+  await sleep(900);
+
+  const block = await cdp.eval(`
+    (() => {
+      const card = document.querySelector('#reco-card');
+      if (!card) return { found: false };
+      const cards = card.querySelectorAll('.product-card');
+      const head = card.querySelector('h2');
+      return {
+        found: true,
+        title: head ? head.innerText.trim() : '',
+        count: cards.length,
+        hint: (card.querySelector('.muted.small') || {}).innerText || '',
+        names: [...cards].slice(0, 3).map(c => (c.querySelector('.pc-name') || c).innerText.trim().slice(0, 16)),
+      };
+    })()`);
+  check('需求③：首页有「猜你喜欢」区块', block.found === true && block.title === '猜你喜欢',
+    JSON.stringify(block));
+  check('需求③：区块里给出了若干商品卡', block.count > 0, String(block.count));
+  check('需求③：有浏览记录时说明是「按你看过的商品推荐」',
+    /按你看过的商品/.test(block.hint), block.hint);
+
+  // 点第一个推荐商品应能进详情
+  const before = await cdp.eval(`location.hash`);
+  await cdp.eval(`
+    (() => {
+      const c = document.querySelector('#reco-card .product-card');
+      if (c) c.click();
+    })()`);
+  await sleep(1200);
+  const after = await cdp.eval(`location.hash`);
+  check('需求③：点推荐商品能进详情页', after !== before && /^#\/product\//.test(after),
+    JSON.stringify({ before, after }));
+  await cdp.shot(path.join(SHOT_DIR, 'f61-recommend.png'));
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -6478,7 +6532,8 @@ const GROUPS = {
   57: { title: '会话行可删除/对齐 + 分页跳转', fn: feature57 },
   58: { title: '多维用户画像', fn: feature58 },
   59: { title: '管理员编辑用户资料', fn: feature59 },
-  60: { title: '图片九宫格与全屏放大（本批需求②）', fn: feature60 },
+  60: { title: '图片九宫格与全屏放大', fn: feature60 },
+  61: { title: '首页猜你喜欢（本批需求③）', fn: feature61 },
 };
 
 async function main() {

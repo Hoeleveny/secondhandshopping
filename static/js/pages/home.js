@@ -37,6 +37,12 @@ export default {
     const data = await api.get('/api/home');
     const quick = QUICK[ctx.view] || QUICK.guest;
 
+    // 2026-10-18 需求③：猜你喜欢（按画像打分；未登录/没画像时按热度回落）
+    let reco = { list: [], personalized: false, reason: '' };
+    try {
+      reco = await api.get('/api/products/recommend?limit=8');
+    } catch (err) { /* 推荐失败不影响首页 */ }
+
     const cats = data.categories.map(c => `
       <div class="cat-card" data-cat="${c.id}">
         <span class="cc-icon">${esc(c.icon || '📦')}</span>
@@ -63,6 +69,17 @@ export default {
         </div>
         <div class="grid-cards">${newest}</div>
       </div>
+
+      ${reco.list && reco.list.length ? `
+      <div class="card" id="reco-card">
+        <div class="card-head">
+          <h2>猜你喜欢</h2>
+          <span class="muted small">${esc(reco.personalized
+            ? '按你看过的商品品类与价位推荐，越逛越准'
+            : '你还没什么浏览记录，先按热门推荐')}</span>
+        </div>
+        <div class="grid-cards">${reco.list.map(productCardHtml).join('')}</div>
+      </div>` : ''}
 
       <div class="card">
         <div class="card-head"><h2>快捷入口</h2></div>
