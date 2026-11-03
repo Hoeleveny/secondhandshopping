@@ -257,6 +257,13 @@ async function check1_2() {
 
   await cdp.logout();
   await cdp.go('/login');
+  // 2026-10-18：登录页是异步渲染的，等「注册」标签出现再点，避免首轮竞态
+  for (let i = 0; i < 40; i += 1) {
+    const ready = await cdp.eval(`!!document.querySelector('.tab[data-tab="register"]')`)
+      .catch(() => false);
+    if (ready) break;
+    await sleep(250);
+  }
   const ui = await cdp.eval(`
     (() => {
       const radios = [...document.querySelectorAll('input[name="role"]')];
