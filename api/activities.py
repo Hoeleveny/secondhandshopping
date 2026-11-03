@@ -343,16 +343,21 @@ def activities_profile():
     logouts = [r for r in rows if r.kind == "logout"]
     pages = [r for r in rows if r.kind == "page"]
 
+    # 2026-10-18 性能修复：原来是「每条登录都调 session_end() 查 2 次库」，
+    # 1544 条登录 ≈ 3000 次查询、接口要 8 秒，画像卡一直停在"加载中"。
+    # 改成对已取出的 rows 做一次归并（group_sessions 就是同一套口径），O(n) 无额外查询。
     total_secs = 0
     sessions = []
-    for lg in logins:
-        end_at, closed = session_end(target.id, lg.created_at)
-        secs = int((end_at - lg.created_at).total_seconds()) if end_at else 0
+    for s_ in group_sessions(rows):
+        if not s_["login_id"]:
+            continue                      # 只统计"有登录"的会话
+        secs = int((s_["end_at"] - s_["start_at"]).total_seconds())
         total_secs += secs
         sessions.append({
-            "login_at": lg.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-            "end_at": end_at.strftime("%Y-%m-%d %H:%M:%S") if end_at else "",
-            "seconds": secs, "duration_text": duration_text(secs), "closed": closed,
+            "login_at": s_["start_at"].strftime("%Y-%m-%d %H:%M:%S"),
+            "end_at": s_["end_at"].strftime("%Y-%m-%d %H:%M:%S"),
+            "seconds": secs, "duration_text": duration_text(secs),
+            "closed": s_["closed_at"] is not None,
         })
 
     page_counter: dict = {}

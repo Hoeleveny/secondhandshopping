@@ -1993,7 +1993,12 @@ def main() -> int:
     _st, r = call("POST", "/api/auth/login",
                   body={"username": "admin", "password": "123456", "role": "admin"})
     _ut_at = (r.get("data") or {}).get("token")
+    import time as _t
+    _t0 = _t.time()
     _st, r = call("GET", "/api/admin/activities/profile?user_id=2", token=_ut_at)
+    _cost = _t.time() - _t0
+    check("性能：按用户小结必须在 3 秒内返回（防「每条登录查两次库」的 N+1 回归）",
+          _st == 200 and _cost < 3.0, f"{_cost:.2f}s")
     _ut = (r.get("data") or {}).get("utype") or {}
     check("需求③：按用户小结返回「用户类型」（主类型 + 依据 + 规则）",
           r.get("code") == 0 and isinstance(_ut.get("main"), str) and bool(_ut.get("reason"))

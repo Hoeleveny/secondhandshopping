@@ -6573,6 +6573,85 @@ async function feature62(cdp) {
   await sleep(300);
 }
 
+/* ================================================================ 功能63 画像图表配色有区分度（本批需求） */
+async function feature63(cdp) {
+  console.log('\n===== 功能63 画像图表配色（本批）=====');
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=trades');
+  await waitFor(cdp, `document.querySelectorAll('#lg-list .tl-item').length > 0`);
+  await sleep(1200);
+
+  await cdp.eval(`
+    (() => {
+      document.querySelector('#lg-profile-user').value = 'buyer1';
+      document.querySelector('#lg-profile-go').click();
+    })()`);
+  await waitFor(cdp, `!!document.querySelector('#lg-profile-charts')`);
+  await sleep(300);
+
+  const read = () => cdp.eval(`
+    (() => {
+      const m = document.querySelector('.modal-mask');
+      if (!m) return { open: false };
+      const uniq = (a) => [...new Set(a)];
+      const segs = [...m.querySelectorAll('.ring-seg')].map(s => getComputedStyle(s).stroke);
+      const bars = [...m.querySelectorAll('.ch-bar')].map(b => getComputedStyle(b).backgroundColor);
+      const hf = [...m.querySelectorAll('.ch-hfill')].map(b => getComputedStyle(b).backgroundColor);
+      const legend = [...m.querySelectorAll('.ch-leg i')].map(b => getComputedStyle(b).backgroundColor);
+      const bad = (c) => !c || c === 'none' || c === 'rgba(0, 0, 0, 0)' || /^rgb\(0, 0, 0\)/.test(c);
+      return {
+        open: true,
+        segs, segUniq: uniq(segs).length, segBad: segs.filter(bad).length,
+        legendMatch: legend.length === segs.length && legend.every((c, i) => c === segs[i]),
+        barsUniq: uniq(bars).length, barsBad: bars.filter(bad).length,
+        hfUniq: uniq(hf).length, hfBad: hf.filter(bad).length,
+      };
+    })()`);
+
+  const paper = await (async () => {
+    await cdp.eval(`document.documentElement.dataset.theme = 'paper'; localStorage.setItem('cm_theme','paper');`);
+    await sleep(250);
+    await cdp.eval(`document.querySelector('#lg-profile-charts').click()`);
+    await waitFor(cdp, `!!document.querySelector('.modal-mask .ring-seg')`);
+    await sleep(500);
+    return read();
+  })();
+
+  check('需求：环形图每个扇区颜色都不同（原来前两个都是同一种绿）',
+    paper.open === true && paper.segs.length >= 2 && paper.segUniq === paper.segs.length,
+    JSON.stringify({ segs: paper.segs, uniq: paper.segUniq }));
+  check('需求：图例色块与扇区颜色一一对应',
+    paper.legendMatch === true, JSON.stringify({ legendMatch: paper.legendMatch }));
+  check('需求：没有任何无效/透明颜色（原来引用了不存在的 --text-sub）',
+    paper.segBad === 0 && paper.barsBad === 0 && paper.hfBad === 0,
+    JSON.stringify({ seg: paper.segBad, bar: paper.barsBad, hf: paper.hfBad }));
+  check('需求：柱状图各柱有区分度（≥2 种颜色）',
+    paper.barsUniq >= 2, String(paper.barsUniq));
+
+  // 换主题后颜色要跟着变（三套主题各有一套图表色）
+  await cdp.eval(`document.querySelector('.modal-mask [data-close]')?.click()`);
+  await sleep(300);
+  await cdp.eval(`document.documentElement.dataset.theme = 'ink'; localStorage.setItem('cm_theme','ink');`);
+  await sleep(250);
+  await cdp.eval(`document.querySelector('#lg-profile-charts').click()`);
+  await waitFor(cdp, `!!document.querySelector('.modal-mask .ring-seg')`);
+  await sleep(500);
+  const ink = await read();
+  check('需求：切到墨黑主题后图表换了一套配色（与纸白不同）',
+    ink.open === true && ink.segs[0] !== paper.segs[0],
+    JSON.stringify({ paper: paper.segs[0], ink: ink.segs[0] }));
+  check('需求：墨黑主题下扇区同样互相区分',
+    ink.segUniq === ink.segs.length && ink.segBad === 0,
+    JSON.stringify({ segs: ink.segs, uniq: ink.segUniq }));
+  await cdp.shot(path.join(SHOT_DIR, 'f63-chart-colors-ink.png'));
+
+  // 复原主题 + 关弹窗
+  await cdp.eval(`document.querySelector('.modal-mask [data-close]')?.click()`);
+  await cdp.eval(`document.documentElement.dataset.theme = 'paper'; localStorage.setItem('cm_theme','paper');`);
+  await sleep(300);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -6634,7 +6713,8 @@ const GROUPS = {
   59: { title: '管理员编辑用户资料', fn: feature59 },
   60: { title: '图片九宫格与全屏放大', fn: feature60 },
   61: { title: '首页猜你喜欢', fn: feature61 },
-  62: { title: '用户画像图表 + 悬停详情（本批需求）', fn: feature62 },
+  62: { title: '用户画像图表 + 悬停详情', fn: feature62 },
+  63: { title: '画像图表配色有区分度（本批）', fn: feature63 },
 };
 
 async function main() {

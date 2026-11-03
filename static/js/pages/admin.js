@@ -1389,8 +1389,15 @@ function openProfileCharts(d) {
   const im = d.images || {};
 
   const pct = (v) => Math.round((v || 0) * 100);
-  const COLORS = ['var(--primary)', 'var(--primary)', 'var(--warning)',
-                  'var(--danger)', 'var(--text-secondary)', 'var(--text-sub)'];
+  // 2026-10-18：图表配色。原来前两个都是 --primary（扇区同色）、后两个是灰阶，
+  // 用户反馈「没有区分度」→ 换成主题里的 --chart-1..6（三套主题各自有值）。
+  const COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)',
+                  'var(--chart-4)', 'var(--chart-5)', 'var(--chart-6)'];
+  /** 价格带排序键：按价位段起始值升序（1000 以上排最后） */
+  const bandStart = (name) => {
+    const m = String(name || '').match(/(\d+)/);
+    return m ? Number(m[1]) : 0;
+  };
 
   // 环形图（SVG：用 stroke-dasharray 画每段）
   const ringSegments = () => {
@@ -1410,27 +1417,39 @@ function openProfileCharts(d) {
   };
 
   // 柱状图（HTML/CSS，高度按最大值归一）
-  const bars = (rows, key) => {
+  // 柱状图（HTML/CSS，高度按最大值归一）；colorOf 决定每根柱子的颜色
+  const bars = (rows, key, colorOf) => {
     const max = Math.max(1, ...rows.map(r => r.count || 0));
-    return rows.map(r => `
+    return rows.map((r, i) => {
+      const color = colorOf ? colorOf(r, i, rows) : '';
+      const style = `height:${Math.max(4, Math.round((r.count / max) * 100))}%`
+        + (color ? `;background:${color}` : '');
+      return `
       <div class="ch-bar-wrap" data-chart="${key}" data-label="${esc(r.name || (r.hour + ':00'))}"
-           data-count="${r.count}" data-pct="${pct(r.share)}"
-           title="">
-        <div class="ch-bar" style="height:${Math.max(4, Math.round((r.count / max) * 100))}%"></div>
-      </div>`).join('');
+           data-count="${r.count}" data-pct="${pct(r.share)}" title="">
+        <div class="ch-bar" style="${style}"></div>
+      </div>`;
+    }).join('');
   };
 
   const hbars = (rows, key) => {
     const max = Math.max(1, ...rows.map(r => r.count || 0));
-    return rows.map(r => `
+    return rows.map((r, i) => {
+      const style = `width:${Math.max(3, Math.round((r.count / max) * 100))}%;`
+        + `background:${COLORS[i % COLORS.length]}`;
+      return `
       <div class="ch-hrow" data-chart="${key}" data-label="${esc(r.name)}"
            data-count="${r.count}" data-pct="${pct(r.share)}">
         <span class="ch-hlabel">${esc(r.name)}</span>
-        <span class="ch-htrack"><span class="ch-hfill"
-          style="width:${Math.max(3, Math.round((r.count / max) * 100))}%"></span></span>
+        <span class="ch-htrack"><span class="ch-hfill" style="${style}"></span></span>
         <span class="ch-hval">${r.count}</span>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   };
+
+  // 价格带按价位升序；活跃时段找出峰值那一小时用于高亮
+  const priceRows = prices.slice().sort((a, b) => bandStart(a.name) - bandStart(b.name));
+  const hourPeak = hours.length ? Math.max(...hours.map(h => h.count || 0)) : 0;
 
   const body = `
     <div class="ch-grid">
@@ -1446,14 +1465,16 @@ function openProfileCharts(d) {
 
       <div class="ch-card">
         <div class="ch-title">价格带偏好</div>
-        ${prices.length ? `<div class="ch-bars">${bars(prices.slice().reverse(), 'price')}</div>
-          <div class="ch-xaxis">${prices.slice().reverse().map(r => `<span>${esc(r.name)}</span>`).join('')}</div>`
+        ${prices.length ? `<div class="ch-bars">${bars(priceRows, 'price',
+            (_r, i) => COLORS[i % COLORS.length])}</div>
+          <div class="ch-xaxis">${priceRows.map(r => `<span>${esc(r.name)}</span>`).join('')}</div>`
           : '<div class="muted small">还没有浏览带价格的商品</div>'}
       </div>
 
       <div class="ch-card">
         <div class="ch-title">活跃时段 <span class="muted small">（登录 + 浏览次数）</span></div>
-        ${hours.length ? `<div class="ch-bars">${bars(hours, 'hour')}</div>
+        ${hours.length ? `<div class="ch-bars">${bars(hours, 'hour',
+            (r) => (r.count === hourPeak ? 'var(--chart-2)' : 'var(--chart-1)'))}</div>
           <div class="ch-xaxis">${hours.map(h => `<span>${h.hour}</span>`).join('')}</div>`
           : '<div class="muted small">暂无数据</div>'}
       </div>

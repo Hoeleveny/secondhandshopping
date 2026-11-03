@@ -274,3 +274,35 @@ hr {
   box-shadow: var(--shadow-sm);
 }
 [data-theme="ink"] .theme-switch button[aria-pressed="true"] { color: var(--primary); }
+
+/* ================================================================
+   图表配色（2026-10-18）
+   原来环形图用 ['--primary','--primary','--warning','--danger','--text-secondary','--text-sub']，
+   前两个完全同色、后两个是灰阶 → 用户反馈"配色没有区分度"。这里给三套主题各一组
+   低饱和但可区分的图表色（同一色相家族里取不同色相），保证相邻扇区一眼能分开。
+   ================================================================ */
+:root,
+[data-theme="paper"] {
+  --chart-1: #2F4A3B;   /* 松柏绿 */
+  --chart-2: #A5522E;   /* 赭红 */
+  --chart-3: #2F6478;   /* 青蓝 */
+  --chart-4: #7A4A63;   /* 梅紫 */
+  --chart-5: #6B7433;   /* 橄榄 */
+  --chart-6: #9A7B4F;   /* 驼色 */
+}
+[data-theme="ink"] {
+  --chart-1: #8FAE98;
+  --chart-2: #E09A6E;
+  --chart-3: #7FB6CC;
+  --chart-4: #C79AB4;
+  --chart-5: #B3BF7C;
+  --chart-6: #D3B183;
+}
+[data-theme="cream"] {
+  --chart-1: #33513F;
+  --chart-2: #A95A34;
+  --chart-3: #336A80;
+  --chart-4: #7F4E68;
+  --chart-5: #6F7A38;
+  --chart-6: #9C7F52;
+}
