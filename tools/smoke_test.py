@@ -2238,9 +2238,15 @@ def main() -> int:
     _root2 = _os2.path.dirname(_os2.path.dirname(_os2.path.abspath(__file__)))
     _py = _sys2.executable
 
-    _st, r = call("GET", "/api/products?page=1&page_size=100")
-    _allp = (r.get("data") or {}).get("list") or []
-    _total = (r.get("data") or {}).get("total") or 0
+    # 2026-10-18：商品已到 100 件、单页上限 60，这里要翻页取全量，否则抽查会「假失败」
+    _allp, _total = [], 0
+    for _pg in (1, 2, 3):
+        _st, r = call("GET", f"/api/products?page={_pg}&page_size=60")
+        _pgd = r.get("data") or {}
+        _total = _pgd.get("total") or _total
+        _allp.extend(_pgd.get("list") or [])
+        if len(_allp) >= _total:
+            break
     check("需求：在售商品数量明显增加（≥ 35 件，演示数据够看）",
           _total >= 35, f"在售 {_total} 件")
 
@@ -2269,6 +2275,41 @@ def main() -> int:
           _run.returncode == 0 and "新增 0 件" in _out,
           _out.strip()[-90:])
 
+
+    # ---------------- 本批需求：商品清单扩到 100 件（2026-10-18 第二批） ----------------
+    section("本批需求 商品清单扩到 100 件")
+
+    _st, r = call("GET", "/api/home")
+    _hs = (r.get("data") or {}).get("stats") or {}
+    check("需求：在售商品数量明显增加（≥ 70 件，清单已到 100 件）",
+          (_hs.get("on_sale") or 0) >= 70, f"在售 {_hs.get('on_sale')} 件")
+
+    # 抽查 10 件第二批新增的商品，逐件用关键词搜回来（不写死总数，只看"能不能找到"）
+    _pick_new = ["概率论与数理统计（浙大第五版）", "数据库系统概论（第 6 版）",
+                 "ThinkPad T480 商务本", "小米平板 5（6+128G）", "筋膜枪（迷你）",
+                 "折叠收纳凳（可坐）", "相机 Canon EOS 200D（含镜头）",
+                 "校园音乐会门票 1 张", "李宁篮球鞋 43 码", "多肉盆栽 三盆（含托盘）"]
+    _miss_new = []
+    for _name in _pick_new:
+        _st, r = call("GET", "/api/products?keyword=" + quote(_name))
+        _hits = [x["name"] for x in ((r.get("data") or {}).get("list") or [])]
+        if _name not in _hits:
+            _miss_new.append(_name)
+    check("需求：抽查 10 件新商品都能搜到", not _miss_new, str(_miss_new))
+
+    # 21 个小类都要有货：从分类接口拿全部小类，再把在售商品翻两页收集 subcategory_id
+    _st, r = call("GET", "/api/categories?with_subs=1")
+    _all_subs = {f"{c['name']} / {s['name']}": s["id"]
+                 for c in (r.get("data") or [])
+                 for s in (c.get("subcategories") or [])}
+    _seen_sub = set()
+    for _p in (1, 2):
+        _st, r = call("GET", f"/api/products?page={_p}&page_size=60")
+        for _x in ((r.get("data") or {}).get("list") or []):
+            _seen_sub.add(_x.get("subcategory_id"))
+    _sub_gap = [k for k, v in _all_subs.items() if v not in _seen_sub]
+    check("需求：每个小类都至少有 1 件在售商品（21 个小类都有货可看）",
+          not _sub_gap, f"缺口：{_sub_gap[:6]}（共 {len(_all_subs)} 个小类）")
 
     # ---------------- 本批需求：商品列表每页 24 件 + 一行 6 张 ----------------
     section("本批需求 商品列表每页 24 件")
@@ -2935,6 +2976,11 @@ def main() -> int:
     _st, r = call("POST", "/api/orders", token=token,
                   body={"product_id": _pb, "meet_place_id": 2})
     _pp_oid = (r.get("data") or {}).get("id")
+    if not _pp_oid and "已经" in (r.get("msg") or ""):
+        # 上一次跑崩了没走清理，库里还留着这件商品的意向单：直接复用，别让断言假失败
+        _st2, r2 = call("GET", "/api/orders/mine?page=1&page_size=50", token=token)
+        _pp_oid = next((o["id"] for o in ((r2.get("data") or {}).get("list") or [])
+                        if o.get("product_id") == _pb), None)
     check("偏好分析①：已给 B 备好一条下单记录（用来验证下单权重）",
           bool(_pp_oid), str(r)[:120])
 
@@ -3122,10 +3168,14 @@ def main() -> int:
     _cmp0 = _v_cmp({"skin": 0.4}, {"skin": 0.0}, keys=("skin",))[0]
     check("偏好④：基线为 0 时相对差给 None（不做除零）", _cmp0["rel"] is None, str(_cmp0))
 
-    # 接口层：给这个账号造几次「看图」
-    _st, r = call("GET", "/api/products?page=1&page_size=24")
-    _img_prod = next((x for x in ((r.get("data") or {}).get("list") or [])
-                      if len(x.get("images") or []) >= 2), None)
+    # 接口层：给这个账号造几次「看图」（新商品还没配图，往后面翻找有图的）
+    _img_prod = None
+    for _pg in (1, 2):
+        _st, r = call("GET", f"/api/products?page={_pg}&page_size=60")
+        _img_prod = next((x for x in ((r.get("data") or {}).get("list") or [])
+                          if len(x.get("images") or []) >= 2), None)
+        if _img_prod:
+            break
     check("偏好④：找到一件至少两张图的商品（用来造看图记录）", bool(_img_prod),
           str(_img_prod and _img_prod.get("id")))
     _ip_pid = _img_prod["id"]
