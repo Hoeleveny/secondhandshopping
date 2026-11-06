@@ -654,5 +654,12 @@ def upload_image():
         return fail(f"单张图片不能超过 {Config.MAX_IMAGE_SIZE // 1024 // 1024} MB")
 
     filename = f"{uuid.uuid4().hex}.{ext}"
-    file.save(os.path.join(current_app.config["UPLOAD_FOLDER"], filename))
+    folder = current_app.config["UPLOAD_FOLDER"]
+    file.save(os.path.join(folder, filename))
+    # 2026-10-18 需求②：上传时顺手算好图片特征入库（画像用；失败不影响上传本身）
+    try:
+        from imaging import store_features
+        store_features(filename, folder)
+    except Exception:
+        pass
     return ok({"url": filename}, msg="上传成功")

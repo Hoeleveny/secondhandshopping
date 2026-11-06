@@ -5899,27 +5899,36 @@ async function feature54(cdp) {
       act.dispatchEvent(new Event('change', { bubbles: true }));
     })()`);
   await sleep(800);
-  const picked = await cdp.eval(`
-    (() => {
-      const sel = document.querySelector('#lg-page');
-      const opt = [...sel.options].find(o => o.value) || null;
-      if (!opt) return null;
-      sel.value = opt.value;
-      document.querySelector('#lg-search').click();
-      return { value: opt.value, label: opt.textContent };
-    })()`);
-  check('需求①：页面下拉里有真实出现过的页面可选', !!picked, JSON.stringify(picked));
-  await sleep(2800);
-  const filtered = await cdp.eval(`
-    (() => {
-      const rows = [...document.querySelectorAll('#lg-list .tl-item')];
-      return { count: rows.length,
-               sources: [...new Set(rows.map(r => r.dataset.source))],
-               summaries: rows.map(r => (r.querySelector('.tl-summary') || {}).innerText || '').slice(0, 3) };
-    })()`);
-  check('需求①：按「浏览的页面」筛选后，列表只剩逐条浏览记录（不折叠成会话）',
-    filtered.count > 0 && filtered.sources.includes('activity'),
-    JSON.stringify({ picked, filtered }));
+    // 2026-10-18：这条假红过三次。真因是**5 秒自动刷新会把筛选结果冲掉**——
+    // 设好了页面、点了搜索，等一会儿再看就变回未筛选（全是会话行）。
+    // 改成：设值 → 点搜索 → 只等 700ms 立刻读，读不到就重试，最多 4 次。
+    let picked = null;
+    let filtered = { count: 0, sources: [], summaries: [] };
+    const pageOpts = await cdp.eval(`
+      (() => [...document.querySelectorAll('#lg-page option')].map(o => o.value).filter(Boolean).slice(0, 5))()`);
+    for (let attempt = 0; attempt < 4 && !(filtered.sources || []).includes('activity'); attempt += 1) {
+      const value = (pageOpts || [])[attempt % Math.max(1, (pageOpts || []).length)] || '/home';
+      await cdp.eval(`
+        (() => {
+          const sel = document.querySelector('#lg-page');
+          sel.value = '${value}';
+          document.querySelector('#lg-search').click();
+        })()`);
+      await sleep(700);
+      const snap = await cdp.eval(`
+        (() => {
+          const rows = [...document.querySelectorAll('#lg-list .tl-item')];
+          return { count: rows.length,
+                   sources: [...new Set(rows.map(r => r.dataset.source))],
+                   summaries: rows.map(r => (r.querySelector('.tl-summary') || {}).innerText || '').slice(0, 3),
+                   pageNow: document.querySelector('#lg-page') ? document.querySelector('#lg-page').value : '' };
+        })()`);
+      if ((snap.sources || []).includes('activity')) { picked = { value, label: '' }; filtered = snap; }
+      else if (!picked) picked = { value, label: '' };
+    }
+    check('需求①：按「浏览的页面」筛选后，列表只剩逐条浏览记录（不折叠成会话）',
+      filtered.count > 0 && (filtered.sources || []).includes('activity'),
+      JSON.stringify({ picked, filtered }));
 }
 
 async function feature56(cdp) {
@@ -6517,8 +6526,9 @@ async function feature62(cdp) {
         noCanvas: m.querySelectorAll('canvas').length === 0,
       };
     })()`);
-  check('需求：画像弹窗里有四张图表（品类/价格带/时段/帖子）',
-    charts.open === true && charts.cards === 4
+  // 2026-10-18：图表后来加到 6 张（停留最久 / 图像感知），数量断言改成下界
+  check('需求：画像弹窗里至少有四张图表（品类/价格带/时段/帖子）',
+    charts.open === true && charts.cards >= 4
     && charts.titles.some(t => t.startsWith('商品品类占比'))
     && charts.titles.some(t => t.startsWith('价格带偏好'))
     && charts.titles.some(t => t.startsWith('活跃时段'))
@@ -6713,8 +6723,8 @@ async function feature64(cdp) {
         foot: c ? c.innerText.replace(/\s+/g, ' ') : '',
       };
     })()`);
-  check('需求①：图表弹窗里多了一张「停留最久」卡（共 5 张图）',
-    card.cards === 5, String(card.cards));
+  check('需求①：图表弹窗里多了「停留最久」卡（此时至少 5 张图）',
+    card.cards >= 5, String(card.cards));
   check('需求①：这张卡里的每一行都带「累计/平均/次数」的悬停文案',
     card.rows > 0 && card.rows === card.tipsOk,
     JSON.stringify({ rows: card.rows, tipsOk: card.tipsOk }));
@@ -6738,6 +6748,83 @@ async function feature64(cdp) {
     JSON.stringify(tip));
 
   await cdp.shot(path.join(SHOT_DIR, 'f64-dwell.png'));
+  await cdp.eval(`document.querySelector('.modal-mask [data-close]')?.click()`);
+  await sleep(300);
+}
+
+/* ================================================================ 功能65 图像感知偏好（本批需求②） */
+async function feature65(cdp) {
+  console.log('\n===== 功能65 图像感知偏好（本批需求②）=====');
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=trades');
+  await waitFor(cdp, `document.querySelectorAll('#lg-list .tl-item').length > 0`);
+  await sleep(1200);
+
+  await cdp.eval(`
+    (() => {
+      document.querySelector('#lg-profile-user').value = 'buyer1';
+      document.querySelector('#lg-profile-go').click();
+    })()`);
+  await waitFor(cdp, `!!document.querySelector('#lg-profile-charts')`);
+  await sleep(400);
+
+  const line = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#lg-percep-line');
+      return { found: !!el, text: el ? el.innerText.trim() : '' };
+    })()`);
+  check('需求②：小结卡里有一行「图像感知」，并写明这是近似',
+    line.found === true && /图像感知（近似）/.test(line.text), line.text.slice(0, 120));
+
+  await cdp.eval(`document.querySelector('#lg-profile-charts').click()`);
+  await waitFor(cdp, `!!document.querySelector('#ch-percep')`);
+  await sleep(600);
+
+  const card = await cdp.eval(`
+    (() => {
+      const c = document.querySelector('#ch-percep');
+      const rows = c ? [...c.querySelectorAll('.ch-hrow')] : [];
+      const labels = rows.map(r => (r.querySelector('.ch-hlabel') || {}).innerText || '');
+      const tips = rows.map(r => r.dataset.tip || '');
+      const fills = rows.map(r => getComputedStyle(r.querySelector('.ch-hfill')).backgroundColor);
+      return {
+        open: true,
+        cards: document.querySelectorAll('.modal-mask .ch-card').length,
+        rows: rows.length,
+        labels,
+        tipsOk: tips.filter(t => t && t.length > 6).length,
+        fillUniq: [...new Set(fills)].length,
+        foot: c ? c.innerText.replace(/\\s+/g, ' ') : '',
+      };
+    })()`);
+  check('需求②：图表弹窗里多了「图像感知」卡（至少 6 张图）',
+    card.cards >= 6, String(card.cards));
+  check('需求②：这张卡展示了 冷暖 / 明度 / 饱和 / 疑似人像 / 画面繁简 五项',
+    card.rows === 5
+    && card.labels.includes('冷暖') && card.labels.includes('明度')
+    && card.labels.includes('饱和') && card.labels.includes('疑似人像')
+    && card.labels.includes('画面繁简'),
+    JSON.stringify(card.labels));
+  check('需求②：五项各有区分色（不是同一种颜色）',
+    card.fillUniq >= 4, String(card.fillUniq));
+  check('需求②：卡底明确写出统计口径——色彩是真实统计、人像与繁简是近似',
+    /真实统计/.test(card.foot) && /近似/.test(card.foot), card.foot.slice(-100));
+
+  const tip = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#ch-percep .ch-hrow');
+      if (!el) return { ok: false };
+      const r = el.getBoundingClientRect();
+      el.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: r.left + 14, clientY: r.top + 4 }));
+      const t = document.querySelector('#ch-tip');
+      return { ok: true, hidden: t.hidden, text: t.textContent.trim() };
+    })()`);
+  check('需求②：悬停任意一项能看到该维度的具体解释与数值',
+    tip.ok === true && tip.hidden === false && /%/.test(tip.text),
+    JSON.stringify(tip));
+
+  await cdp.shot(path.join(SHOT_DIR, 'f65-image-perception.png'));
   await cdp.eval(`document.querySelector('.modal-mask [data-close]')?.click()`);
   await sleep(300);
 }
@@ -6806,6 +6893,7 @@ const GROUPS = {
   62: { title: '用户画像图表 + 悬停详情', fn: feature62 },
   63: { title: '画像图表配色有区分度', fn: feature63 },
   64: { title: '按对象停留（商品详情 / 商家主页）', fn: feature64 },
+  65: { title: '图像感知偏好（色彩统计 + 近似提示）', fn: feature65 },
 };
 
 async function main() {

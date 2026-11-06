@@ -18,6 +18,7 @@ from models import (
     PostComment, PostImage,
     PostLike, Product, ProductImage, ProductWant, Report, Review, ReviewComment, Subcategory,
     ProductImageView, SwapOffer, User, UserActivity,
+    ImageFeature,
 )
 
 # 插入顺序＝外键依赖顺序（父表在前）；删除时反序
@@ -28,6 +29,7 @@ INSERT_ORDER = [
     ("campus_places", CampusPlace),
     ("products", Product),
     ("product_images", ProductImage),
+    ("image_features", ImageFeature),
     ("orders", Order),
     ("favorites", Favorite),
     ("reviews", Review),

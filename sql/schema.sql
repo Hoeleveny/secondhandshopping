@@ -528,3 +528,23 @@ CREATE TABLE `product_image_views` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商品图片级浏览行为';
 
 SET FOREIGN_KEY_CHECKS = 1;
+
+-- ---------------------------------------------------------------- 图片特征（迁移 021）
+CREATE TABLE IF NOT EXISTS image_features (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  path VARCHAR(255) NOT NULL,
+  width INT NOT NULL DEFAULT 0,
+  height INT NOT NULL DEFAULT 0,
+  aspect FLOAT NOT NULL DEFAULT 0,
+  warm FLOAT NOT NULL DEFAULT 0,
+  grey FLOAT NOT NULL DEFAULT 0,
+  light FLOAT NOT NULL DEFAULT 0,
+  sat FLOAT NOT NULL DEFAULT 0,
+  colorfulness FLOAT NOT NULL DEFAULT 0,
+  edges FLOAT NOT NULL DEFAULT 0,
+  skin FLOAT NOT NULL DEFAULT 0,
+  dominant VARCHAR(32) NOT NULL DEFAULT '',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_image_features_path (path)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

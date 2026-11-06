@@ -980,6 +980,40 @@ class ProductImageView(db.Model):
         }
 
 
+class ImageFeature(db.Model):
+    """图片特征（2026-10-18 需求② 图像感知偏好）：上传时用 Pillow 算一次入库。
+
+    色彩（warm/light/sat/colorfulness）是按像素**真实统计**；
+    skin / edges 是**启发式近似**（肤色像素占比、边缘密度），界面上要标注"算法近似"。
+    """
+
+    __tablename__ = "image_features"
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    path = db.Column(db.String(255), nullable=False, unique=True)
+    width = db.Column(db.Integer, nullable=False, default=0)
+    height = db.Column(db.Integer, nullable=False, default=0)
+    aspect = db.Column(db.Float, nullable=False, default=0)
+    warm = db.Column(db.Float, nullable=False, default=0)
+    grey = db.Column(db.Float, nullable=False, default=0)
+    light = db.Column(db.Float, nullable=False, default=0)
+    sat = db.Column(db.Float, nullable=False, default=0)
+    colorfulness = db.Column(db.Float, nullable=False, default=0)
+    edges = db.Column(db.Float, nullable=False, default=0)
+    skin = db.Column(db.Float, nullable=False, default=0)
+    dominant = db.Column(db.String(32), nullable=False, default="")
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "path": self.path,
+            "width": self.width, "height": self.height, "aspect": self.aspect,
+            "warm": self.warm, "grey": self.grey, "light": self.light, "sat": self.sat,
+            "colorfulness": self.colorfulness, "edges": self.edges,
+            "skin": self.skin, "dominant": self.dominant,
+        }
+
+
 # ---------------------------------------------------------------- 工具函数
 def _dt(value: datetime | None) -> str | None:
     return value.strftime("%Y-%m-%d %H:%M:%S") if value else None

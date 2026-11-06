@@ -2155,6 +2155,75 @@ def main() -> int:
           all(x["kind"] in ("product", "post", "seller") for x in _dw_top),
           str([x["kind"] for x in _dw_top]))
 
+    # ---------------- 本批需求②：图像感知偏好 ----------------
+    section("本批需求② 图像感知偏好")
+
+    try:
+        import os as _os
+        import sys as _sys
+        import tempfile as _tf
+
+        from PIL import Image as _Img
+
+        _root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+        if _root not in _sys.path:
+            _sys.path.insert(0, _root)
+        from imaging import analyze as _img_analyze
+        from imaging import aggregate as _img_agg
+        from imaging import describe as _img_describe
+
+        import shutil as _sh
+        # 落到 gitignore 的 _build_tmp 下，段落结束显式删除，别在仓库根留垃圾
+        _tmp = _tf.mkdtemp(prefix="smoke_img_", dir=_os.path.join(_root, "_build_tmp"))
+
+        def _mk(name, color, size=(64, 64)):
+            path = _os.path.join(_tmp, name)
+            _Img.new("RGB", size, color).save(path)
+            return _img_analyze(path)
+
+        _red = _mk("red.png", (220, 30, 30))
+        _blue = _mk("blue.png", (30, 60, 220))
+        _white = _mk("white.png", (255, 255, 255))
+        _skin = _mk("skin.png", (224, 172, 140))
+
+        check("需求②：暖色图判为偏暖、蓝色图判为偏冷（色彩是真实像素统计）",
+              _red and _red["warm"] > 0.9 and _blue and _blue["warm"] < 0.1,
+              f"red.warm={_red and _red['warm']} blue.warm={_blue and _blue['warm']}")
+        check("需求②：主色能识别出来（红图＝红、蓝图＝蓝）",
+              _red["dominant"] == "红" and _blue["dominant"] == "蓝",
+              f"{_red['dominant']}/{_blue['dominant']}")
+        check("需求②：纯白图被判成近灰（低饱和）而不是某种彩色",
+              _white and _white["grey"] > 0.9 and _white["sat"] < 0.1,
+              f"grey={_white and _white['grey']} sat={_white and _white['sat']}")
+        check("需求②：肤色图会给出「疑似人像」的强度提示（近似判断）",
+              _skin and _skin["skin"] > 0.5, f"skin={_skin and _skin['skin']}")
+        check("需求②：明度/饱和度在 0~1 之间",
+              all(0 <= _red[k] <= 1 for k in ("light", "sat", "edges", "skin", "warm")),
+              str({k: _red[k] for k in ("light", "sat", "edges", "skin", "warm")}))
+
+        _agg = _img_agg([_red, _red, _blue])
+        check("需求②：多张图的偏好能汇总成一句话（含冷暖/明度/饱和）",
+              _agg["count"] == 3 and "偏暖" in _agg["text"] and _agg["dominants"],
+              f"{_agg['count']} 张 → {_agg['text']} / {_agg['dominants']}")
+        check("需求②：一句话里能标出「疑似人像」与画面繁简（近似）",
+              "疑似人像" in _img_describe(_skin),
+              _img_describe(_skin))
+
+        # 接口层：画像里带 image_perception，且说明这是近似
+        _st, r = call("GET", "/api/admin/activities/profile?user_id=2", token=_ut_at)
+        _ip = ((r.get("data") or {}).get("image_perception")) or {}
+        check("需求②：画像接口返回「图像感知」维度", bool(_ip), str(_ip)[:110])
+        check("需求②：图像感知里说明色彩是统计、人像与繁简是近似",
+              bool(_ip.get("note")) and "近似" in (_ip.get("note") or ""),
+              str(_ip.get("note"))[:80])
+        check("需求②：图像感知带张数与冷暖/明度/饱和数值",
+              _ip.get("count", 0) >= 0 and "warm" in _ip and "light" in _ip and "sat" in _ip,
+              f"count={_ip.get('count')} warm={_ip.get('warm')}")
+        _sh.rmtree(_tmp, ignore_errors=True)
+    except ImportError as exc:
+        check("需求②：Pillow 已安装（图像分析依赖）", False, f"导入失败：{exc}")
+
+
     # ---------------- 本批需求①：删除自己的评论 ----------------
     section("本批需求① 删除自己的评论")
 

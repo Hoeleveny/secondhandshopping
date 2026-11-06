@@ -564,6 +564,29 @@ def activities_profile():
             round(MIN_SHARE * 100), MIN_SAMPLES),
     }
 
+    # ⑨ 图像感知偏好（2026-10-18 需求②）：看过的图片 → 色彩 / 构图 / 疑似人像
+    from imaging import aggregate as _img_agg
+    from models import ImageFeature, ProductImage
+
+    _paths = []
+    _views = ProductImageView.query.filter_by(user_id=target.id).all()
+    if product_ids:
+        _pimgs = ProductImage.query.filter(ProductImage.product_id.in_(product_ids)).all()
+        _by_pid = {}
+        for _im in sorted(_pimgs, key=lambda x: (x.product_id, x.id)):
+            _by_pid.setdefault(_im.product_id, []).append(_im.url)
+        for _v in _views:
+            _urls = _by_pid.get(_v.product_id) or []
+            if _urls:
+                _idx = _v.image_index or 0
+                _paths.append(_urls[_idx] if 0 <= _idx < len(_urls) else _urls[0])
+        if not _paths:                       # 没图片级埋点就退回"浏览过的商品的所有图"
+            _paths = [u for urls in _by_pid.values() for u in urls]
+    _feats = (ImageFeature.query.filter(ImageFeature.path.in_(set(_paths))).all()
+              if _paths else [])
+    image_perception = _img_agg([f.to_dict() for f in _feats])
+    image_perception["note"] = "色彩按像素真实统计；人像/繁简是算法近似（无模型）"
+
     return ok({
         "user": target.to_dict(),
         "login_count": len(logins),
@@ -585,6 +608,7 @@ def activities_profile():
         "images": img_dim,
         "dwell_kinds": dwell_kinds,
         "top_dwell": top_dwell,
+        "image_perception": image_perception,
         "portrait": portrait,
     })
 

@@ -861,6 +861,12 @@ async function renderTrades(panel) {
                 const topText = top ? `停留最久：${top.name}（${KIND[top.kind] || top.kind}）累计 ${top.seconds} 秒、平均 ${top.avg_text}/次` : '';
                 return `<div class="muted small" style="margin-top:4px" id="lg-dwell-line">按对象停留：${parts.join(' · ') || '—'}${topText ? '；' + topText : ''}</div>`;
               })()}
+                ${(() => {
+                  const ip = data.image_perception || {};
+                  if (!ip.count) return '';
+                  const dm = (ip.dominants || []).map(x => x.name).join('、');
+                  return `<div class="muted small" style="margin-top:4px" id="lg-percep-line">图像感知（近似）：${esc(ip.text || '—')}；共 ${ip.count} 张图${dm ? '，主色 ' + esc(dm) : ''}</div>`;
+                })()}
           </div>`;
           })()}`;
         })()}
@@ -1515,6 +1521,44 @@ function openProfileCharts(d) {
         <div class="muted small" style="margin-top:6px">页面类型平均停留：
           ${(d.dwell_kinds || []).filter(k => k.kind !== 'other').map(k => `${k.name} ${k.avg_text}`).join(' · ') || '—'}</div>
         <div class="muted small">商品/帖子/商家主页的停留都用「相邻两条浏览记录的时间差」近似，超过 30 分钟按挂机截断。</div>
+      </div>
+
+      <div class="ch-card" id="ch-percep">
+        <div class="ch-title">图像感知 <span class="muted small">（算法近似）</span></div>
+        ${(() => {
+          const ip = d.image_perception || {};
+          if (!ip.count) return '<div class="muted small">还没有足够的看图记录</div>';
+          const pctOf = (v) => Math.round((v || 0) * 100);
+          const rows = [
+            { key: 'warm', label: '冷暖', val: ip.warm, txt: (ip.warm >= 0.5 ? '偏暖' : '偏冷'),
+              tip: '彩色像素里暖色占 ' + pctOf(ip.warm) + '%（暖色＝红/橙/黄/品红，冷色＝绿/青/蓝/紫）' },
+            { key: 'light', label: '明度', val: ip.light, txt: pctOf(ip.light) + '%',
+              tip: '你看过的图片平均明度 ' + pctOf(ip.light) + '%' },
+            { key: 'sat', label: '饱和', val: ip.sat, txt: pctOf(ip.sat) + '%',
+              tip: '你看过的图片平均饱和度 ' + pctOf(ip.sat) + '%' },
+            { key: 'skin', label: '疑似人像', val: ip.skin, txt: pctOf(ip.skin) + '%',
+              tip: '肤色像素占 ' + pctOf(ip.skin) + '%（近似判断，不是人脸识别）' },
+            { key: 'edges', label: '画面繁简', val: ip.edges, txt: pctOf(ip.edges) + '%',
+              tip: '边缘密度 ' + pctOf(ip.edges) + '%（越高越繁复，越低越简洁）' },
+          ];
+          const COLORS = { warm: 'var(--chart-2)', light: 'var(--chart-3)',
+                           sat: 'var(--chart-1)', skin: 'var(--chart-4)', edges: 'var(--chart-5)' };
+          return `<div class="ch-hbars">${rows.map(r => `
+            <div class="ch-hrow" data-chart="percep" data-tip="${esc(r.tip)}">
+              <span class="ch-hlabel" style="width:64px">${r.label}</span>
+              <span class="ch-htrack"><span class="ch-hfill"
+                style="width:${Math.max(3, Math.min(100, r.val * 100))}%;background:${COLORS[r.key]}"></span></span>
+              <span class="ch-hval" style="width:44px">${r.txt}</span>
+            </div>`).join('')}</div>`;
+        })()}
+        <div class="muted small" style="margin-top:6px">
+          画像：${esc((d.image_perception || {}).text || '—')}　·　共 ${(d.image_perception || {}).count || 0} 张图
+          ${(() => {
+            const dm = (d.image_perception || {}).dominants || [];
+            return dm.length ? `· 主色 ${dm.map(x => x.name + '×' + x.count).join('、')}` : '';
+          })()}
+        </div>
+        <div class="muted small">色彩（冷暖/明度/饱和/鲜艳度）按像素真实统计；人像与繁简没有模型，只是启发式近似。</div>
       </div>
     </div>
     <div class="ch-foot muted small">

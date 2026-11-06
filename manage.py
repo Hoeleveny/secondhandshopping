@@ -154,6 +154,33 @@ def cmd_run() -> int:
     return 0
 
 
+def cmd_image_features() -> int:
+    """给已上传的图片补算特征（迁移 021 后跑一次；幂等，算过的跳过）。"""
+    import os
+
+    from app import create_app
+    from imaging import store_features
+    from models import ImageFeature, PostImage, ProductImage
+
+    app = create_app()
+    with app.app_context():
+        folder = app.config["UPLOAD_FOLDER"]
+        done = {r.path for r in ImageFeature.query.all()}
+        names = [r.url for r in ProductImage.query.all()] + [r.url for r in PostImage.query.all()]
+        todo = [x for x in dict.fromkeys(names) if x and x not in done]
+        ok_n = skip_n = 0
+        for name in todo:
+            if not os.path.exists(os.path.join(folder, name)):
+                skip_n += 1
+                continue
+            if store_features(name, folder):
+                ok_n += 1
+            else:
+                skip_n += 1
+        print(f"[OK]  图片特征：新算 {ok_n} 张，跳过 {skip_n} 张，总表 {ImageFeature.query.count()} 行")
+        return 0
+
+
 COMMANDS = {
     "init-db": cmd_init_db,
     "migrate": cmd_migrate,
@@ -161,6 +188,7 @@ COMMANDS = {
     "clean-test": cmd_clean_test,
     "reset-demo": cmd_reset_demo,
     "check": cmd_check,
+    "image-features": cmd_image_features,
     "run": cmd_run,
 }
 
