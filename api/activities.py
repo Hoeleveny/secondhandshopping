@@ -377,10 +377,11 @@ def activities_profile():
             post_ids.append(rid)
 
     cat_counter: dict = {}
+    prods: dict = {}
+    cats = {c.id: c for c in Category.query.all()}   # 大类表很小，画像多处要用，先取一次
     if product_ids:
         prods = {x.id: x for x in Product.query.filter(
             Product.id.in_(set(product_ids))).all()}
-        cats = {c.id: c for c in Category.query.all()}
         for pid in product_ids:
             pr = prods.get(pid)
             if pr is None:
@@ -427,7 +428,7 @@ def activities_profile():
     focus = ("关注" + post_breakdown[0]["name"]) if post_breakdown else ""
 
     # ================= 多维画像（2026-10-18 需求）=================
-    from models import Favorite, Order, ProductImageView
+    from models import Favorite, Order, ProductImageView, Subcategory
 
     # ⑦ 停留时长：用「相邻两条页面记录的时间差」近似；>30 分钟视为挂机截断；最后一条无下一跳、不计
     page_rows = [r for r in rows if r.kind == "page"]
@@ -523,6 +524,77 @@ def activities_profile():
     }
     conv["rate"] = round((conv["favorites"] + conv["orders"]) / max(1, len(seen_products)), 3)
 
+    # ⑩ 商品级 / 小类级偏好（2026-10-18 偏好分析①）：粒度从「大类占比」细化到具体商品与小类
+    #    权重（本轮口径，用户认可）：浏览 ×1、停留每分钟 ×1、收藏 ×3、下单 ×4
+    #    注意：上面「转化倾向」那段把局部名 Order 置成了 None，这里用别名取模型，别被污染。
+    from models import Favorite as FavModel, Order as OrderModel
+
+    browse_cnt: dict = {}
+    for pid in product_ids:
+        browse_cnt[pid] = browse_cnt.get(pid, 0) + 1
+    secs_by_pid: dict = {}
+    for _pg, _gap in dwells:
+        _k, _rid = classify_page(_pg)
+        if _k == "product":
+            secs_by_pid[_rid] = secs_by_pid.get(_rid, 0.0) + _gap
+
+    fav_pids, order_by_pid = set(), {}
+    try:                                  # 统计失败也不该让画像接口 500
+        fav_pids = {f.product_id for f in
+                    db.session.query(FavModel).filter(FavModel.user_id == target.id).all()}
+        for _o in db.session.query(OrderModel).filter(OrderModel.buyer_id == target.id).all():
+            order_by_pid[_o.product_id] = order_by_pid.get(_o.product_id, 0) + 1
+    except Exception:                     # noqa: BLE001
+        fav_pids, order_by_pid = set(), {}
+
+    W_VIEW, W_MINUTE, W_FAV, W_ORDER = 1.0, 1.0, 3.0, 4.0
+    touched = set(browse_cnt) | set(secs_by_pid) | set(fav_pids) | set(order_by_pid)
+    _missing = touched - set(prods)
+    if _missing:                          # 只收藏/下过单、没浏览过的商品也要算进来
+        prods.update({p.id: p for p in Product.query.filter(Product.id.in_(_missing)).all()})
+    subs = {s.id: s for s in Subcategory.query.all()}
+
+    product_rows = []
+    for pid in touched:
+        pr = prods.get(pid)
+        if pr is None:                    # 已软删除的商品不参与偏好
+            continue
+        views = browse_cnt.get(pid, 0)
+        secs = int(secs_by_pid.get(pid, 0.0))
+        favd = pid in fav_pids
+        ocnt = order_by_pid.get(pid, 0)
+        score = (views * W_VIEW + (secs / 60.0) * W_MINUTE
+                 + (W_FAV if favd else 0.0) + ocnt * W_ORDER)
+        sub = subs.get(pr.subcategory_id)
+        cat = cats.get(pr.category_id)
+        product_rows.append({
+            "product_id": pid, "name": pr.name,
+            "category": cat.name if cat else "未知",
+            "subcategory": sub.name if sub else "",
+            "views": views, "dwell_secs": secs, "dwell_text": duration_text(secs),
+            "favorite": favd, "orders": ocnt, "score": round(score, 2),
+        })
+    product_rows.sort(key=lambda x: (-x["score"], x["product_id"]))
+
+    sub_counter: dict = {}
+    for pid in product_ids:               # 小类占比与「用户类型」同口径：按浏览次数计
+        pr = prods.get(pid)
+        if pr is None:
+            continue
+        sub = subs.get(pr.subcategory_id)
+        cat = cats.get(pr.category_id)
+        key = "%s / %s" % (cat.name if cat else "未知", sub.name if sub else "未分类")
+        sub_counter[key] = sub_counter.get(key, 0) + 1
+
+    product_pref = {
+        "top": product_rows[:5],
+        "count": len(product_rows),
+        "sub_breakdown": _breakdown(sub_counter),
+        "weight": {"view": W_VIEW, "minute": W_MINUTE, "favorite": W_FAV, "order": W_ORDER},
+        "note": "偏好分 = 浏览×1 + 停留分钟×1 + 收藏×3 + 下单×4（统计口径，不改现有埋点）",
+        "empty": not product_rows,
+    }
+
     # ⑧ 图片偏好（图片级埋点）
     imgs = (ProductImageView.query.filter(ProductImageView.user_id == target.id)
             .order_by(ProductImageView.created_at.desc()).limit(500).all())
@@ -606,6 +678,7 @@ def activities_profile():
         "depth": depth,
         "conversion": conv,
         "images": img_dim,
+        "product_pref": product_pref,
         "dwell_kinds": dwell_kinds,
         "top_dwell": top_dwell,
         "image_perception": image_perception,

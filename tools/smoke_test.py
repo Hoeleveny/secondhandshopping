@@ -2917,6 +2917,66 @@ def main() -> int:
     _d = _logs_q(action="user_unban", page_size=3)
     check("解封动作也进操作日志", bool(_d.get("list")), str(_d.get("total")))
 
+    # ---------------- 偏好分析①：商品级 / 小类级偏好 ----------------
+    section("偏好分析① 商品级 / 小类级偏好")
+
+    _st, r = call("GET", "/api/auth/me", token=token)
+    _pp_uid = ((r.get("data") or {}).get("user") or {}).get("id")
+    _st, r = call("GET", "/api/products?page=1&page_size=4")
+    _pp_pool = [x["id"] for x in ((r.get("data") or {}).get("list") or [])]
+    _pa, _pb = _pp_pool[0], _pp_pool[1]
+    for _i in range(3):                       # A：看 3 次
+        call("POST", "/api/activities/page", token=token,
+             body={"page": f"/product/{_pa}", "name": "商品详情"})
+    for _i in range(5):                       # B：看 5 次 + 收藏，偏好分应该顶到前面
+        call("POST", "/api/activities/page", token=token,
+             body={"page": f"/product/{_pb}", "name": "商品详情"})
+    call("POST", "/api/favorites", token=token, body={"product_id": _pb})
+    _st, r = call("POST", "/api/orders", token=token,
+                  body={"product_id": _pb, "meet_place_id": 2})
+    _pp_oid = (r.get("data") or {}).get("id")
+    check("偏好分析①：已给 B 备好一条下单记录（用来验证下单权重）",
+          bool(_pp_oid), str(r)[:120])
+
+    _st, r = call("GET", f"/api/admin/activities/profile?user_id={_pp_uid}", token=_ut_at)
+    _pp = ((r.get("data") or {}).get("product_pref")) or {}
+    _pp_top = _pp.get("top") or []
+    check("偏好分析①：画像接口返回「商品偏好」维度（Top 列表 + 小类占比 + 权重口径）",
+          isinstance(_pp_top, list) and bool(_pp.get("sub_breakdown"))
+          and (_pp.get("weight") or {}).get("favorite") == 3 and bool(_pp.get("note")),
+          str(_pp)[:120])
+    check("偏好分析①：商品偏好最多给 5 件", 0 < len(_pp_top) <= 5, f"{len(_pp_top)} 件")
+
+    _pp_keys = {"product_id", "name", "category", "subcategory", "views", "dwell_secs",
+                "dwell_text", "favorite", "orders", "score"}
+    check("偏好分析①：每件商品带浏览次数 / 停留 / 收藏 / 下单 / 偏好分",
+          bool(_pp_top) and all(_pp_keys <= set(x.keys()) for x in _pp_top),
+          str(sorted(set(_pp_top[0].keys())) if _pp_top else []))
+    check("偏好分析①：偏好分从高到低排",
+          [x["score"] for x in _pp_top] == sorted([x["score"] for x in _pp_top], reverse=True),
+          str([x["score"] for x in _pp_top]))
+
+    _w = _pp.get("weight") or {}
+    _bad = [x for x in _pp_top
+            if abs(x["score"] - round(x["views"] * _w.get("view", 1)
+                                      + x["dwell_secs"] / 60.0 * _w.get("minute", 1)
+                                      + _w.get("favorite", 0) * (1 if x["favorite"] else 0)
+                                      + x["orders"] * _w.get("order", 0), 2)) > 0.02]
+    check("偏好分析①：偏好分可按公式复算（浏览×1 + 停留分钟×1 + 收藏×3 + 下单×4）",
+          not _bad, str(_bad[:2])[:180])
+
+    _pb_row = next((x for x in _pp_top if x["product_id"] == _pb), None)
+    check("偏好分析①：收藏 + 下单会把商品顶进偏好前列，并标出「已收藏 / 下单次数」",
+          bool(_pb_row) and _pb_row["favorite"] is True and _pb_row["views"] >= 5
+          and _pb_row["orders"] == 1, str(_pb_row)[:170])
+
+    _pp_subs = _pp.get("sub_breakdown") or []
+    check("偏好分析①：给出小类占比（名称是「大类 / 小类」格式）",
+          bool(_pp_subs) and all(" / " in x["name"] and x["count"] > 0 for x in _pp_subs),
+          str(_pp_subs[:3])[:170])
+    _pp_sum = sum(x["share"] for x in _pp_subs)
+    check("偏好分析①：小类占比合计约等于 1", abs(_pp_sum - 1) < 0.02, f"{round(_pp_sum, 3)}")
+
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 

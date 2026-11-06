@@ -1403,6 +1403,11 @@ function openProfileCharts(d) {
   const prices = d.price_breakdown || [];       // 价格带
   const hours = d.hours || [];                  // 活跃时段
   const im = d.images || {};
+  // 2026-10-18 偏好分析①：商品级 / 小类级偏好
+  const pp = d.product_pref || {};
+  const prodTop = pp.top || [];
+  const subRows = (pp.sub_breakdown || []).slice(0, 6);
+  const maxProdScore = Math.max(1, ...prodTop.map(x => x.score || 0));
 
   const pct = (v) => Math.round((v || 0) * 100);
   // 2026-10-18：图表配色。原来前两个都是 --primary（扇区同色）、后两个是灰阶，
@@ -1477,6 +1482,34 @@ function openProfileCharts(d) {
             <div class="ch-leg"><i style="background:${COLORS[i % COLORS.length]}"></i>
               ${esc(c.name)} · ${c.count} 次 · ${pct(c.share)}%</div>`).join('')}</div>
         </div>` : '<div class="muted small">还没有浏览商品</div>'}
+      </div>
+
+      <div class="ch-card" id="ch-prod">
+        <div class="ch-title">商品偏好 Top5 <span class="muted small">（浏览×1 + 停留分钟×1 + 收藏×3 + 下单×4）</span></div>
+        ${prodTop.length ? `<div class="ch-hbars">${prodTop.map((x) => `
+          <div class="ch-hrow" data-chart="prod"
+               data-tip="${esc(x.name)}（${esc(x.subcategory || x.category)}）· 偏好分 ${x.score} · 浏览 ${x.views} 次 · 停留 ${esc(x.dwell_text)}${x.favorite ? ' · 已收藏' : ''}${x.orders ? ' · 下单 ' + x.orders + ' 次' : ''}">
+            <span class="ch-hlabel" style="width:104px">${esc(x.name)}</span>
+            <span class="ch-htrack"><span class="ch-hfill"
+              style="width:${Math.max(4, Math.round((x.score / maxProdScore) * 100))}%;background:var(--chart-1)"></span></span>
+            <span class="ch-hval">${x.score}</span>
+          </div>`).join('')}</div>`
+          : '<div class="muted small">还没有可算偏好分的商品（浏览/收藏/下单都会计入）</div>'}
+        <div class="muted small" style="margin-top:6px">共 ${pp.count || 0} 件商品有行为记录；停留用「相邻两条浏览记录的时间差」近似。</div>
+      </div>
+
+      <div class="ch-card" id="ch-sub">
+        <div class="ch-title">小类偏好 <span class="muted small">（按浏览次数占比）</span></div>
+        ${subRows.length ? `<div class="ch-hbars">${subRows.map((r) => `
+          <div class="ch-hrow" data-chart="subcat" data-label="${esc(r.name)}"
+               data-count="${r.count}" data-pct="${pct(r.share)}" data-tip="${esc(r.name)}：${r.count} 次浏览 · 占 ${pct(r.share)}%">
+            <span class="ch-hlabel" style="width:112px">${esc(r.name)}</span>
+            <span class="ch-htrack"><span class="ch-hfill"
+              style="width:${Math.max(4, Math.round((r.share || 0) * 100))}%;background:var(--chart-3)"></span></span>
+            <span class="ch-hval">${r.count}</span>
+          </div>`).join('')}</div>`
+          : '<div class="muted small">还没有浏览商品</div>'}
+        <div class="muted small" style="margin-top:6px">小类＝「大类 / 小类」；占比只统计他浏览过的商品，已删除的商品不计入。</div>
       </div>
 
       <div class="ch-card">

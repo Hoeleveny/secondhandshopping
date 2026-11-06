@@ -6538,6 +6538,31 @@ async function feature62(cdp) {
     charts.rings > 0 && charts.bars > 0 && charts.hbars > 0 && charts.noCanvas === true,
     JSON.stringify({ rings: charts.rings, bars: charts.bars, hbars: charts.hbars }));
 
+  // 2026-10-18 偏好分析①：新增「商品偏好 Top5」与「小类偏好」两张卡
+  const prefCards = await cdp.eval(`
+    (() => {
+      const prod = document.querySelector('#ch-prod');
+      const sub = document.querySelector('#ch-sub');
+      const rows = prod ? [...prod.querySelectorAll('.ch-hrow')] : [];
+      const subRows = sub ? [...sub.querySelectorAll('.ch-hrow')] : [];
+      return {
+        hasProd: !!prod, hasSub: !!sub,
+        prodRows: rows.length,
+        firstTip: rows.length ? (rows[0].dataset.tip || '') : '',
+        firstVal: rows.length ? rows[0].querySelector('.ch-hval').textContent.trim() : '',
+        subRows: subRows.length,
+        subLabel: subRows.length ? subRows[0].querySelector('.ch-hlabel').textContent.trim() : '',
+      };
+    })()`);
+  check('偏好①：画像弹窗里有「商品偏好 Top5」卡（最多 5 行，悬停给浏览/停留/收藏/下单与偏好分）',
+    prefCards.hasProd === true && prefCards.prodRows > 0 && prefCards.prodRows <= 5
+    && prefCards.firstTip.includes('偏好分') && prefCards.firstVal !== '',
+    JSON.stringify(prefCards));
+  check('偏好①：画像弹窗里有「小类偏好」卡，标签是「大类 / 小类」格式',
+    prefCards.hasSub === true && prefCards.subRows > 0
+    && prefCards.subLabel.includes(' / '),
+    JSON.stringify(prefCards));
+
   // 悬停一根柱子 → 出现详细数据
   const hover = await cdp.eval(`
     (() => {
