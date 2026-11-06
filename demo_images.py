@@ -21,6 +21,37 @@ UA = "CampusMarket-DemoSeeder/1.0 (school project; contact: local)"
 
 # 商品名里的关键词 → Commons 搜索词（尽量对得上商品本体）
 PRODUCT_TERMS = [
+    # ---- 2026-10-18 追加商品的关键词（放在前面，先匹配更具体的）----
+    ("数据结构", "data structures textbook"),
+    ("四级", "english vocabulary book"),
+    ("计算机网络", "computer networks book"),
+    ("线性代数", "linear algebra textbook"),
+    ("红米", "smartphone"),
+    ("iPhone", "iphone"),
+    ("M590", "computer mouse"),
+    ("鼠标", "computer mouse"),
+    ("索尼", "headphones"),
+    ("保护壳", "tablet case"),
+    ("机械键盘", "mechanical keyboard"),
+    ("置物架", "shelf"),
+    ("电煮锅", "rice cooker"),
+    ("保温壶", "thermos"),
+    ("阅读灯", "reading lamp"),
+    ("床帘", "curtain"),
+    ("全身镜", "mirror"),
+    ("跑鞋", "running shoes"),
+    ("羽毛球", "badminton racket"),
+    ("瑜伽垫", "yoga mat"),
+    ("折叠自行车", "folding bicycle"),
+    ("足球", "football ball"),
+    ("乒乓球", "table tennis racket"),
+    ("尤克里里", "ukulele"),
+    ("电子琴", "electronic keyboard"),
+    ("初号机", "action figure"),
+    ("高达", "model kit"),
+    ("话剧", "theatre ticket"),
+    ("多肉", "succulent plant"),
+    ("纸箱", "cardboard box"),
     ("高等数学", "calculus textbook"),
     ("考研英语", "english textbook"),
     ("大学物理", "physics textbook"),
@@ -51,12 +82,11 @@ CATEGORY_TERMS = {
     "其他": "second-hand goods",
 }
 
-# 不适合当商品图的内容：① 图表/标志类 ② 露骨或成人内容（演示项目必须挡掉）
+# 不适合当商品图的内容：只挡"不是实物照"的（图表/地图/海报/扫描件/图标）。
+# 2026-10-18 用户拍板：**敏感照片不再加黑名单，正常显示即可**——所以这里没有内容类过滤。
 BAD_WORDS = ("logo", "diagram", "map", "chart", "icon", "symbol", "seal", "sign",
              "poster", "screenshot", "cover", "scan", "certificate", "blueprint",
-             "nude", "nudity", "naked", "topless", "erotic", "erotica", "sexual",
-             "sex ", "porn", "penis", "vagina", "breast", "nipple", "bikini",
-             "lingerie", "underwear", "fetish", "gore", "blood", "corpse")
+             "clipart", "infographic", "flowchart")
 
 
 def _get_json(params: dict) -> dict:

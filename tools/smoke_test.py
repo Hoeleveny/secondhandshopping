@@ -165,9 +165,13 @@ def main() -> int:
     status, res = call("GET", "/api/products?category_id=4&min_price=50&max_price=500&sort=price_asc")
     data = res.get("data") or {}
     items = data.get("list") or []
+    # 2026-10-18：原来写死 total == 2，加了一批演示商品后立刻失效 → 改成断言"性质"
     check("叠加筛选：运动 + 50~500 + 价格升序",
-          data.get("total") == 2 and len(items) == 2 and items[0]["price"] < items[1]["price"],
-          str(data.get("list"))[:200])
+          data.get("total") == len(items) and len(items) >= 2
+          and all(x["category_id"] == 4 for x in items)
+          and all(50 <= float(x["price"]) <= 500 for x in items)
+          and [float(x["price"]) for x in items] == sorted(float(x["price"]) for x in items),
+          str([(x["name"], x["price"]) for x in items])[:200])
 
     status, res = call("GET", "/api/products?keyword=教材")
     data = res.get("data") or {}
@@ -2222,6 +2226,48 @@ def main() -> int:
         _sh.rmtree(_tmp, ignore_errors=True)
     except ImportError as exc:
         check("需求②：Pillow 已安装（图像分析依赖）", False, f"导入失败：{exc}")
+
+
+    # ---------------- 本批需求：更多示例商品 ----------------
+    section("本批需求 更多示例商品")
+
+    import os as _os2
+    import subprocess as _sp
+    import sys as _sys2
+
+    _root2 = _os2.path.dirname(_os2.path.dirname(_os2.path.abspath(__file__)))
+    _py = _sys2.executable
+
+    _st, r = call("GET", "/api/products?page=1&page_size=100")
+    _allp = (r.get("data") or {}).get("list") or []
+    _total = (r.get("data") or {}).get("total") or 0
+    check("需求：在售商品数量明显增加（≥ 35 件，演示数据够看）",
+          _total >= 35, f"在售 {_total} 件")
+
+    _names = [x["name"] for x in _allp]
+    _want = ["尤克里里 23 寸", "多肉盆栽两盆（含花盆）", "机械键盘 87 键（青轴）",
+             "折叠自行车 20 寸", "考研数学复习全书（数一）"]
+    _hit = [n for n in _want if n in _names]
+    check("需求：新增的示例商品能在列表里查到（抽查 5 件）",
+          len(_hit) >= 4, f"命中 {len(_hit)}/5：{_hit}")
+
+    _codes = [x.get("product_code") for x in _allp]
+    check("需求：每件商品都有商品编号，且不重复",
+          all(codes for codes in _codes) and len(set(_codes)) == len(_codes),
+          f"编号数 {len(set(_codes))} / 商品数 {len(_codes)}")
+
+    _bad = [x["name"] for x in _allp
+            if not x.get("category_id") or not x.get("category_name")]
+    check("需求：新增商品都挂在合法分类上", not _bad, str(_bad[:3]))
+
+    # 幂等：再跑一次补商品命令，应当「新增 0 件」（不会重复灌数据）
+    _run = _sp.run([_py, _os2.path.join(_root2, "manage.py"), "demo-products"],
+                   capture_output=True, text=True, encoding="utf-8", timeout=180,
+                   cwd=_root2)
+    _out = (_run.stdout or "") + (_run.stderr or "")
+    check("需求：补商品命令可重复执行（第二次新增 0 件，不重复灌数据）",
+          _run.returncode == 0 and "新增 0 件" in _out,
+          _out.strip()[-90:])
 
 
     # ---------------- 本批需求①：删除自己的评论 ----------------

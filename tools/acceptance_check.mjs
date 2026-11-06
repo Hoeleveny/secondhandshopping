@@ -360,6 +360,7 @@ async function check4() {
 async function check5() {
   await cdp.logout();
   const combo = await api('GET', '/api/products?category_id=4&min_price=50&max_price=500&condition=%E4%B8%83%E6%88%90%E6%96%B0%E5%8F%8A%E4%BB%A5%E4%B8%8B&sort=price_asc');
+    const comboItems = combo.data?.list || [];
   const sortAsc = await api('GET', '/api/products?sort=price_asc&page_size=50');
   const prices = (sortAsc.data?.list || []).map(p => p.price);
   const sorted = prices.every((v, i) => i === 0 || prices[i - 1] <= v);
@@ -376,8 +377,12 @@ async function check5() {
   await sleep(900);
   const cleared = await cdp.eval(`document.querySelector('#result-count').innerText`);
 
+    // 2026-10-18：不再写死「2 件 / 11 件」，用接口现算再和界面数字比
+    const catOnly = (await api('GET', '/api/products?category_id=4')).data?.total ?? 0;
+    const onSaleAll = (await api('GET', '/api/products')).data?.total ?? 0;
   record(5, '关键词/分类/小类/价格区间/成色任意叠加，排序生效，清除条件恢复全部在售',
-    combo.data?.total === 1 && sorted && /共 2 件/.test(filtered) && /共 11 件/.test(cleared),
+      (comboItems || []).length >= 1 && (comboItems || []).every(x => x.category_id === 4 && Number(x.price) >= 50 && Number(x.price) <= 500 && x.condition === '七成新及以下')
+      && sorted && filtered.includes(`共 ${catOnly} 件`) && cleared.includes(`共 ${onSaleAll} 件`),
     `运动+50~500+七成新及以下 → ${combo.data?.total} 件；价格升序=${sorted}；界面选「运动」后「${filtered}」，清除后「${cleared}」`);
 }
 
@@ -912,6 +917,8 @@ async function check20() {
 /* ================================================================ 21
    备份 / 恢复 / 重置 */
 async function check21() {
+    // 2026-10-18：演示数据加量后不能写死「重置后 11 件在售」，取重置前基线来比
+    const baseOnSale = (await api('GET', '/api/home')).data?.stats?.on_sale ?? 0;
   const backup = await api('POST', '/api/admin/backup', { token: adminToken });
   const tables = Object.keys(backup.data?.payload?.data || {});
   // PRD 原定义 14 张表；后续功能迭代通过 migration 继续加表（messages / product_wants /
@@ -943,8 +950,8 @@ async function check21() {
 
   record(21, '管理员可备份导出数据、恢复数据、重置示例数据',
     prdTablesCovered && files.data?.length >= 1 && beforeRestore === afterRestore + 1
-    && tempGone.status === 404 && reset.code === 0 && afterReset.stats.on_sale === 11 && dlOk,
-    `备份含 ${tables.length} 张表（PRD 原定义 ${PRD_TABLE_COUNT} 张已全部覆盖=${prdTablesCovered}；users ${counts.users} 行）；备份文件 ${files.data?.length} 个；恢复前 ${beforeRestore} 件 → 恢复后 ${afterRestore} 件，恢复后新增的商品已消失（HTTP ${tempGone.status}）；重置后首页在售 ${afterReset.stats.on_sale} 件；备份可下载=${dlOk}`);
+    && tempGone.status === 404 && reset.code === 0 && afterReset.stats.on_sale === baseOnSale && baseOnSale > 0 && dlOk,
+    `备份含 ${tables.length} 张表（PRD 原定义 ${PRD_TABLE_COUNT} 张已全部覆盖=${prdTablesCovered}；users ${counts.users} 行）；备份文件 ${files.data?.length} 个；恢复前 ${beforeRestore} 件 → 恢复后 ${afterRestore} 件，恢复后新增的商品已消失（HTTP ${tempGone.status}）；重置后首页在售 ${afterReset.stats.on_sale} 件（重置前基线 ${baseOnSale} 件）；备份可下载=${dlOk}`);
 }
 
 /* ================================================================ 22-23

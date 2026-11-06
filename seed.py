@@ -107,6 +107,67 @@ PRODUCTS = [
      "大学生活动中心", "本周六晚 19:00，有事去不了，原价转。"),
     ("seller1", "生活用品", "水壶", "保温杯 500ml", 8.00, "全新", "on_sale", 19,
      "菜鸟驿站（校门口）", "全新未拆封，颜色为浅绿。"),
+    # ---------------- 2026-10-18 追加的演示商品（用户要求"更多示例商品"）----------------
+    ("seller1", "教材", "专业课教材", "数据结构（C 语言版）第 3 版", 30.00, "九成新", "on_sale", 96,
+     "图书馆", "课后习题只做了前四章，其余全新，无划线。"),
+    ("seller2", "教材", "英语四六级", "大学英语四级真题集（含听力音频）", 18.00, "八成新", "on_sale", 74,
+     "第二教学楼", "做过两套，配套听力二维码仍可扫。"),
+    ("seller3", "教材", "专业课教材", "计算机网络（自顶向下方法）", 42.00, "九成新", "on_sale", 88,
+     "第一教学楼", "无笔记，书脊完好。"),
+    ("seller1", "教材", "考研资料", "考研数学复习全书（数一）", 36.00, "八成新", "on_sale", 63,
+     "图书馆南门", "重点章节有荧光笔标注，不影响阅读。"),
+    ("seller2", "教材", "公共课教材", "线性代数（第六版）", 15.00, "九成新", "on_sale", 48,
+     "第一教学楼", "只翻过前两章，无笔记。"),
+    ("seller2", "数码", "手机", "红米 Note 12（8+256G）", 620.00, "八成新", "on_sale", 310,
+     "学生一食堂", "屏幕有细微使用痕迹，无维修记录，含原装充电器。"),
+    ("seller3", "数码", "手机", "iPhone 12 128G 白色", 1850.00, "九成新", "on_sale", 640,
+     "图书馆", "电池健康度 88%，无锁，已恢复出厂设置。"),
+    ("seller1", "数码", "键盘鼠标", "罗技 M590 静音鼠标", 45.00, "九成新", "on_sale", 52,
+     "3 号宿舍楼", "静音按键，蓝牙双模，含接收器。"),
+    ("seller2", "数码", "耳机", "索尼 WH-CH520 头戴耳机", 180.00, "八成新", "on_sale", 143,
+     "大学生活动中心", "耳罩无掉皮，续航正常。"),
+    ("seller3", "数码", "平板", "华为 MatePad 11 保护壳 + 键盘", 70.00, "全新", "on_sale", 38,
+     "菜鸟驿站（校门口）", "买错尺寸，全新未拆。"),
+    ("seller3", "数码", "键盘鼠标", "机械键盘 87 键（青轴）", 130.00, "八成新", "on_sale", 92,
+     "3 号宿舍楼", "键帽略油，附赠拔键器与备用键帽。"),
+    ("seller1", "生活用品", "收纳", "桌面置物架（三层）", 22.00, "九成新", "on_sale", 41,
+     "1 号宿舍楼", "免打孔安装，承重不错。"),
+    ("seller2", "生活用品", "小电器", "小熊电煮锅 1.2L", 45.00, "九成新", "on_sale", 118,
+     "学生二食堂", "带蒸笼，已彻底清洗，宿舍可用。"),
+    ("seller3", "生活用品", "水壶", "不锈钢保温壶 1.5L", 25.00, "八成新", "on_sale", 33,
+     "3 号宿舍楼", "保温 8 小时以上，内胆无水垢。"),
+    ("seller1", "生活用品", "台灯", "USB 夹式阅读灯", 12.00, "九成新", "on_sale", 27,
+     "图书馆南门", "三档亮度，可夹床头或书桌。"),
+    ("seller2", "生活用品", "收纳", "床帘 + 支架一套", 35.00, "九成新", "on_sale", 51,
+     "3 号宿舍楼", "遮光床帘，支架完好，拆卸方便。"),
+    ("seller2", "生活用品", "收纳", "全身镜（可挂墙）", 30.00, "八成新", "on_sale", 46,
+     "1 号宿舍楼", "搬寝室带不走，边框有轻微划痕。"),
+    ("seller3", "运动", "运动鞋", "耐克跑鞋 42 码", 210.00, "七成新及以下", "on_sale", 196,
+     "田径运动场", "鞋底有明显磨损，鞋面干净，已清洗。"),
+    ("seller1", "运动", "球类", "羽毛球拍两支（含球）", 60.00, "九成新", "on_sale", 57,
+     "东区篮球场", "碳素拍，送一筒训练球。"),
+    ("seller2", "运动", "健身器材", "瑜伽垫（加厚 10mm）", 28.00, "九成新", "on_sale", 44,
+     "田径运动场", "附收纳带，无破损。"),
+    ("seller3", "运动", "自行车", "折叠自行车 20 寸", 320.00, "八成新", "off_shelf", 152,
+     "3 号宿舍楼", "折叠方便，放宿舍不占地，刹车灵敏。"),
+    ("seller1", "运动", "球类", "足球 5 号（手缝）", 40.00, "八成新", "on_sale", 35,
+     "东区篮球场", "耐磨，打过几次，气足。"),
+    ("seller2", "运动", "球类", "乒乓球拍一对", 32.00, "九成新", "on_sale", 26,
+     "东区篮球场", "附三只训练球，胶皮还新。"),
+    ("seller2", "其他", "乐器", "尤克里里 23 寸", 95.00, "九成新", "on_sale", 71,
+     "大学生活动中心", "含调音器、拨片与琴包。"),
+    ("seller3", "其他", "手办", "EVA 初号机模型（已拼装）", 88.00, "九成新", "on_sale", 134,
+     "菜鸟驿站（校门口）", "拼装完成只摆拍过一次，无缺件。"),
+    ("seller1", "其他", "手办", "高达 MG 独角兽", 160.00, "八成新", "on_sale", 88,
+     "3 号宿舍楼", "有轻微掉漆，附备用贴纸。"),
+    ("seller2", "其他", "票券", "校园话剧社演出票 1 张", 10.00, "全新", "on_sale", 16,
+     "大学生活动中心", "周四晚 19:30，教室冲突去不了。"),
+    ("seller3", "其他", "其他", "多肉盆栽两盆（含花盆）", 15.00, "九成新", "on_sale", 29,
+     "1 号宿舍楼", "好养活，已断水一周，搬走自取。"),
+    ("seller1", "其他", "其他", "毕业季行李纸箱 5 个", 20.00, "全新", "on_sale", 12,
+     "菜鸟驿站（校门口）", "加厚五层，未拆封。"),
+    ("seller3", "其他", "乐器", "电子琴 61 键", 260.00, "八成新", "off_shelf", 187,
+     "大学生活动中心", "音色正常，送琴架与延音踏板。"),
 ]
 
 # ----------------------------------------------------------------- 订单
@@ -395,3 +456,47 @@ if __name__ == "__main__":
         print("示例数据写入完成：")
         for key, value in result.items():
             print(f"  {key:<20} {value}")
+
+def seed_extra_products() -> dict:
+    """把 PRODUCTS 里**数据库还没有的**商品补进去（按名称判重，幂等）。
+
+    给"演示数据加量"用：不重置、不动已有数据；已有商品一件都不碰。
+    """
+    import product_code as pc
+
+    from extensions import db
+    from models import CampusPlace, Category, Product, Subcategory, User
+
+    users = {u.username: u for u in User.query.all()}
+    cats = {c.name: c for c in Category.query.all()}
+    cat_by_id = {c.id: c for c in cats.values()}
+    subs = {}
+    for sub in Subcategory.query.all():
+        cat = cat_by_id.get(sub.category_id)
+        if cat is not None:
+            subs[(cat.name, sub.name)] = sub
+    places = {p.name: p for p in CampusPlace.query.all()}
+    existing = {p.name for p in Product.query.all()}
+
+    created = 0
+    base_time = datetime.now() - timedelta(days=45)
+    for idx, (seller, cat, sub, name, price, cond, status, views, place, desc) in enumerate(PRODUCTS):
+        if name in existing:
+            continue
+        p = Product(
+            seller_id=users[seller].id,
+            category_id=cats[cat].id,
+            subcategory_id=subs[(cat, sub)].id,
+            name=name, price=price, condition=cond, status=status, views=views,
+            description=desc, default_place_id=places[place].id,
+            created_at=base_time + timedelta(days=idx, hours=idx * 2),
+            updated_at=base_time + timedelta(days=idx, hours=idx * 2),
+        )
+        # product_code 是 NOT NULL，必须在 add/flush 之前算好（与 seed_all 保持一致）
+        p.product_code = pc.assign_for(users[seller], p)
+        db.session.add(p)
+        db.session.flush()
+        existing.add(name)
+        created += 1
+    db.session.commit()
+    return {"created": created, "total": Product.query.count()}

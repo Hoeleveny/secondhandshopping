@@ -201,6 +201,18 @@ def cmd_demo_images() -> int:
         return 0
 
 
+def cmd_demo_products() -> int:
+    """把种子清单里数据库还没有的演示商品补进去（幂等，不动已有数据）。"""
+    from app import create_app
+    from seed import seed_extra_products
+
+    app = create_app()
+    with app.app_context():
+        stats = seed_extra_products()
+    print(f"[OK]  演示商品：新增 {stats['created']} 件，当前共 {stats['total']} 件")
+    return 0
+
+
 COMMANDS = {
     "init-db": cmd_init_db,
     "migrate": cmd_migrate,
@@ -210,6 +222,7 @@ COMMANDS = {
     "check": cmd_check,
     "image-features": cmd_image_features,
     "demo-images": cmd_demo_images,
+    "demo-products": cmd_demo_products,
     "run": cmd_run,
 }
 
