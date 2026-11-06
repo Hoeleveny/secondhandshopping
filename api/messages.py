@@ -158,6 +158,9 @@ def with_user(uid: int):
     ).update({Message.is_read: True, Message.keep_unread: False}, synchronize_session=False)
     db.session.commit()
 
+    # 2026-10-18 修复：这里原来按**升序**取前 300 条，会话一旦超过 300 条，
+    # 用户打开聊天框看到的是**最旧**的 300 条、最新的消息反而看不到（会话越久越严重）。
+    # 正确做法是取最近 300 条，再翻回升序返回（界面按顺序渲染）。
     rows = (
         Message.query
         .filter(or_(
@@ -165,10 +168,11 @@ def with_user(uid: int):
             and_(Message.sender_id == uid, Message.receiver_id == me),
         ), Message.id > floor)
         .filter(Message.id.notin_(_hidden_subq(me)))    # 本批需求②：被我单条删掉的不再显示
-        .order_by(Message.created_at.asc(), Message.id.asc())
+        .order_by(Message.created_at.desc(), Message.id.desc())
         .limit(300)
         .all()
     )
+    rows.reverse()
     # 需求③：聊天窗口头部显示对方的好评率（取代原来的信用分展示）
     other_data = other.to_dict()
     other_data["rating"] = seller_rating(other.id)

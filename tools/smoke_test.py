@@ -3345,6 +3345,29 @@ def main() -> int:
                                     and not _io["best"]["insufficient"]),
           str(_io.get("best"))[:150])
 
+    # ---------------- 修复：聊天记录超过 300 条也要看得到最新消息 ----------------
+    section("修复 超长聊天记录")
+
+    _st, r = call("GET", "/api/auth/me", token=seller_token)
+    _long_uid = ((r.get("data") or {}).get("user") or {}).get("id")
+    # 先把「我这边」的旧历史清掉，免得和历史消息混在一起
+    call("DELETE", f"/api/messages/conversations/{_long_uid}", token=token)
+    _sent_long = 0
+    for _i in range(305):
+        _st, r = call("POST", "/api/messages", token=token,
+                      body={"receiver_id": _long_uid,
+                            "content": f"冒烟测试-长会话 {_i:03d}"})
+        if r.get("code") == 0:
+            _sent_long += 1
+    check("修复：已给同一条会话灌入 305 条消息", _sent_long == 305, f"成功 {_sent_long} 条")
+
+    _st, r = call("GET", f"/api/messages/with/{_long_uid}", token=token)
+    _thread = (r.get("data") or {}).get("list") or []
+    check("修复：长会话只返回最近 300 条（不会把整段历史都拖下来）",
+          len(_thread) == 300, f"{len(_thread)} 条")
+    check("修复：最新一条必须能拿到（旧实现超过 300 条后只能看到最旧的）",
+          bool(_thread) and "长会话 304" in ((_thread[-1] or {}).get("content") or ""),
+          str((_thread[-1] if _thread else {}).get("content"))[:60])
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 
