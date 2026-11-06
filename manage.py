@@ -181,6 +181,26 @@ def cmd_image_features() -> int:
         return 0
 
 
+def cmd_demo_images() -> int:
+    """给演示商品从 Wikimedia Commons 补配图（自由授权；幂等，已有图跳过）。"""
+    from app import create_app
+    import demo_images
+
+    app = create_app()
+    with app.app_context():
+        force = "--force" in sys.argv
+        n = 2
+        for a in sys.argv[2:]:
+            if a.isdigit():
+                n = max(1, min(int(a), 6))
+        stats = demo_images.run(per_product=n, only_missing=not force)
+        print(f"[OK]  演示配图：补了 {stats['images']} 张 / {stats['products']} 件商品，"
+              f"跳过 {stats['skipped']} 件（已有图），失败 {stats['failed']} 件；"
+              f"图片特征表 {stats['feature_rows']} 行")
+        print(f"      出处与许可记录：{stats['credit_file']}")
+        return 0
+
+
 COMMANDS = {
     "init-db": cmd_init_db,
     "migrate": cmd_migrate,
@@ -189,6 +209,7 @@ COMMANDS = {
     "reset-demo": cmd_reset_demo,
     "check": cmd_check,
     "image-features": cmd_image_features,
+    "demo-images": cmd_demo_images,
     "run": cmd_run,
 }
 

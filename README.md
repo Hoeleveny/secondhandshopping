@@ -1036,3 +1036,39 @@ MySQL 的 **3823**（CHECK 里用到的列不能同时带 `ON DELETE SET NULL` �
 2. 冒烟用 `mkdtemp` 生成的临时图目录漏在**仓库根**（`TEMP` 未设时会落到 cwd）→ 改到 gitignore 的 `_build_tmp` 下并显式删除。
 3. 三条**写死数量**的旧断言因新增第六张卡而失效（`cards === 4/5`）→ 改成 `>=`；另有一条「按页面筛选」的用例
    假红三次，真因是**5 秒自动刷新把筛选结果冲掉**（不是折叠回归）→ 改成「点搜索后只等 700ms 立刻读、失败重试」。
+
+## 三十五、演示商品配图（Wikimedia Commons，2026-10-18）
+
+**需求**：能不能爬网页图片，补充更多演示商品数据。
+
+**结论与口径**：能（本机 Python 的 HTTPS 通），但**不爬电商站**——闲鱼/淘宝/京东的商品图属于商家或平台，
+抓取违反站点条款、也有版权问题。改用**明确允许再利用**的图源：**Wikimedia Commons**（CC / 公有领域），
+并且**每张图都记录作者 / 许可 / 来源页**。
+
+**用法**：
+
+```bat
+.venv\Scripts\python.exe manage.py demo-images 3        :: 每件商品补到 3 张（幂等，只补差额）
+.venv\Scripts\python.exe manage.py demo-images 3 --force :: 已有图也重新补
+```
+
+**做法**：
+- 根目录 `demo_images.py`：按**商品名关键词**映射英文检索词（高等数学→calculus textbook、台灯→desk lamp、
+  自行车→mountain bicycle…），匹配不到就按**分类**兜底（教材→textbook、数码→consumer electronics…）；
+- 走 Commons `generator=search`（限 `gsrnamespace=6` 文件命名空间 + `filetype:bitmap`），只要 500×350 以上、
+  jpg/png/webp 的缩略图（900px 宽）；
+- **三道过滤**：① 图表/标志类关键词（logo、diagram、map、poster、scan…）；② **成人/露骨内容黑名单**
+  （nude、nudity、naked、erotic…，同时检查标题与 Commons 的 Categories——第一版没挡，给"景品"配到了一张裸体手办照，
+  已加入并重抓）；③ **相关性**：检索词里的实词至少命中一个才要，并按命中数排序；
+- 落库：写 `product_images`（`sort` 递增）+ 顺手调 `imaging.store_features()` 算进 `image_features`，
+  这样「图像感知」画像立刻有料；
+- 出处：写 `seed_images/credit.json`（`product / keyword / source_page / title / artist / license`，已入库）；
+  `artist` 从 Commons 的 extmetadata 取，**剥掉 HTML 标签**转纯文本。
+
+**注意**：图片文件本身在 `uploads/`（被 `.gitignore` 排除），所以**换环境/重新克隆要再跑一次**该命令；
+`manage.py reset-demo` 会清空 `product_images`，重置后同样要重跑一次。
+
+**当前结果**：补了 **59 张、22 件商品有图**（每件 3 张），`image_features` 78 行；首页 16 张卡片全部有图、
+详情页 3 张缩略图可切换。
+
+**回归**：冒烟 486、功能 65 组 479、E2E 22 页 0、主题 13/13、26 张表、残留 0。
