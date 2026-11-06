@@ -391,6 +391,7 @@ def activities_profile():
             cat_counter[name] = cat_counter.get(name, 0) + 1
 
     tag_counter: dict = {}
+    posts: dict = {}
     if post_ids:
         posts = {x.id: x for x in Post.query.filter(Post.id.in_(set(post_ids))).all()}
         for pid in post_ids:
@@ -681,6 +682,87 @@ def activities_profile():
         "empty": not seller_rows,
     }
 
+    # ⑫ 帖子分区偏好（2026-10-18 偏好分析③）：分区＝帖子 tag（安利/避雷/闲聊/求助）
+    from models import PostComment, PostLike
+
+    tag_views, tag_secs = {}, {}
+    for _p in pages:
+        _k, _rid = classify_page(_p.page)
+        if _k == "post":
+            _po = posts.get(_rid)
+            if _po is not None:
+                tag_views[_po.tag] = tag_views.get(_po.tag, 0) + 1
+    for _pg, _gap in dwells:
+        _k, _rid = classify_page(_pg)
+        if _k == "post":
+            _po = posts.get(_rid)
+            if _po is not None:
+                tag_secs[_po.tag] = tag_secs.get(_po.tag, 0.0) + _gap
+
+    tag_likes, tag_comments = {}, {}
+    _like_ids, _cmt_ids = set(), []
+    try:
+        _like_ids = {x.post_id for x in
+                     db.session.query(PostLike).filter(PostLike.user_id == target.id).all()}
+        _cmt_ids = [x.post_id for x in
+                    db.session.query(PostComment)
+                    .filter(PostComment.author_id == target.id).all()]
+    except Exception:                     # noqa: BLE001
+        pass
+    _need_posts = (set(_like_ids) | set(_cmt_ids)) - set(posts)
+    if _need_posts:                       # 点赞/评论过、但没浏览过的帖子也要归到分区
+        posts.update({p.id: p for p in Post.query.filter(Post.id.in_(_need_posts)).all()})
+    for _pid in _like_ids:
+        _po = posts.get(_pid)
+        if _po is not None:
+            tag_likes[_po.tag] = tag_likes.get(_po.tag, 0) + 1
+    for _pid in _cmt_ids:
+        _po = posts.get(_pid)
+        if _po is not None:
+            tag_comments[_po.tag] = tag_comments.get(_po.tag, 0) + 1
+
+    # 大众基线：全站用户按 tag 的帖子浏览次数占比（帖子总量很小，一次取完再累加）
+    base_tag, base_total = {}, 0
+    all_post_tags = {p.id: p.tag for p in Post.query.all()}
+    if all_post_tags:
+        for (_pg_only,) in (db.session.query(UserActivity.page)
+                            .filter(UserActivity.kind == "page",
+                                    UserActivity.page.like("/post/%")).all()):
+            _m = POST_PATH.match(_pg_only or "")
+            if not _m:
+                continue
+            _tag = all_post_tags.get(int(_m.group(1)))
+            if _tag:
+                base_tag[_tag] = base_tag.get(_tag, 0) + 1
+                base_total += 1
+
+    _tag_set = set(tag_views) | set(tag_likes) | set(tag_comments)
+    total_tag_views = sum(tag_views.values())
+    post_rows = []
+    for _t in _tag_set:
+        _v = tag_views.get(_t, 0)
+        _secs = int(tag_secs.get(_t, 0.0))
+        post_rows.append({
+            "tag": _t, "views": _v, "dwell_secs": _secs, "dwell_text": duration_text(_secs),
+            "likes": tag_likes.get(_t, 0), "comments": tag_comments.get(_t, 0),
+            "share": round(_v / total_tag_views, 3) if total_tag_views else 0.0,
+            "base_share": (round(base_tag.get(_t, 0) / base_total, 3)
+                           if base_total else 0.0),
+        })
+    for _r in post_rows:                  # 与大众口味差多少（正数＝更偏这个分区）
+        _r["diff"] = round(_r["share"] - _r["base_share"], 3)
+    post_rows.sort(key=lambda x: (-x["views"], x["tag"]))
+
+    post_pref = {
+        "top": post_rows,
+        "top_tag": post_rows[0]["tag"] if post_rows and total_tag_views else "",
+        "total_views": total_tag_views,
+        "like_total": sum(tag_likes.values()),
+        "comment_total": sum(tag_comments.values()),
+        "note": "分区＝帖子 tag；占比按浏览次数算，base_share 是全站该分区的浏览占比（大众口味）",
+        "empty": not post_rows,
+    }
+
     # ⑧ 图片偏好（图片级埋点）
     imgs = (ProductImageView.query.filter(ProductImageView.user_id == target.id)
             .order_by(ProductImageView.created_at.desc()).limit(500).all())
@@ -766,6 +848,7 @@ def activities_profile():
         "images": img_dim,
         "product_pref": product_pref,
         "seller_pref": seller_pref,
+        "post_pref": post_pref,
         "dwell_kinds": dwell_kinds,
         "top_dwell": top_dwell,
         "image_perception": image_perception,

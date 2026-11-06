@@ -3036,6 +3036,54 @@ def main() -> int:
 
     call("DELETE", f"/api/follows/{_sp_sid}", token=token)
 
+    # ---------------- 偏好分析③：帖子分区偏好 ----------------
+    section("偏好分析③ 帖子分区偏好")
+
+    _st, r = call("POST", "/api/posts", token=token,
+                  body={"title": "冒烟测试-分区偏好A", "content": "安利一下",
+                        "tag": "安利"})
+    _pp_postA = (r.get("data") or {}).get("id")
+    _st, r = call("POST", "/api/posts", token=token,
+                  body={"title": "冒烟测试-分区偏好B", "content": "求助一下",
+                        "tag": "求助"})
+    _pp_postB = (r.get("data") or {}).get("id")
+    check("偏好分析③：备好两个不同分区的帖子（安利 / 求助）",
+          bool(_pp_postA and _pp_postB), f"{_pp_postA}/{_pp_postB}")
+
+    for _i in range(4):
+        call("POST", "/api/activities/page", token=token,
+             body={"page": f"/post/{_pp_postA}", "name": "交流广场"})
+    call("POST", "/api/activities/page", token=token,
+         body={"page": f"/post/{_pp_postB}", "name": "交流广场"})
+    call("POST", f"/api/posts/{_pp_postA}/like", token=token)
+    call("POST", f"/api/posts/{_pp_postA}/comments", token=token,
+         body={"content": "冒烟测试：分区偏好评论"})
+
+    _st, r = call("GET", f"/api/admin/activities/profile?user_id={_pp_uid}", token=_ut_at)
+    _pf = ((r.get("data") or {}).get("post_pref")) or {}
+    _pf_rows = _pf.get("top") or []
+    check("偏好分析③：画像接口返回「帖子分区偏好」（每分区浏览/停留/点赞/评论/占比 + 大众基线）",
+          isinstance(_pf_rows, list) and bool(_pf.get("note"))
+          and all({"tag", "views", "dwell_secs", "dwell_text", "likes", "comments",
+                   "share", "base_share", "diff"} <= set(x.keys()) for x in _pf_rows),
+          str(_pf_rows)[:150])
+    _pf_a = next((x for x in _pf_rows if x["tag"] == "安利"), None)
+    _pf_b = next((x for x in _pf_rows if x["tag"] == "求助"), None)
+    check("偏好分析③：看过的两个分区都统计到了（安利 4 次、求助 1 次以上）",
+          bool(_pf_a) and _pf_a["views"] >= 4 and bool(_pf_b) and _pf_b["views"] >= 1,
+          str([(_pf_a or {}).get("views"), (_pf_b or {}).get("views")]))
+    check("偏好分析③：点赞与评论按分区累加（安利 1 赞 1 评）",
+          bool(_pf_a) and _pf_a["likes"] >= 1 and _pf_a["comments"] >= 1
+          and _pf.get("like_total", 0) >= 1, str(_pf_a)[:170])
+    check("偏好分析③：分区偏好按浏览次数从高到低排",
+          [x["views"] for x in _pf_rows] == sorted([x["views"] for x in _pf_rows], reverse=True),
+          str([x["views"] for x in _pf_rows]))
+    _pf_sum = sum(x["share"] for x in _pf_rows)
+    check("偏好分析③：各分区占比合计约等于 1", abs(_pf_sum - 1) < 0.02, f"{round(_pf_sum, 3)}")
+    check("偏好分析③：给出与大众口味的差值（diff = 个人占比 - 全站占比）",
+          all(abs(round(x["share"] - x["base_share"], 3) - x["diff"]) < 0.002 for x in _pf_rows),
+          str([(x["tag"], x["share"], x["base_share"], x["diff"]) for x in _pf_rows])[:170])
+
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 

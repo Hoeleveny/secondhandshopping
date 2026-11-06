@@ -1413,6 +1413,9 @@ function openProfileCharts(d) {
   const sellerTop = sp.top || [];
   const spRepeat = sp.repeat || {};
   const maxSellerScore = Math.max(1, ...sellerTop.map(x => x.score || 0));
+  // 2026-10-18 偏好分析③：帖子分区偏好
+  const postPref = d.post_pref || {};
+  const ppTags = postPref.top || [];
 
   const pct = (v) => Math.round((v || 0) * 100);
   // 2026-10-18：图表配色。原来前两个都是 --primary（扇区同色）、后两个是灰阶，
@@ -1555,6 +1558,24 @@ function openProfileCharts(d) {
         <div class="ch-title">帖子关注点</div>
         ${tags.length ? `<div class="ch-hbars">${hbars(tags, 'tag')}</div>`
           : '<div class="muted small">还没有浏览帖子</div>'}
+      </div>
+
+      <div class="ch-card" id="ch-postpref">
+        <div class="ch-title">帖子分区偏好 <span class="muted small">（安利 / 避雷 / 闲聊 / 求助）</span></div>
+        ${ppTags.length ? `<div class="ch-hbars">${ppTags.map((x) => `
+          <div class="ch-hrow" data-chart="postpref"
+               data-tip="${esc(x.tag)} · 浏览 ${x.views} 次 · 停留 ${esc(x.dwell_text)} · 点赞 ${x.likes} · 评论 ${x.comments} · 你占 ${pct(x.share)}%（全站 ${pct(x.base_share)}%，差 ${x.diff >= 0 ? '+' : ''}${pct(x.diff)} 个点）">
+            <span class="ch-hlabel" style="width:56px">${esc(x.tag)}</span>
+            <span class="ch-htrack"><span class="ch-hfill"
+              style="width:${Math.max(4, Math.round((x.share || 0) * 100))}%;background:var(--chart-5)"></span></span>
+            <span class="ch-hval" style="width:52px">${x.views} 次</span>
+          </div>`).join('')}</div>`
+          : '<div class="muted small">还没有浏览帖子</div>'}
+        <div class="muted small" style="margin-top:6px">
+          最常看：${esc(postPref.top_tag || '—')}　·　共 ${postPref.total_views || 0} 次帖子浏览
+          　·　点赞 ${postPref.like_total || 0} · 评论 ${postPref.comment_total || 0}
+        </div>
+        <div class="muted small">占比＝该分区占他全部帖子浏览；括号里的「全站」是所有用户同分区的浏览占比，差值为正说明他比大众更偏这个分区。</div>
       </div>
 
       <div class="ch-card" id="ch-dwell">

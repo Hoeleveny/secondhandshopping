@@ -6585,6 +6585,28 @@ async function feature62(cdp) {
     && sellerCard.text.includes('回头率'),
     (sellerCard.text || '').replace(/\s+/g, ' ').slice(0, 120));
 
+  // 2026-10-18 偏好分析③：新增「帖子分区偏好」卡
+  const postPrefCard = await cdp.eval(`
+    (() => {
+      const box = document.querySelector('#ch-postpref');
+      if (!box) return { ok: false };
+      const rows = [...box.querySelectorAll('.ch-hrow')];
+      return {
+        ok: true,
+        rows: rows.length,
+        firstTip: rows.length ? (rows[0].dataset.tip || '') : '',
+        text: box.innerText,
+      };
+    })()`);
+  check('偏好③：画像弹窗里有「帖子分区偏好」卡，悬停给出浏览/停留/点赞/评论与大众差值',
+    postPrefCard.ok === true && postPrefCard.rows > 0
+    && postPrefCard.firstTip.includes('全站'),
+    JSON.stringify({ rows: postPrefCard.rows, tip: postPrefCard.firstTip.slice(0, 70) }));
+  check('偏好③：帖子分区卡给出最常看分区与浏览/点赞/评论合计',
+    postPrefCard.ok === true && postPrefCard.text.includes('最常看')
+    && postPrefCard.text.includes('点赞'),
+    (postPrefCard.text || '').replace(/\s+/g, ' ').slice(0, 120));
+
   // 悬停一根柱子 → 出现详细数据
   const hover = await cdp.eval(`
     (() => {
