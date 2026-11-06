@@ -2311,6 +2311,53 @@ def main() -> int:
     check("需求：每个小类都至少有 1 件在售商品（21 个小类都有货可看）",
           not _sub_gap, f"缺口：{_sub_gap[:6]}（共 {len(_all_subs)} 个小类）")
 
+    # ---------------- 本批需求：每件商品 3 张图 + 帖子配图（2026-10-18 第三批） ----------------
+    section("本批需求 商品配图与帖子配图")
+
+    import json as _json3
+
+    _all_img, _img_total = [], 0
+    for _pg in (1, 2, 3):
+        _st, r = call("GET", f"/api/products?page={_pg}&page_size=60")
+        _d = r.get("data") or {}
+        _img_total = _d.get("total") or _img_total
+        _all_img.extend(_d.get("list") or [])
+        if len(_all_img) >= _img_total:
+            break
+    _with_img = [x for x in _all_img if (x.get("images") or [])]
+    check("需求：绝大多数在售商品都有配图（≥ 90%）",
+          bool(_img_total) and len(_with_img) / _img_total >= 0.9,
+          f"{len(_with_img)}/{_img_total}")
+    _avg_img = sum(len(x.get("images") or []) for x in _with_img) / max(1, len(_with_img))
+    check("需求：有图商品平均每件 ≥ 2 张（目标 3 张）", _avg_img >= 2,
+          f"平均 {round(_avg_img, 2)} 张")
+
+    # 出处与许可：演示图必须是"能查到作者/许可/来源页"的自由授权图
+    try:
+        with open(_os2.path.join(_root2, "seed_images", "credit.json"),
+                  encoding="utf-8") as _fh:
+            _credit = _json3.load(_fh)
+    except Exception:                       # noqa: BLE001
+        _credit = {}
+    _used_imgs = {im for x in _all_img for im in (x.get("images") or [])}
+    # credit.json 里每条都必须有来源页与许可；用户自己上传的图本来就没有出处，单独算覆盖率
+    _credit_bad = [f for f, v in _credit.items()
+                   if not (v or {}).get("source_page") or not (v or {}).get("license")]
+    check("需求：credit.json 里每条演示图都记了来源页与许可",
+          not _credit_bad, str(_credit_bad[:3]))
+    _known_imgs = set(_credit)
+    _unknown_imgs = sorted(_used_imgs - _known_imgs)
+    check("需求：在售商品的配图绝大多数来自演示配图（能查到出处，≥ 90%）",
+          not _used_imgs or len(_used_imgs & _known_imgs) / len(_used_imgs) >= 0.9,
+          f"无出处 {len(_unknown_imgs)}/{len(_used_imgs)}：{_unknown_imgs[:3]}")
+
+    _st, r = call("GET", "/api/posts?page=1&page_size=20")
+    _plist = (r.get("data") or {}).get("list") or []
+    _post_img = [x for x in _plist if (x.get("images") or [])]
+    check("需求：演示帖子也有配图（至少一半的帖子有图）",
+          bool(_plist) and len(_post_img) * 2 >= len(_plist),
+          f"{len(_post_img)}/{len(_plist)} 个帖子有图")
+
     # ---------------- 本批需求：商品列表每页 24 件 + 一行 6 张 ----------------
     section("本批需求 商品列表每页 24 件")
 

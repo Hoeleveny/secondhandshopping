@@ -20,7 +20,42 @@ API = "https://commons.wikimedia.org/w/api.php"
 UA = "CampusMarket-DemoSeeder/1.0 (school project; contact: local)"
 
 # 商品名里的关键词 → Commons 搜索词（尽量对得上商品本体）
+# 顺序＝优先级：越具体越靠前（"篮球鞋"必须排在"篮球"前面，否则会配成篮球的照片）
 PRODUCT_TERMS = [
+    # ---- 2026-10-18 第三批（商品扩到 100 件）新增的关键词 ----
+    ("篮球鞋", "basketball shoes"),
+    ("小米平板", "tablet computer"),
+    ("荣耀平板", "tablet computer"),
+    ("ThinkPad", "laptop computer"),
+    ("AirPods", "wireless earbuds"),
+    ("nova", "smartphone"),
+    ("戴尔", "laptop computer"),
+    ("漫步者", "wireless earbuds"),
+    ("G102", "computer mouse"),
+    ("概率论", "statistics textbook"),
+    ("考研数学", "calculus textbook"),
+    ("数据库系统", "database textbook"),
+    ("操作系统概念", "operating system textbook"),
+    ("马克思主义", "politics textbook"),
+    ("考研政治", "politics textbook"),
+    ("计算机组成原理", "computer architecture book"),
+    ("六级", "english dictionary"),
+    ("四级听力", "english listening test"),
+    ("大学英语", "english textbook"),
+    ("收纳凳", "folding stool"),
+    ("挂袋", "hanging organizer"),
+    ("收纳盒", "plastic storage box"),
+    ("水杯", "water bottle"),
+    ("风扇", "electric fan"),
+    ("插排", "power strip"),
+    ("电饭煲", "rice cooker"),
+    ("电吹风", "hair dryer"),
+    ("排球", "volleyball"),
+    ("网球", "tennis racket"),
+    ("筋膜枪", "massage gun"),
+    ("跳绳", "jump rope"),
+    ("瑜伽球", "exercise ball"),
+    ("拼图", "jigsaw puzzle"),
     # ---- 2026-10-18 追加商品的关键词（放在前面，先匹配更具体的）----
     ("数据结构", "data structures textbook"),
     ("四级", "english vocabulary book"),
@@ -31,7 +66,7 @@ PRODUCT_TERMS = [
     ("M590", "computer mouse"),
     ("鼠标", "computer mouse"),
     ("索尼", "headphones"),
-    ("保护壳", "tablet case"),
+    ("保护壳", "phone case"),
     ("机械键盘", "mechanical keyboard"),
     ("置物架", "shelf"),
     ("电煮锅", "rice cooker"),
@@ -80,6 +115,28 @@ CATEGORY_TERMS = {
     "生活用品": "household goods",
     "运动": "sports equipment",
     "其他": "second-hand goods",
+}
+
+# 帖子配图：标题/正文关键词 → Commons 搜索词；匹配不到按 tag 兜底
+POST_TERMS = [
+    ("自习", "library reading room"),
+    ("图书馆", "library reading room"),
+    ("充电宝", "power bank"),
+    ("羽毛球", "badminton"),
+    ("台灯", "desk lamp"),
+    ("快递", "parcel delivery"),
+    ("食堂", "cafeteria"),
+    ("宿舍", "dormitory room"),
+    ("考研", "study desk"),
+    ("毕业", "graduation"),
+    ("篮球", "outdoor basketball court"),
+    ("自行车", "bicycle"),
+]
+POST_TAG_TERMS = {
+    "安利": "student dormitory",
+    "避雷": "worn out product",
+    "闲聊": "campus",
+    "求助": "desk lamp",
 }
 
 # 不适合当商品图的内容：只挡"不是实物照"的（图表/地图/海报/扫描件/图标）。
@@ -172,6 +229,77 @@ def term_for(product, category_name: str) -> str:
         if key.lower() in name.lower():
             return term
     return CATEGORY_TERMS.get(category_name or "", "second-hand goods")
+
+
+def post_term_for(post) -> str:
+    """帖子配图的搜索词：先看标题/正文关键词，匹配不到按 tag 兜底。"""
+    blob = f"{post.title or ''} {post.content or ''}"
+    for key, term in POST_TERMS:
+        if key in blob:
+            return term
+    return POST_TAG_TERMS.get(post.tag or "", "campus university")
+
+
+def run_post_images(per_post: int = 2) -> dict:
+    """给演示帖子补配图（2026-10-18 第三批）。幂等：已有的算在内，只补差额。"""
+    from flask import current_app
+
+    from extensions import db
+    from imaging import store_features
+    from models import ImageFeature, Post, PostImage
+
+    folder = current_app.config["UPLOAD_FOLDER"]
+    credit_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "seed_images", "credit.json")
+    try:
+        with open(credit_path, encoding="utf-8") as fh:
+            credits = json.load(fh)
+    except Exception:
+        credits = {}
+
+    stats = {"posts": 0, "images": 0, "skipped": 0, "failed": 0}
+    for post in Post.query.order_by(Post.id).all():
+        have = PostImage.query.filter_by(post_id=post.id).count()
+        need = per_post - have
+        if need <= 0:
+            stats["skipped"] += 1
+            continue
+        term = post_term_for(post)
+        picks = search(term)
+        if not picks:
+            stats["failed"] += 1
+            print(f"  [--] 帖子#{post.id} 搜不到「{term}」")
+            continue
+        got = 0
+        for item in picks:
+            if got >= need:
+                break
+            filename = f"{uuid.uuid4().hex}.jpg"
+            dest = os.path.join(folder, filename)
+            if not download(item["thumb"], dest):
+                continue
+            db.session.add(PostImage(post_id=post.id, url=filename, sort=have + got))
+            db.session.commit()
+            store_features(filename, folder)      # 顺手算进 image_features（画像用）
+            credits[filename] = {
+                "post": (post.title or "")[:40], "keyword": term,
+                "source_page": item["page"], "title": item["title"],
+                "artist": item["artist"], "license": item["license"],
+            }
+            got += 1
+            stats["images"] += 1
+            time.sleep(0.25)
+        if got:
+            stats["posts"] += 1
+            print(f"  [OK] 帖子#{post.id} 补 {got} 张（关键词「{term}」）")
+        else:
+            stats["failed"] += 1
+
+    with open(credit_path, "w", encoding="utf-8") as fh:
+        json.dump(credits, fh, ensure_ascii=False, indent=2)
+    stats["credit_file"] = credit_path
+    stats["feature_rows"] = ImageFeature.query.count()
+    return stats
 
 
 def run(per_product: int = 2, only_missing: bool = True) -> dict:

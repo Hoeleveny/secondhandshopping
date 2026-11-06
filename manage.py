@@ -201,6 +201,25 @@ def cmd_demo_images() -> int:
         return 0
 
 
+def cmd_demo_post_images() -> int:
+    """给演示帖子从 Wikimedia Commons 补配图（自由授权；幂等，已有图跳过）。"""
+    from app import create_app
+    import demo_images
+
+    app = create_app()
+    with app.app_context():
+        n = 2
+        for a in sys.argv[2:]:
+            if a.isdigit():
+                n = max(1, min(int(a), 4))
+        stats = demo_images.run_post_images(per_post=n)
+        print(f"[OK]  帖子配图：补了 {stats['images']} 张 / {stats['posts']} 个帖子，"
+              f"跳过 {stats['skipped']} 个（已有图），失败 {stats['failed']} 个；"
+              f"图片特征表 {stats['feature_rows']} 行")
+        print(f"      出处与许可记录：{stats['credit_file']}")
+        return 0
+
+
 def cmd_demo_products() -> int:
     """把种子清单里数据库还没有的演示商品补进去（幂等，不动已有数据）。"""
     from app import create_app
@@ -222,6 +241,8 @@ COMMANDS = {
     "check": cmd_check,
     "image-features": cmd_image_features,
     "demo-images": cmd_demo_images,
+    "demo-post-images": cmd_demo_post_images,
+
     "demo-products": cmd_demo_products,
     "run": cmd_run,
 }
