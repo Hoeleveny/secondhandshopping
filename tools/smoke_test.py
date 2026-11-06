@@ -2977,6 +2977,12 @@ def main() -> int:
     _pp_sum = sum(x["share"] for x in _pp_subs)
     check("偏好分析①：小类占比合计约等于 1", abs(_pp_sum - 1) < 0.02, f"{round(_pp_sum, 3)}")
 
+    # 2026-10-18 修复：转化倾向里 `Order = None` 把局部名置空，下单数曾经恒为 0
+    _conv = (r.get("data") or {}).get("conversion") or {}
+    check("修复：画像「转化倾向」能统计到下单数（旧 bug：Order 被误置 None → 恒为 0）",
+          (_conv.get("orders") or 0) >= 1 and (_conv.get("favorites") or 0) >= 1,
+          str(_conv))
+
     # ---------------- 偏好分析②：商家级偏好 ----------------
     section("偏好分析② 商家级偏好")
 

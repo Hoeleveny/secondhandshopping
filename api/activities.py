@@ -510,11 +510,12 @@ def activities_profile():
     }
 
     # ⑥ 转化倾向：浏览过的商品里，收藏/下单了多少
-    fav = Order = None
+    # 2026-10-18 修复：这里原来多写了一行 `Order = None`，把局部名 Order 置空，
+    # 于是 `query(Order)` 必抛异常、被下面的 except 吞掉 → 「下单」恒为 0。删掉即可。
+    fav, order_cnt = 0, 0
     try:
         fav = (db.session.query(Favorite).filter(Favorite.user_id == target.id)
                .filter(Favorite.product_id.in_(list(seen_products) or [-1])).count())
-        Order = None
         order_cnt = (db.session.query(Order).filter(Order.buyer_id == target.id)
                      .filter(Order.product_id.in_(list(seen_products) or [-1])).count())
     except Exception:                       # noqa: BLE001 —— 画像不该因统计失败而中断
@@ -527,7 +528,7 @@ def activities_profile():
 
     # ⑩ 商品级 / 小类级偏好（2026-10-18 偏好分析①）：粒度从「大类占比」细化到具体商品与小类
     #    权重（本轮口径，用户认可）：浏览 ×1、停留每分钟 ×1、收藏 ×3、下单 ×4
-    #    注意：上面「转化倾向」那段把局部名 Order 置成了 None，这里用别名取模型，别被污染。
+    #    （模型名用别名取，避免和上面「转化倾向」里的局部变量撞名）
     from models import Favorite as FavModel, Order as OrderModel
 
     browse_cnt: dict = {}
