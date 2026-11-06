@@ -6652,6 +6652,96 @@ async function feature63(cdp) {
   await sleep(300);
 }
 
+/* ================================================================ 功能64 按对象停留（本批需求①） */
+async function feature64(cdp) {
+  console.log('\n===== 功能64 按对象停留（商品详情 / 商家主页）=====');
+
+  const adminToken = await login('admin', '123456', 'admin');
+  const buyerToken = await login('buyer2', '123456', 'buyer');
+  const me = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+
+  // 造出「商家主页 → 商品详情」两次访问：前者停留由相邻记录时间差算出
+  await api('POST', '/api/activities/page',
+    { token: buyerToken, body: { page: '/seller/4', name: '用户主页' } });
+  await api('POST', '/api/activities/page',
+    { token: buyerToken, body: { page: '/product/1', name: '商品详情' } });
+
+  const api1 = await api('GET', `/api/admin/activities/profile?user_id=${me.id}`, { token: adminToken });
+  const kinds = (api1.data.dwell_kinds || []).map(k => k.kind);
+  check('需求①：接口给出按页面类型的平均停留（含商家主页）',
+    kinds.includes('seller') && kinds.includes('product'), JSON.stringify(kinds));
+  check('需求①：停留最久最多 5 条且带名称与秒数',
+    (api1.data.top_dwell || []).length > 0
+    && (api1.data.top_dwell || []).length <= 5
+    && (api1.data.top_dwell || []).every(x => x.name && typeof x.seconds === 'number'),
+    JSON.stringify((api1.data.top_dwell || []).slice(0, 2)));
+
+  // 界面上：小结卡有一行「按对象停留」；图表弹窗多出「停留最久」卡
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=trades');
+  await waitFor(cdp, `document.querySelectorAll('#lg-list .tl-item').length > 0`);
+  await sleep(1200);
+  await cdp.eval(`
+    (() => {
+      document.querySelector('#lg-profile-user').value = 'buyer2';
+      document.querySelector('#lg-profile-go').click();
+    })()`);
+  await waitFor(cdp, `!!document.querySelector('#lg-dwell-line')`);
+  const line = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#lg-dwell-line');
+      return { text: el ? el.innerText.trim() : '' };
+    })()`);
+  check('需求①：小结卡里有一行「按对象停留」，并写出各类型耗时',
+    /按对象停留/.test(line.text) && /商品详情/.test(line.text) && /商家主页/.test(line.text),
+    line.text.slice(0, 160));
+
+  await cdp.eval(`document.querySelector('#lg-profile-charts').click()`);
+  await waitFor(cdp, `!!document.querySelector('#ch-dwell')`);
+  await sleep(500);
+  const card = await cdp.eval(`
+    (() => {
+      const c = document.querySelector('#ch-dwell');
+      const rows = c ? [...c.querySelectorAll('.ch-hrow')] : [];
+      const tips = rows.map(r => r.dataset.tip || '');
+      return {
+        cards: document.querySelectorAll('.modal-mask .ch-card').length,
+        rows: rows.length,
+        hasSellerRow: tips.some(t => t.includes('商家主页')),
+        hasProductRow: tips.some(t => t.includes('商品详情')),
+        tipsOk: tips.filter(t => /累计/.test(t) && /平均/.test(t)).length,
+        foot: c ? c.innerText.replace(/\s+/g, ' ') : '',
+      };
+    })()`);
+  check('需求①：图表弹窗里多了一张「停留最久」卡（共 5 张图）',
+    card.cards === 5, String(card.cards));
+  check('需求①：这张卡里的每一行都带「累计/平均/次数」的悬停文案',
+    card.rows > 0 && card.rows === card.tipsOk,
+    JSON.stringify({ rows: card.rows, tipsOk: card.tipsOk }));
+  check('需求①：卡底给出「页面类型平均停留」汇总',
+    /页面类型平均停留/.test(card.foot) && /商家主页/.test(card.foot),
+    card.foot.slice(-90));
+
+  // 悬停这一行要显示累计与平均（自定义提示文案）
+  const tip = await cdp.eval(`
+    (() => {
+      const el = document.querySelector('#ch-dwell .ch-hrow');
+      if (!el) return { ok: false };
+      const r = el.getBoundingClientRect();
+      el.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: r.left + 12, clientY: r.top + 4 }));
+      const t = document.querySelector('#ch-tip');
+      return { ok: true, hidden: t.hidden, text: t.textContent.trim() };
+    })()`);
+  check('需求①：悬停停留条目显示「累计秒数 + 平均每次 + 访问次数」',
+    tip.ok === true && tip.hidden === false
+    && /累计/.test(tip.text) && /平均/.test(tip.text) && /次/.test(tip.text),
+    JSON.stringify(tip));
+
+  await cdp.shot(path.join(SHOT_DIR, 'f64-dwell.png'));
+  await cdp.eval(`document.querySelector('.modal-mask [data-close]')?.click()`);
+  await sleep(300);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -6714,7 +6804,8 @@ const GROUPS = {
   60: { title: '图片九宫格与全屏放大', fn: feature60 },
   61: { title: '首页猜你喜欢', fn: feature61 },
   62: { title: '用户画像图表 + 悬停详情', fn: feature62 },
-  63: { title: '画像图表配色有区分度（本批）', fn: feature63 },
+  63: { title: '画像图表配色有区分度', fn: feature63 },
+  64: { title: '按对象停留（商品详情 / 商家主页）', fn: feature64 },
 };
 
 async function main() {

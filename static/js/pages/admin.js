@@ -851,6 +851,16 @@ async function renderTrades(panel) {
             <div class="muted small" style="margin-top:8px">
               停留时长算法：用相邻两条浏览记录的时间差近似（超过 30 分钟视为挂机截断）；图片偏好来自详情页的图片切换埋点。
             </div>
+              ${(() => {
+                const ks = (data.dwell_kinds || []).filter(x => x.count > 0);
+                const top = (data.top_dwell || [])[0];
+                if (!ks.length && !top) return '';
+                const KIND = { product: '商品详情', post: '帖子详情', seller: '商家主页', other: '其它页面' };
+                const parts = ks.filter(x => x.kind !== 'other')
+                  .map(x => `${KIND[x.kind] || x.name} 均 ${x.avg_text}（${x.count} 次）`);
+                const topText = top ? `停留最久：${top.name}（${KIND[top.kind] || top.kind}）累计 ${top.seconds} 秒、平均 ${top.avg_text}/次` : '';
+                return `<div class="muted small" style="margin-top:4px" id="lg-dwell-line">按对象停留：${parts.join(' · ') || '—'}${topText ? '；' + topText : ''}</div>`;
+              })()}
           </div>`;
           })()}`;
         })()}
@@ -1484,6 +1494,28 @@ function openProfileCharts(d) {
         ${tags.length ? `<div class="ch-hbars">${hbars(tags, 'tag')}</div>`
           : '<div class="muted small">还没有浏览帖子</div>'}
       </div>
+
+      <div class="ch-card" id="ch-dwell">
+        <div class="ch-title">停留最久 <span class="muted small">（按对象累计）</span></div>
+        ${(() => {
+          const top = (d.top_dwell || []);
+          const KIND = { product: '商品详情', post: '帖子详情', seller: '商家主页' };
+          if (!top.length) return '<div class="muted small">还没有可比较的停留数据</div>';
+          const maxSec = Math.max(...top.map(x => x.seconds), 1);
+          return `<div class="ch-hbars">${top.map(x => `
+            <div class="ch-hrow" data-chart="dwell"
+                 data-tip="${esc(x.name)}（${KIND[x.kind] || x.kind}）· 累计 ${x.seconds} 秒 · 平均 ${x.avg_text}/次 · 共 ${x.visits} 次">
+              <span class="ch-hlabel" style="width:84px">${esc(x.name)}</span>
+              <span class="ch-htrack"><span class="ch-hfill"
+                style="width:${Math.max(4, Math.round((x.seconds / maxSec) * 100))}%;
+                       background:${x.kind === 'seller' ? 'var(--chart-3)' : (x.kind === 'post' ? 'var(--chart-4)' : 'var(--chart-1)')}"></span></span>
+              <span class="ch-hval">${x.avg_text}</span>
+            </div>`).join('')}</div>`;
+        })()}
+        <div class="muted small" style="margin-top:6px">页面类型平均停留：
+          ${(d.dwell_kinds || []).filter(k => k.kind !== 'other').map(k => `${k.name} ${k.avg_text}`).join(' · ') || '—'}</div>
+        <div class="muted small">商品/帖子/商家主页的停留都用「相邻两条浏览记录的时间差」近似，超过 30 分钟按挂机截断。</div>
+      </div>
     </div>
     <div class="ch-foot muted small">
       图片偏好：${esc(im.style || '暂无数据')}　·　共 ${im.views || 0} 次看图、头图占 ${pct(im.head_share)}%
@@ -1502,7 +1534,8 @@ function openProfileCharts(d) {
         const label = el.dataset.label || '';
         const count = el.dataset.count || '0';
         const share = el.dataset.pct ? `　占 ${el.dataset.pct}%` : '';
-        tip.textContent = `${label}：${count} 次${share}`;
+        tip.textContent = el.dataset.tip
+          || `${label}：${count} 次${share}`;
         tip.hidden = false;
         const box = modal.getBoundingClientRect();
         tip.style.left = `${event.clientX - box.left + 12}px`;

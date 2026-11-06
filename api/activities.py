@@ -441,6 +441,31 @@ def activities_profile():
     avg_dwell = int(total_dwell / len(dwells)) if dwells else 0
     avg_product_dwell = int(sum(product_dwells) / len(product_dwells)) if product_dwells else 0
 
+    # ⑦b 按对象聚合停留（2026-10-18 需求）：单件商品页停多久、某位商家主页停多久
+    dwell_by_kind, dwell_by_ref = {}, {}
+    for pg, g in dwells:
+        kind, rid = classify_page(pg)
+        dwell_by_kind.setdefault(kind, []).append(g)
+        if kind in ("product", "post", "seller"):
+            item = dwell_by_ref.setdefault((kind, rid), {"secs": 0.0, "visits": 0})
+            item["secs"] += g
+            item["visits"] += 1
+    _titles = ref_titles(page_rows)
+    KIND_LABEL = {"product": "商品详情", "post": "帖子详情", "seller": "商家主页", "other": "其它页面"}
+    dwell_kinds = [
+        {"kind": k, "name": KIND_LABEL.get(k, k), "count": len(v),
+         "avg_secs": int(sum(v) / len(v)), "avg_text": duration_text(int(sum(v) / len(v)))}
+        for k, v in sorted(dwell_by_kind.items(), key=lambda kv: -len(kv[1]))
+    ]
+    top_dwell = sorted(
+        [{"kind": k, "ref_id": rid,
+          "name": _titles.get((k, rid)) or "%s #%d" % (REF_LABEL.get(k, "对象"), rid),
+          "seconds": int(v["secs"]), "visits": v["visits"],
+          "avg_secs": int(v["secs"] / max(1, v["visits"])),
+          "avg_text": duration_text(int(v["secs"] / max(1, v["visits"])))}
+         for (k, rid), v in dwell_by_ref.items()],
+        key=lambda x: -x["seconds"])[:5]
+
     # ② 价格带偏好
     PRICE_BANDS = [("0-50", 0, 50), ("50-200", 50, 200), ("200-500", 200, 500),
                    ("500-1000", 500, 1000), ("1000 以上", 1000, None)]
@@ -558,12 +583,15 @@ def activities_profile():
         "depth": depth,
         "conversion": conv,
         "images": img_dim,
+        "dwell_kinds": dwell_kinds,
+        "top_dwell": top_dwell,
         "portrait": portrait,
     })
 
 # ---------------------------------------------------------------- 浏览记录折叠（2026-10-18 需求②）
 PRODUCT_PATH = re.compile(r"^/product/(\d+)$")
 POST_PATH = re.compile(r"^/post/(\d+)$")
+SELLER_PATH = re.compile(r"^/seller/(\d+)$")   # 2026-10-18：商家主页也要能算停留
 PAGE_GAP = timedelta(minutes=30)     # 同一用户间隔 ≤30 分钟的浏览算"一串"
 MAX_GROUP_ITEMS = 50                 # 每组最多带出的商品/帖子条数
 
@@ -577,6 +605,9 @@ def classify_page(page: str) -> tuple:
     m = POST_PATH.match(raw)
     if m:
         return "post", int(m.group(1))
+    m = SELLER_PATH.match(raw)
+    if m:
+        return "seller", int(m.group(1))
     return "other", None
 
 
@@ -584,13 +615,15 @@ def ref_titles(rows) -> dict:
     """把浏览路径里的商品 id / 帖子 id 批量反查成名称（不新增字段，直接查现有表）。"""
     from models import Post, Product          # 避免顶层循环导入
 
-    pids, post_ids = set(), set()
+    pids, post_ids, seller_ids = set(), set(), set()
     for r in rows:
         kind, rid = classify_page(r.page)
         if kind == "product":
             pids.add(rid)
         elif kind == "post":
             post_ids.add(rid)
+        elif kind == "seller":
+            seller_ids.add(rid)
     titles = {}
     if pids:
         for p in Product.query.filter(Product.id.in_(pids)).all():
@@ -598,10 +631,14 @@ def ref_titles(rows) -> dict:
     if post_ids:
         for p in Post.query.filter(Post.id.in_(post_ids)).all():
             titles[("post", p.id)] = (p.title or p.content or "")[:60]
+    if seller_ids:
+        from models import User
+        for u in User.query.filter(User.id.in_(seller_ids)).all():
+            titles[("seller", u.id)] = (u.nickname or u.username or "")[:40]
     return titles
 
 
-REF_LABEL = {"product": "商品", "post": "帖子"}
+REF_LABEL = {"product": "商品", "post": "帖子", "seller": "商家"}
 
 
 def page_display_title(a, titles: dict) -> tuple:
@@ -612,7 +649,8 @@ def page_display_title(a, titles: dict) -> tuple:
     found = titles.get((kind, rid))
     if found:
         return found, kind
-    return "%s #%d（已删除）" % (REF_LABEL.get(kind, "对象"), rid), kind
+    gone = "（已注销）" if kind == "seller" else "（已删除）"
+    return "%s #%d%s" % (REF_LABEL.get(kind, "对象"), rid, gone), kind
 
 
 def _page_item(a: UserActivity, titles: dict) -> dict:

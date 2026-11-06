@@ -1431,8 +1431,14 @@ def main() -> int:
     check("按**商品编号**筛选：能关联到该商品的发布/下单等日志",
           {"product_create", "order_create"} <= _acts, str(sorted(_acts)))
     _d2 = _logs_q(product="交易监管商品", page_size=50)
-    check("按**商品名**筛选也能命中同一批日志", _d.get("total", 0) > 0 and abs(_d2.get("total", 0) - _d.get("total", 0)) <= 5,
-          f"编号 {_d.get('total')} 条 / 名称 {_d2.get('total')} 条")
+    # 2026-10-18：原来断言「名称筛的条数 ≈ 编号筛的条数（±5）」，但商品被清理后**日志摘要里仍留着
+    # 商品名**，名称会多命中历史行、编号只命中现存引用 → 条数天然不等（本条因此反复假红）。
+    # 改成断言语义本身：按名称筛必须命中同一批**动作**，而不是比较条数。
+    _acts2 = {x["action"] for x in _d2.get("list") or []}
+    check("按**商品名**筛选也能命中同一批日志",
+          _d.get("total", 0) > 0 and _d2.get("total", 0) > 0
+          and {"product_create", "order_create"} <= _acts2,
+          f"编号 {_d.get('total')} 条 / 名称 {_d2.get('total')} 条，动作 {sorted(_acts2)[:5]}")
 
     _st, r = call("GET", f"/api/admin/orders?status=all&keyword={quote(_pcode)}", token=admin_token)
     _some = ((r.get("data") or {}).get("list") or [{}])[0]
@@ -2112,6 +2118,42 @@ def main() -> int:
           all(p.get("seller", {}).get("id") != _rc_me for p in (_rc.get("list") or []) if p.get("seller")),
           str([p.get("name") for p in (_rc.get("list") or [])][:3]))
     check("需求③：推荐结果不重复", len(_rc_ids) == len(set(_rc_ids)), str(_rc_ids))
+
+    # ---------------- 本批需求①：按对象停留（商品详情 / 商家主页） ----------------
+    section("本批需求① 按对象停留")
+
+    _st, r = call("GET", "/api/auth/me", token=token)
+    _dw_uid = ((r.get("data") or {}).get("user") or {}).get("id")
+    # 造两次「看起来像停留」的访问：先打开商家主页、再打开商品详情（时间差就是前者的停留）
+    call("POST", "/api/activities/page", token=token,
+         body={"page": "/seller/4", "name": "用户主页"})
+    call("POST", "/api/activities/page", token=token,
+         body={"page": "/product/1", "name": "商品详情"})
+    call("POST", "/api/activities/page", token=token,
+         body={"page": "/product/2", "name": "商品详情"})
+
+    _st, r = call("GET", f"/api/admin/activities/profile?user_id={_dw_uid}", token=_ut_at)
+    _dw = r.get("data") or {}
+    _dw_kinds = {k["kind"]: k for k in (_dw.get("dwell_kinds") or [])}
+    check("需求①：画像里给出「按页面类型的平均停留」",
+          bool(_dw_kinds), str(list(_dw_kinds.keys())))
+    check("需求①：商家主页的停留被单独统计（以前归类成其它、根本不记）",
+          "seller" in _dw_kinds and _dw_kinds["seller"].get("count", 0) > 0,
+          str(_dw_kinds.get("seller")))
+    check("需求①：商品详情的停留被单独统计",
+          "product" in _dw_kinds and _dw_kinds["product"].get("count", 0) > 0,
+          str(_dw_kinds.get("product")))
+    _dw_top = _dw.get("top_dwell") or []
+    check("需求①：给出「停留最久」的对象列表（含类型/名称/秒数/次数）",
+          bool(_dw_top) and all(x.get("name") and x.get("seconds") is not None
+                                and x.get("visits") is not None for x in _dw_top),
+          str(_dw_top[:2]))
+    check("需求①：停留最久按累计秒数从大到小排",
+          [x["seconds"] for x in _dw_top] == sorted([x["seconds"] for x in _dw_top], reverse=True),
+          str([x["seconds"] for x in _dw_top]))
+    check("需求①：停留最久只收商品 / 帖子 / 商家主页三类（其它页面不算对象）",
+          all(x["kind"] in ("product", "post", "seller") for x in _dw_top),
+          str([x["kind"] for x in _dw_top]))
 
     # ---------------- 本批需求①：删除自己的评论 ----------------
     section("本批需求① 删除自己的评论")
