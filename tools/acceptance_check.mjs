@@ -709,12 +709,13 @@ async function check14() {
 /* ================================================================ 15
    管理后台：全部商品 + 下架/上架/删除 */
 async function check15() {
-  const all = await api('GET', '/api/admin/products?page_size=50', { token: adminToken });
-  const statuses = new Set((all.data?.list || []).map(p => p.status));
-  const target = (all.data?.list || []).find(p => p.status === 'on_sale' && p.name.startsWith('验收'));
+  // 2026-10-18：商品到 100 件后单页最多 60 条 —— 必须翻页取全量才找得到「验收」商品
+  const allList = await allAdminProducts();
+  const statuses = new Set(allList.map(p => p.status));
+  const target = allList.find(p => p.status === 'on_sale' && p.name.startsWith('验收'));
   if (!target) {
     record(15, '管理后台能看到全部商品（含已售、已下架），能对任意商品下架/重新上架/删除', false,
-      `没找到可操作的「验收」商品（当前 ${all.data?.list?.length || 0} 件）`);
+      `没找到可操作的「验收」商品（当前 ${allList.length} 件）`);
     return;
   }
 
@@ -783,10 +784,22 @@ async function check16() {
 
 /* ================================================================ 17
    看板四数字与图表与实际一致 */
+/** 2026-10-18：演示商品到 100 件后，单页最多 60 条 —— 断言必须翻页取全量，不能只看第一页。 */
+async function allAdminProducts() {
+  const out = [];
+  for (let page = 1; page <= 20; page++) {
+    const r = await api('GET', `/api/admin/products?page=${page}&page_size=60`,
+      { token: adminToken });
+    const list = r.data?.list || [];
+    out.push(...list);
+    if (out.length >= (r.data?.total || 0) || !list.length) break;
+  }
+  return out;
+}
+
 async function check17() {
   const stats = (await api('GET', '/api/admin/stats', { token: adminToken })).data;
-  const all = await api('GET', '/api/admin/products?page_size=200', { token: adminToken });
-  const list = all.data?.list || [];
+  const list = await allAdminProducts();
   const actual = {
     total: list.length,
     on_sale: list.filter(p => p.status === 'on_sale').length,
@@ -917,8 +930,6 @@ async function check20() {
 /* ================================================================ 21
    备份 / 恢复 / 重置 */
 async function check21() {
-    // 2026-10-18：演示数据加量后不能写死「重置后 11 件在售」，取重置前基线来比
-    const baseOnSale = (await api('GET', '/api/home')).data?.stats?.on_sale ?? 0;
   const backup = await api('POST', '/api/admin/backup', { token: adminToken });
   const tables = Object.keys(backup.data?.payload?.data || {});
   // PRD 原定义 14 张表；后续功能迭代通过 migration 继续加表（messages / product_wants /
@@ -933,14 +944,21 @@ async function check21() {
     token: tokens.seller1,
     body: { name: '验收-恢复前新增', price: 1, category_id: 1, subcategory_id: 1, condition: '全新', images: [] },
   })).data;
-  const beforeRestore = (await api('GET', '/api/admin/products?page_size=200', { token: adminToken })).data.total;
+  const beforeRestore = (await api('GET', '/api/admin/products?page_size=60', { token: adminToken })).data.total;
 
   const restore = await api('POST', '/api/admin/restore', { token: adminToken, body: backup.data.payload });
-  const afterRestore = (await api('GET', '/api/admin/products?page_size=200', { token: adminToken })).data.total;
+  const afterRestore = (await api('GET', '/api/admin/products?page_size=60', { token: adminToken })).data.total;
   const tempGone = await api('GET', `/api/products/${temp.id}`);
 
   const reset = await api('POST', '/api/admin/reset-demo', { token: adminToken });
   const afterReset = (await api('GET', '/api/home')).data;
+  // 2026-10-18：原来拿「重置前基线」比，但重置前的库里可能有用户自己发布/手工补的商品，
+  // 数量天然不同。改成**连续重置两次**比「两次结果是否一致」，既验证重置成功、又验证可重复。
+  const reset2 = await api('POST', '/api/admin/reset-demo', { token: adminToken });
+  const afterReset2 = (await api('GET', '/api/home')).data;
+  const resetStable = reset.code === 0 && reset2.code === 0
+    && afterReset.stats.on_sale > 0
+    && afterReset.stats.on_sale === afterReset2.stats.on_sale;
 
   // 备份文件确实能被下载（记得把响应体读完，否则连接状态会残留）
   const dl = await fetch(`${BASE}/api/admin/backup/${backup.data.filename}`,
@@ -950,8 +968,8 @@ async function check21() {
 
   record(21, '管理员可备份导出数据、恢复数据、重置示例数据',
     prdTablesCovered && files.data?.length >= 1 && beforeRestore === afterRestore + 1
-    && tempGone.status === 404 && reset.code === 0 && afterReset.stats.on_sale === baseOnSale && baseOnSale > 0 && dlOk,
-    `备份含 ${tables.length} 张表（PRD 原定义 ${PRD_TABLE_COUNT} 张已全部覆盖=${prdTablesCovered}；users ${counts.users} 行）；备份文件 ${files.data?.length} 个；恢复前 ${beforeRestore} 件 → 恢复后 ${afterRestore} 件，恢复后新增的商品已消失（HTTP ${tempGone.status}）；重置后首页在售 ${afterReset.stats.on_sale} 件（重置前基线 ${baseOnSale} 件）；备份可下载=${dlOk}`);
+    && tempGone.status === 404 && resetStable && dlOk,
+    `备份含 ${tables.length} 张表（PRD 原定义 ${PRD_TABLE_COUNT} 张已全部覆盖=${prdTablesCovered}；users ${counts.users} 行）；备份文件 ${files.data?.length} 个；恢复前 ${beforeRestore} 件 → 恢复后 ${afterRestore} 件，恢复后新增的商品已消失（HTTP ${tempGone.status}）；重置后首页在售 ${afterReset.stats.on_sale} 件（再重置一次仍 ${afterReset2.stats.on_sale} 件）；备份可下载=${dlOk}`);
 }
 
 /* ================================================================ 22-23

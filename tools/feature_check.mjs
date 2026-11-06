@@ -40,6 +40,10 @@ async function feature1(cdp) {
   // ---- 从商品详情页发起私信 ----
   await cdp.loginAs('buyer1', '123456', 'buyer');
   await cdp.go(`/product/${productId}`);
+  // 2026-10-18：首组是"冷启动"（浏览器刚起来、详情页要等接口回来才渲染按钮），
+  // 直接断言会偶发"按钮还没画出来"的假失败 → 先等操作栏出现。
+  await waitFor(cdp, `document.querySelectorAll('#action-bar button').length > 0`, { timeout: 10000 });
+  await sleep(300);
 
   const hasMsgBtn = await cdp.eval(`
     [...document.querySelectorAll('#action-bar button')].some(b => b.innerText.includes('私信卖家'))`);
@@ -47,7 +51,7 @@ async function feature1(cdp) {
 
   await cdp.eval(`
     [...document.querySelectorAll('#action-bar button')]
-      .find(b => b.innerText.includes('私信卖家')).click()`);
+      .find(b => b.innerText.includes('私信卖家'))?.click()`);
   await sleep(1200);
 
   const hash = await cdp.eval('location.hash');
@@ -111,7 +115,10 @@ async function feature1(cdp) {
   await cdp.eval(`
     [...document.querySelectorAll('.dropdown .dd-item')]
       .find(b => b.innerText.includes('我的消息')).click()`);
-  await sleep(1500);
+  // 2026-10-18：演示数据撑到 100 件商品后，卖家侧会话与交易提醒变多，消息页首屏渲染更慢；
+  // 固定 1500ms 会偶发"会话列表已出、气泡还没画"的假失败 → 改成等会话行出现再宽限一点。
+  await waitFor(cdp, `document.querySelectorAll('.msg-conv').length > 0`, { timeout: 8000 });
+  await sleep(1200);
   const convView = await cdp.eval(`
     (() => ({
       hash: location.hash,
@@ -121,7 +128,7 @@ async function feature1(cdp) {
   check('会话列表出现对方并能看到对方发来的消息',
     convView.convs.some(c => c.includes('还在吗'))
     && convView.bubbles.some(b => b.includes('还在吗')),
-    `会话=${JSON.stringify(convView.convs).slice(0, 150)}`);
+    `会话=${JSON.stringify(convView.convs).slice(0, 150)}；气泡数=${convView.bubbles.length}`);
 
   await cdp.shot(path.join(SHOT_DIR, 'f1-seller-chat.png'));
 
@@ -4062,6 +4069,23 @@ async function feature35(cdp) {
   await waitFor(cdp, `document.querySelectorAll('#lg-list .tl-item').length > 0`);
   await sleep(800);
 
+  // 2026-10-18：演示行为数据撑多之后，动态监控首屏可能全是「会话」行（.tl-group），
+  // 而"列数=元素数"只对普通时间线条目有意义 → 先筛一个业务动作，保证量到的是日志行。
+  await cdp.eval(`
+    (() => {
+      const sel = document.querySelector('#lg-action');
+      if (!sel) return 'no-select';
+      const opt = [...sel.options].find(o => !['all', 'page', 'login', 'logout'].includes(o.value));
+      if (!opt) return 'no-option';
+      sel.value = opt.value;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      return opt.value;
+    })()`);
+  await sleep(1200);
+  await waitFor(cdp, `document.querySelectorAll('#lg-list .tl-item:not(.tl-group)').length > 0`,
+    { timeout: 8000 });
+  await sleep(400);
+
   const grid = await cdp.eval(`
     (() => {
       const items = [...document.querySelectorAll('#lg-list .tl-item:not(.tl-group)')];
@@ -7001,7 +7025,7 @@ async function feature66(cdp) {
     await sleep(1500);
     const m2 = await measure();
     check('需求：翻到第 2 页仍是每页 24 件（剩余部分）',
-      m2.cards === total - 24, JSON.stringify({ cards2: m2.cards, total }));
+      m2.cards === Math.min(24, total - 24), JSON.stringify({ cards2: m2.cards, total }));
     await cdp.eval(`[...document.querySelectorAll('#pager [data-page]')].find(b => b.dataset.page === '1')?.click()`);
     await sleep(1200);
   } else {
@@ -7093,8 +7117,11 @@ const GROUPS = {
 
 async function main() {
   const which = process.argv[2] || 'all';
+  // 2026-10-18：支持 "1,2,3" 这种逗号列表——全量要跑十几分钟，
+  // 拆成两段跑（各 6~7 分钟）能避开长任务被中断的情况。
+  const wanted = new Set(which.split(',').map(s => s.trim()).filter(Boolean));
   const selected = Object.entries(GROUPS)
-    .filter(([id]) => which === 'all' || which === id);
+    .filter(([id]) => wanted.has('all') || wanted.has(id));
 
   if (!selected.length) {
     console.log(`没有匹配的功能分组：${which}`);
