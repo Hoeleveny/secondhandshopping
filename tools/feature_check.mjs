@@ -6636,6 +6636,36 @@ async function feature62(cdp) {
     && imgPrefCards.posText.includes('头图加权占比'),
     (imgPrefCards.posText || '').replace(/\s+/g, ' ').slice(0, 120));
 
+  // 2026-10-18 第四批：品类 × 图片特征、图片风格 × 行为结果
+  const imgAnalysis = await cdp.eval(`
+    (() => {
+      const cat = document.querySelector('#ch-catimg');
+      const out = document.querySelector('#ch-imgout');
+      const catRows = cat ? [...cat.querySelectorAll('.ch-hrow')] : [];
+      const outRows = out ? [...out.querySelectorAll('.ch-hrow')] : [];
+      return {
+        hasCat: !!cat, hasOut: !!out,
+        catRows: catRows.length,
+        catTip: catRows.length ? (catRows[0].dataset.tip || '') : '',
+        catText: cat ? cat.innerText : '',
+        outRows: outRows.length,
+        outTip: outRows.length ? (outRows[0].dataset.tip || '') : '',
+        outText: out ? out.innerText : '',
+      };
+    })()`);
+  check('第四批：画像弹窗里有「品类 × 图片特征」卡（悬停给出该品类风格与全站同类对照）',
+    imgAnalysis.hasCat === true && imgAnalysis.catRows > 0
+    && imgAnalysis.catTip.includes('全站同类'),
+    JSON.stringify({ rows: imgAnalysis.catRows, tip: imgAnalysis.catTip.slice(0, 60) }));
+  check('第四批：画像弹窗里有「图片风格 × 行为结果」卡（悬停给出观看/成交/成交率）',
+    imgAnalysis.hasOut === true && imgAnalysis.outRows > 0
+    && imgAnalysis.outTip.includes('成交'),
+    JSON.stringify({ rows: imgAnalysis.outRows, tip: imgAnalysis.outTip.slice(0, 60) }));
+  check('第四批：风格卡给出「最能打动他」的结论与成交总数',
+    imgAnalysis.hasOut === true && imgAnalysis.outText.includes('成交＝')
+    && (imgAnalysis.outText.includes('最能打动他') || imgAnalysis.outText.includes('暂无明显结果样本')),
+    (imgAnalysis.outText || '').replace(/\s+/g, ' ').slice(0, 120));
+
   // 悬停一根柱子 → 出现详细数据
   const hover = await cdp.eval(`
     (() => {

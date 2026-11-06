@@ -3294,6 +3294,57 @@ def main() -> int:
           f"大类 {len((_b1.get('utype') or {}).get('breakdown') or [])}、"
           f"商家 {(_b1.get('seller_pref') or {}).get('count')}")
 
+    # ---------------- 画像新增：品类×图片特征 / 图片风格×行为结果（2026-10-18 第四批） ----------------
+    section("画像新增 品类×图片特征 与 图片风格×行为结果")
+
+    from imaging import style_labels as _v_labels
+
+    _lab1 = _v_labels({"warm": 0.9, "light": 0.2, "edges": 0.05, "skin": 0.3, "sat": 0.5})
+    check("第四批：风格标签能从特征里正确归纳（偏暖/暗调/简洁/疑似人像/色彩浓）",
+          set(_lab1) == {"偏暖", "暗调", "画面简洁", "疑似人像", "色彩浓"}, str(_lab1))
+    _lab2 = _v_labels({"warm": 0.1, "light": 0.7, "edges": 0.5, "skin": 0.0, "sat": 0.1})
+    check("第四批：另一档也判对（偏冷/明亮/繁复/色彩素净，且不出疑似人像）",
+          set(_lab2) == {"偏冷", "明亮", "画面繁复", "色彩素净"}, str(_lab2))
+    check("第四批：没有特征时不给标签", _v_labels(None) == [], str(_v_labels(None)))
+
+    _st, r = call("GET", f"/api/admin/activities/profile?user_id={_pp_uid}", token=_ut_at)
+    _four = r.get("data") or {}
+    _ci = _four.get("cat_image_pref") or {}
+    _ci_rows = _ci.get("rows") or []
+    check("第四批：画像接口返回「品类 × 图片特征」",
+          isinstance(_ci_rows, list) and bool(_ci.get("note")), str(_ci)[:130])
+    check("第四批：品类行带 张数 / 权重 / 风格描述 / 五维数值 / 全站同类基线",
+          bool(_ci_rows) and all(
+              {"category", "count", "weight", "text", "values", "base_text", "diff"}
+              <= set(x.keys())
+              and set(x["values"]) == {"warm", "light", "sat", "skin", "edges"}
+              for x in _ci_rows), str(_ci_rows[:1])[:170])
+    check("第四批：品类按权重从大到小排",
+          [x["weight"] for x in _ci_rows]
+          == sorted([x["weight"] for x in _ci_rows], reverse=True),
+          str([x["weight"] for x in _ci_rows]))
+
+    _io = _four.get("image_outcome") or {}
+    _io_rows = _io.get("rows") or []
+    check("第四批：画像接口返回「图片风格 × 行为结果」",
+          isinstance(_io_rows, list) and bool(_io.get("note"))
+          and _io.get("deal_total") is not None, str(_io)[:130])
+    check("第四批：风格行带 观看 / 成交 / 成交率 / 平均停留 / 样本不足标记",
+          bool(_io_rows) and all(
+              {"label", "views", "deals", "rate", "avg_dwell_text", "insufficient"}
+              <= set(x.keys()) for x in _io_rows), str(_io_rows[:2])[:170])
+    check("第四批：成交率＝成交 / 观看（可复算）",
+          all(abs(x["rate"] - (x["deals"] / x["views"] if x["views"] else 0)) < 1e-6
+              for x in _io_rows), str([(x["label"], x["rate"]) for x in _io_rows])[:150])
+    check("第四批：少于 5 次观看的风格标「样本不足」",
+          all((x["views"] < 5) == bool(x["insufficient"]) for x in _io_rows),
+          str([(x["label"], x["views"], x["insufficient"]) for x in _io_rows])[:150])
+    check("第四批：给出「最能打动他」的风格（有成交且样本够）",
+          (not _io.get("best")) or (bool(_io["best"].get("label"))
+                                    and _io["best"]["deals"] > 0
+                                    and not _io["best"]["insufficient"]),
+          str(_io.get("best"))[:150])
+
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 

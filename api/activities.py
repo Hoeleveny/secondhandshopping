@@ -855,6 +855,89 @@ def activities_profile():
         "empty": bool(_mine.get("empty")),
     }
 
+    # ⑭ 品类 × 图片特征（2026-10-18 第四批）：他看不同大类时，偏好的图是不是不一样
+    # ⑮ 图片风格 × 行为结果：哪一类风格的图更容易被收藏/下单（"打动他的图"）
+    from imaging import style_labels as _style_labels
+
+    _cat_of = ({p.id: p.category_id for p in
+                Product.query.filter(Product.id.in_(_v_pids)).all()}
+               if _v_pids else {})
+
+    _cat_mine, _cat_base, _tag_stats = {}, {}, {}
+    for _v in _views_all:
+        _urls = _urls_by_pid.get(_v.product_id)
+        if not _urls:
+            continue
+        _idx = _v.image_index or 0
+        _path = _urls[_idx] if 0 <= _idx < len(_urls) else _urls[0]
+        _feat = _feats_by_path.get(_path)
+        if not _feat:
+            continue
+        _cid = _cat_of.get(_v.product_id)
+        _conv_mine = _v.product_id in fav_pids or _v.product_id in order_by_pid
+        if _v.user_id == target.id:
+            _w = _img_weight(_v.dwell_ms, _idx, _conv_mine)
+            _cat_mine.setdefault(_cid, []).append((_feat, _w))
+            for _lb in _style_labels(_feat):
+                _bucket = _tag_stats.setdefault(_lb, {"views": 0, "deals": 0, "dwell_ms": 0})
+                _bucket["views"] += 1
+                _bucket["dwell_ms"] += int(_v.dwell_ms or 0)
+                if _conv_mine:
+                    _bucket["deals"] += 1
+        else:
+            _w = _img_weight(_v.dwell_ms, _idx,
+                             _v.product_id in _fav_by_user.get(_v.user_id, ())
+                             or _v.product_id in _ord_by_user.get(_v.user_id, ()))
+            _cat_base.setdefault(_cid, []).append((_feat, _w))
+
+    _cat_rows = []
+    for _cid, _items in _cat_mine.items():
+        _agg = _img_wagg(_items)
+        if _agg.get("empty"):
+            continue
+        _bagg = _img_wagg(_cat_base.get(_cid) or [])
+        _cat_rows.append({
+            "category_id": _cid,
+            "category": cats[_cid].name if _cid in cats else "未知",
+            "count": _agg["count"], "weight": _agg["weight"], "text": _agg["text"],
+            "values": {_k: _agg[_k] for _k in _IMG_KEYS},
+            "base_text": "" if _bagg.get("empty") else _bagg["text"],
+            "base_values": ({} if _bagg.get("empty")
+                            else {_k: _bagg[_k] for _k in _IMG_KEYS}),
+            "diff": [] if _bagg.get("empty") else _img_compare(_agg, _bagg),
+            "dominant": ((_agg.get("dominants") or [{}])[0].get("name") or ""),
+        })
+    _cat_rows.sort(key=lambda x: -x["weight"])
+    cat_image_pref = {
+        "rows": _cat_rows,
+        "count": len(_cat_rows),
+        "note": "按大类别聚合他看过的商品图（同一套三层加权）；base 是全站其他用户在同大类的基线",
+        "empty": not _cat_rows,
+    }
+
+    _out_rows = []
+    for _lb, _bucket in _tag_stats.items():
+        _n = _bucket["views"] or 0
+        _deals = _bucket["deals"] or 0
+        _secs = int(_bucket["dwell_ms"] / _n / 1000) if _n else 0
+        _out_rows.append({
+            "label": _lb, "views": _n, "deals": _deals,
+            "rate": round(_deals / _n, 3) if _n else 0.0,
+            "avg_dwell_secs": _secs, "avg_dwell_text": duration_text(_secs),
+            "insufficient": _n < _MIN_IMG,
+        })
+    # 样本够的先排（按成交率），样本不足的垫底——否则"看过 4 次成交 4 次"会压过真实结论
+    _out_rows.sort(key=lambda x: (x["insufficient"], -x["rate"], -x["views"], x["label"]))
+    image_outcome = {
+        "rows": _out_rows,
+        "best": next((x for x in _out_rows if not x["insufficient"] and x["deals"] > 0), None),
+        "deal_total": sum(x["deals"] for x in _out_rows),
+        "min_views": _MIN_IMG,
+        "note": "成交＝该商品被本人收藏或下过单；一行一个风格标签（同一张图会落进多个维度），"
+                "少于 %d 次观看不下结论" % _MIN_IMG,
+        "empty": not _out_rows,
+    }
+
     # ⑧ 图片偏好（图片级埋点）
     imgs = (ProductImageView.query.filter(ProductImageView.user_id == target.id)
             .order_by(ProductImageView.created_at.desc()).limit(500).all())
@@ -942,6 +1025,8 @@ def activities_profile():
         "seller_pref": seller_pref,
         "post_pref": post_pref,
         "image_pref": image_pref,
+        "cat_image_pref": cat_image_pref,
+        "image_outcome": image_outcome,
         "dwell_kinds": dwell_kinds,
         "top_dwell": top_dwell,
         "image_perception": image_perception,

@@ -1424,6 +1424,13 @@ function openProfileCharts(d) {
   const ipPos = ipr.position || {};
   const ipHead = ipPos.head || {};
   const ipDetail = ipPos.detail || {};
+  // 2026-10-18 第四批：品类 × 图片特征、图片风格 × 行为结果
+  const catImg = d.cat_image_pref || {};
+  const catImgRows = catImg.rows || [];
+  const maxCatImgW = Math.max(1, ...catImgRows.map(x => x.weight || 0));
+  const imgOut = d.image_outcome || {};
+  const imgOutRows = (imgOut.rows || []).slice(0, 8);
+  const maxOutRate = Math.max(0.01, ...imgOutRows.map(x => x.rate || 0));
 
   const pct = (v) => Math.round((v || 0) * 100);
   // 2026-10-18：图表配色。原来前两个都是 --primary（扇区同色）、后两个是灰阶，
@@ -1624,6 +1631,41 @@ function openProfileCharts(d) {
           头图「${esc(ipHead.text || '—')}」／细节图「${esc(ipDetail.text || '—')}」
         </div>
         <div class="muted small">翻到第 2 张以后是主动行为，所以加权时给 1.5 倍——细节图偏好的差异比头图更能说明他真正在意什么。</div>
+      </div>
+
+      <div class="ch-card" id="ch-catimg">
+        <div class="ch-title">品类 × 图片特征 <span class="muted small">（看不同大类时口味变了吗）</span></div>
+        ${catImgRows.length ? `<div class="ch-hbars">${catImgRows.map((x) => `
+          <div class="ch-hrow" data-chart="catimg"
+               data-tip="${esc(x.category)}：${esc(x.text)}（${x.count} 张 / 权重 ${x.weight}）· 全站同类：${esc(x.base_text || '样本不足')}">
+            <span class="ch-hlabel" style="width:88px">${esc(x.category)}</span>
+            <span class="ch-htrack"><span class="ch-hfill"
+              style="width:${Math.max(4, Math.round((x.weight / maxCatImgW) * 100))}%;background:var(--chart-1)"></span></span>
+            <span class="ch-hval" style="width:104px">${x.count} 张 · ${esc(x.dominant || '—')}</span>
+          </div>`).join('')}</div>`
+          : '<div class="muted small">还没有成规模的看图记录</div>'}
+        <div class="muted small" style="margin-top:6px">
+          每行是他看该大类的商品图后归纳出的风格；悬停可对照「全站同类」的口味差。
+        </div>
+        <div class="muted small">样本少的品类会显得跳，建议每类 ≥ 5 张再看结论（目前标出张数就是给这个用）。</div>
+      </div>
+
+      <div class="ch-card" id="ch-imgout">
+        <div class="ch-title">图片风格 × 行为结果 <span class="muted small">（哪类图更能打动他）</span></div>
+        ${imgOutRows.length ? `<div class="ch-hbars">${imgOutRows.map((x) => `
+          <div class="ch-hrow" data-chart="imgout"
+               data-tip="${esc(x.label)}：看过 ${x.views} 次、成交 ${x.deals} 次（成交率 ${pct(x.rate)}%）· 平均停留 ${esc(x.avg_dwell_text)}${x.insufficient ? ' · 样本不足' : ''}">
+            <span class="ch-hlabel" style="width:88px${x.insufficient ? ';opacity:.55' : ''}">${esc(x.label)}</span>
+            <span class="ch-htrack"><span class="ch-hfill"
+              style="width:${Math.max(3, Math.round((x.rate / maxOutRate) * 100))}%;background:${x.insufficient ? 'var(--text-sub)' : 'var(--chart-2)'}"></span></span>
+            <span class="ch-hval" style="width:104px">${x.deals}/${x.views} · ${pct(x.rate)}%${x.insufficient ? ' <span class="muted">样本少</span>' : ''}</span>
+          </div>`).join('')}</div>`
+          : '<div class="muted small">还没有看图记录</div>'}
+        <div class="muted small" style="margin-top:6px">
+          成交＝该商品被他收藏或下过单，共 ${imgOut.deal_total || 0} 次。
+          ${imgOut.best ? `最能打动他的是「${esc(imgOut.best.label)}」（${pct(imgOut.best.rate)}%）` : '暂无明显结果样本'}
+        </div>
+        <div class="muted small">一行一个风格标签，同一张图会落进多个维度（冷暖/明度/繁简/人像/浓淡），所以各行次数不能相加。</div>
       </div>
 
       <div class="ch-card" id="ch-dwell">

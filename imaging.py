@@ -220,6 +220,30 @@ def compare(mine: dict, base: dict, keys=("warm", "light", "sat", "skin", "edges
     return rows
 
 
+def style_labels(f: dict | None) -> list:
+    """把一张图的特征翻成"风格标签"（冷暖/明度/繁简/人像/浓淡），用于「风格 × 行为结果」分组。
+
+    一张图会落进多个维度各自的标签里（例如同时是"偏暖"与"画面简洁"），
+    因此按标签统计时同一次浏览会被多个桶各计一次——这是"按维度看"，不是"分互斥类"。
+    """
+    if not f:
+        return []
+    labels = []
+    labels.append("偏暖" if (f.get("warm") or 0) >= 0.5 else "偏冷")
+    light = f.get("light") or 0
+    labels.append("明亮" if light >= 0.6 else ("中间调" if light >= 0.35 else "暗调"))
+    edge = f.get("edges") or 0
+    if edge >= 0.35:
+        labels.append("画面繁复")
+    elif edge < 0.12:
+        labels.append("画面简洁")
+    if (f.get("skin") or 0) >= 0.12:
+        labels.append("疑似人像")
+    sat = f.get("sat") or 0
+    labels.append("色彩浓" if sat >= 0.45 else ("色彩适中" if sat >= 0.25 else "色彩素净"))
+    return labels
+
+
 def store_features(filename: str, folder: str):
     """算一张图的特征并入库存好；重复调用不会重复入库。返回 dict 或 None。"""
     import os
