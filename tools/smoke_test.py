@@ -2977,6 +2977,65 @@ def main() -> int:
     _pp_sum = sum(x["share"] for x in _pp_subs)
     check("偏好分析①：小类占比合计约等于 1", abs(_pp_sum - 1) < 0.02, f"{round(_pp_sum, 3)}")
 
+    # ---------------- 偏好分析②：商家级偏好 ----------------
+    section("偏好分析② 商家级偏好")
+
+    _st, r = call("GET", "/api/products?page=1&page_size=4")
+    _sp_list = (r.get("data") or {}).get("list") or []
+    _pb_item = next((x for x in _sp_list if x["id"] == _pb), None) or _sp_list[0]
+    _sp_sid = _pb_item.get("seller_id")
+    call("POST", f"/api/follows/{_sp_sid}", token=token)
+    for _i in range(2):                        # 再刷几次主页与商品页，让这家稳进 Top5
+        call("POST", "/api/activities/page", token=token,
+             body={"page": f"/seller/{_sp_sid}", "name": "用户主页"})
+    for _i in range(7):
+        call("POST", "/api/activities/page", token=token,
+             body={"page": f"/product/{_pb}", "name": "商品详情"})
+
+    _st, r = call("GET", f"/api/admin/activities/profile?user_id={_pp_uid}", token=_ut_at)
+    _sp = ((r.get("data") or {}).get("seller_pref")) or {}
+    _sp_top = _sp.get("top") or []
+    check("偏好分析②：画像接口返回「商家偏好」维度（Top + 集中度 + 回头率 + 口径说明）",
+          isinstance(_sp_top, list) and "concentration" in _sp
+          and isinstance(_sp.get("repeat"), dict) and bool(_sp.get("note")),
+          str(_sp)[:130])
+    check("偏好分析②：商家偏好最多给 5 位", 0 < len(_sp_top) <= 5, f"{len(_sp_top)} 位")
+
+    _sp_keys = {"seller_id", "nickname", "products", "dwell_secs", "dwell_text",
+                "home_views", "home_dwell_secs", "home_dwell_text",
+                "favorites", "orders", "followed", "score"}
+    check("偏好分析②：每位卖家带商品浏览 / 停留 / 主页访问 / 收藏 / 下单 / 关注 / 偏好分",
+          bool(_sp_top) and all(_sp_keys <= set(x.keys()) for x in _sp_top),
+          str(sorted(set(_sp_top[0].keys())) if _sp_top else []))
+    check("偏好分析②：商家偏好分从高到低排",
+          [x["score"] for x in _sp_top] == sorted([x["score"] for x in _sp_top], reverse=True),
+          str([x["score"] for x in _sp_top]))
+
+    _sw = {"view": 1, "minute": 1, "favorite": 3, "order": 4}
+    _sp_bad = [x for x in _sp_top
+               if abs(x["score"] - round(x["products"] * _sw["view"]
+                                         + (x["dwell_secs"] + x["home_dwell_secs"]) / 60.0
+                                         * _sw["minute"]
+                                         + x["favorites"] * _sw["favorite"]
+                                         + x["orders"] * _sw["order"], 2)) > 0.02]
+    check("偏好分析②：偏好分可按公式复算（浏览×1 + 停留分钟×1 + 收藏×3 + 下单×4）",
+          not _sp_bad, str(_sp_bad[:2])[:180])
+
+    _sp_row = next((x for x in _sp_top if x["seller_id"] == _sp_sid), None)
+    check("偏好分析②：买过的卖家会被归到本人名下，带下单数、关注标记与主页访问",
+          bool(_sp_row) and _sp_row["orders"] >= 1 and _sp_row["followed"] is True
+          and _sp_row["home_views"] >= 1, str(_sp_row)[:170])
+
+    check("偏好分析②：卖家集中度 CR3 是 0~1 的比例",
+          isinstance(_sp.get("concentration"), (int, float))
+          and 0 <= _sp["concentration"] <= 1, str(_sp.get("concentration")))
+    check("偏好分析②：回头率给出分子分母（成交过的卖家 / 其中下过 ≥2 单的）",
+          (_sp.get("repeat") or {}).get("repeat_sellers") is not None
+          and (_sp.get("repeat") or {}).get("sellers_with_orders") is not None,
+          str(_sp.get("repeat")))
+
+    call("DELETE", f"/api/follows/{_sp_sid}", token=token)
+
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 

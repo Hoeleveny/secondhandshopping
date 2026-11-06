@@ -1408,6 +1408,11 @@ function openProfileCharts(d) {
   const prodTop = pp.top || [];
   const subRows = (pp.sub_breakdown || []).slice(0, 6);
   const maxProdScore = Math.max(1, ...prodTop.map(x => x.score || 0));
+  // 2026-10-18 偏好分析②：商家级偏好
+  const sp = d.seller_pref || {};
+  const sellerTop = sp.top || [];
+  const spRepeat = sp.repeat || {};
+  const maxSellerScore = Math.max(1, ...sellerTop.map(x => x.score || 0));
 
   const pct = (v) => Math.round((v || 0) * 100);
   // 2026-10-18：图表配色。原来前两个都是 --primary（扇区同色）、后两个是灰阶，
@@ -1510,6 +1515,24 @@ function openProfileCharts(d) {
           </div>`).join('')}</div>`
           : '<div class="muted small">还没有浏览商品</div>'}
         <div class="muted small" style="margin-top:6px">小类＝「大类 / 小类」；占比只统计他浏览过的商品，已删除的商品不计入。</div>
+      </div>
+
+      <div class="ch-card" id="ch-seller">
+        <div class="ch-title">商家偏好 Top5 <span class="muted small">（看谁家的东西、是不是回头客）</span></div>
+        ${sellerTop.length ? `<div class="ch-hbars">${sellerTop.map((x) => `
+          <div class="ch-hrow" data-chart="seller"
+               data-tip="${esc(x.nickname)} · 偏好分 ${x.score} · 看过 ${x.products} 次商品 · 商品页停留 ${esc(x.dwell_text)}${x.home_views ? ' · 主页 ' + x.home_views + ' 次（' + esc(x.home_dwell_text) + '）' : ''}${x.favorites ? ' · 收藏 ' + x.favorites : ''}${x.orders ? ' · 下单 ' + x.orders : ''}${x.followed ? ' · 已关注' : ''}">
+            <span class="ch-hlabel" style="width:88px">${esc(x.nickname)}${x.followed ? ' ★' : ''}</span>
+            <span class="ch-htrack"><span class="ch-hfill"
+              style="width:${Math.max(4, Math.round((x.score / maxSellerScore) * 100))}%;background:var(--chart-4)"></span></span>
+            <span class="ch-hval">${x.score}</span>
+          </div>`).join('')}</div>`
+          : '<div class="muted small">还没有商家维度数据（浏览商品或商家主页后才有）</div>'}
+        <div class="muted small" style="margin-top:6px">
+          卖家集中度 CR3 ${pct(sp.concentration)}%（前 3 位卖家占全部商品浏览）　·　
+          回头率 ${pct(spRepeat.rate)}%（${spRepeat.repeat_sellers || 0}/${spRepeat.sellers_with_orders || 0} 位成交过的卖家下过 ≥2 单）
+        </div>
+        <div class="muted small">偏好分＝该卖家商品页浏览×1 + （商品页+商家主页）停留分钟×1 + 收藏×3 + 下单×4；★ 表示已关注。</div>
       </div>
 
       <div class="ch-card">

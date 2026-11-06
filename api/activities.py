@@ -595,6 +595,92 @@ def activities_profile():
         "empty": not product_rows,
     }
 
+    # ⑪ 商家级偏好（2026-10-18 偏好分析②）：他在看谁家的东西、是不是回头客
+    from models import Follow
+
+    seller_views, seller_secs = {}, {}          # 商品页按卖家归并（浏览次数 / 停留秒数）
+    for pid in product_ids:
+        pr = prods.get(pid)
+        if pr is not None:
+            seller_views[pr.seller_id] = seller_views.get(pr.seller_id, 0) + 1
+    for _pg, _gap in dwells:
+        _k, _rid = classify_page(_pg)
+        if _k == "product":
+            _pr = prods.get(_rid)
+            if _pr is not None:
+                seller_secs[_pr.seller_id] = seller_secs.get(_pr.seller_id, 0.0) + _gap
+
+    home_views, home_secs = {}, {}              # 商家主页（/seller/<uid>）的访问与停留
+    for _p in pages:
+        _k, _rid = classify_page(_p.page)
+        if _k == "seller":
+            home_views[_rid] = home_views.get(_rid, 0) + 1
+    for _pg, _gap in dwells:
+        _k, _rid = classify_page(_pg)
+        if _k == "seller":
+            home_secs[_rid] = home_secs.get(_rid, 0.0) + _gap
+
+    seller_fav, seller_orders = {}, {}
+    for _pid in fav_pids:
+        _pr = prods.get(_pid)
+        if _pr is not None:
+            seller_fav[_pr.seller_id] = seller_fav.get(_pr.seller_id, 0) + 1
+    for _pid, _cnt in order_by_pid.items():
+        _pr = prods.get(_pid)
+        if _pr is not None:
+            seller_orders[_pr.seller_id] = seller_orders.get(_pr.seller_id, 0) + _cnt
+
+    follow_ids = set()
+    try:
+        follow_ids = {f.followee_id for f in
+                      db.session.query(Follow).filter(Follow.follower_id == target.id).all()}
+    except Exception:                     # noqa: BLE001
+        follow_ids = set()
+
+    seller_ids = set(seller_views) | set(home_views) | set(seller_fav) | set(seller_orders)
+    sellers = ({u.id: u for u in User.query.filter(User.id.in_(seller_ids)).all()}
+               if seller_ids else {})
+    seller_rows = []
+    for sid in seller_ids:
+        u = sellers.get(sid)
+        views = seller_views.get(sid, 0)
+        psecs = int(seller_secs.get(sid, 0.0))
+        hviews = home_views.get(sid, 0)
+        hsecs = int(home_secs.get(sid, 0.0))
+        fcnt = seller_fav.get(sid, 0)
+        ocnt = seller_orders.get(sid, 0)
+        score = (views * W_VIEW + ((psecs + hsecs) / 60.0) * W_MINUTE
+                 + fcnt * W_FAV + ocnt * W_ORDER)
+        seller_rows.append({
+            "seller_id": sid,
+            "nickname": (u.nickname or u.username) if u else "已注销用户",
+            "products": views, "dwell_secs": psecs, "dwell_text": duration_text(psecs),
+            "home_views": hviews, "home_dwell_secs": hsecs,
+            "home_dwell_text": duration_text(hsecs),
+            "favorites": fcnt, "orders": ocnt, "followed": sid in follow_ids,
+            "score": round(score, 2),
+        })
+    seller_rows.sort(key=lambda x: (-x["score"], x["seller_id"]))
+
+    total_seller_views = sum(seller_views.values())
+    top3_views = sum(sorted(seller_views.values(), reverse=True)[:3])
+    _ordered = [x for x in seller_rows if x["orders"] >= 1]
+    _repeat = [x for x in _ordered if x["orders"] >= 2]
+    seller_pref = {
+        "top": seller_rows[:5],
+        "count": len(seller_rows),
+        # 集中度：浏览次数最多的 3 位卖家占他全部商品浏览的比例（越高越"认店"）
+        "concentration": round(top3_views / total_seller_views, 3) if total_seller_views else 0.0,
+        "repeat": {
+            "sellers_with_orders": len(_ordered),
+            "repeat_sellers": len(_repeat),
+            "rate": round(len(_repeat) / len(_ordered), 3) if _ordered else 0.0,
+        },
+        "note": "卖家偏好分 = 该卖家商品页浏览×1 + （商品页+商家主页）停留分钟×1"
+                " + 收藏该卖家商品×3 + 下单次数×4",
+        "empty": not seller_rows,
+    }
+
     # ⑧ 图片偏好（图片级埋点）
     imgs = (ProductImageView.query.filter(ProductImageView.user_id == target.id)
             .order_by(ProductImageView.created_at.desc()).limit(500).all())
@@ -679,6 +765,7 @@ def activities_profile():
         "conversion": conv,
         "images": img_dim,
         "product_pref": product_pref,
+        "seller_pref": seller_pref,
         "dwell_kinds": dwell_kinds,
         "top_dwell": top_dwell,
         "image_perception": image_perception,

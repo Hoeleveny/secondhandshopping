@@ -6563,6 +6563,28 @@ async function feature62(cdp) {
     && prefCards.subLabel.includes(' / '),
     JSON.stringify(prefCards));
 
+  // 2026-10-18 偏好分析②：新增「商家偏好 Top5」卡
+  const sellerCard = await cdp.eval(`
+    (() => {
+      const box = document.querySelector('#ch-seller');
+      if (!box) return { ok: false };
+      const rows = [...box.querySelectorAll('.ch-hrow')];
+      return {
+        ok: true,
+        rows: rows.length,
+        firstTip: rows.length ? (rows[0].dataset.tip || '') : '',
+        text: box.innerText,
+      };
+    })()`);
+  check('偏好②：画像弹窗里有「商家偏好 Top5」卡（最多 5 行，悬停给浏览/停留/收藏/下单/关注）',
+    sellerCard.ok === true && sellerCard.rows > 0 && sellerCard.rows <= 5
+    && sellerCard.firstTip.includes('偏好分'),
+    JSON.stringify({ rows: sellerCard.rows, tip: sellerCard.firstTip.slice(0, 60) }));
+  check('偏好②：商家偏好卡给出卖家集中度 CR3 与回头率',
+    sellerCard.ok === true && sellerCard.text.includes('CR3')
+    && sellerCard.text.includes('回头率'),
+    (sellerCard.text || '').replace(/\s+/g, ' ').slice(0, 120));
+
   // 悬停一根柱子 → 出现详细数据
   const hover = await cdp.eval(`
     (() => {
