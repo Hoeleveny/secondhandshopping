@@ -3258,6 +3258,42 @@ def main() -> int:
           (_ipx.get("count") or 0) >= 5 or _ipx.get("insufficient") is True,
           f"count={_ipx.get('count')} insufficient={_ipx.get('insufficient')}")
 
+    # ---------------- 本批需求：演示行为数据（2026-10-18 第三批） ----------------
+    section("本批需求 演示行为数据（浏览/停留/收藏/成交）")
+
+    _st, r = call("GET", "/api/home")
+    _sold_before = (r.get("data") or {}).get("stats", {}).get("sold") or 0
+
+    import subprocess as _sp3
+    _run = _sp3.run([_py, _os2.path.join(_root2, "manage.py"), "demo-behavior"],
+                   capture_output=True, text=True, encoding="utf-8", timeout=300, cwd=_root2)
+    _out = (_run.stdout or "") + (_run.stderr or "")
+    check("需求：能一键造演示行为（浏览/看图/收藏/成交）",
+          _run.returncode == 0 and "演示行为：" in _out, _out.strip()[-120:])
+
+    _run2 = _sp3.run([_py, _os2.path.join(_root2, "manage.py"), "demo-behavior"],
+                    capture_output=True, text=True, encoding="utf-8", timeout=300, cwd=_root2)
+    _out2 = (_run2.stdout or "") + (_run2.stderr or "")
+    check("需求：造行为命令可重复执行（第二次 0 个账号再造数据）",
+          _run2.returncode == 0 and "0 个账号造了" in _out2, _out2.strip()[-120:])
+
+    _st, r = call("GET", "/api/home")
+    _sold_after = (r.get("data") or {}).get("stats", {}).get("sold") or 0
+    check("需求：演示成交让少量商品变成「已售」（给成交回推提供真样本）",
+          _sold_after >= 5 and _sold_after >= _sold_before,
+          f"已售 {_sold_before} -> {_sold_after}")
+
+    _st, r = call("GET", "/api/admin/activities/profile?user=buyer1", token=_ut_at)
+    _b1 = r.get("data") or {}
+    check("需求：演示账号有图片级埋点（画像的图片偏好才有样本）",
+          ((_b1.get("images") or {}).get("views") or 0) >= 10,
+          str((_b1.get("images") or {}).get("views")))
+    check("需求：演示账号的浏览覆盖多个大类与商家（画像才有区分度）",
+          len((_b1.get("utype") or {}).get("breakdown") or []) >= 2
+          and (_b1.get("seller_pref") or {}).get("count", 0) >= 2,
+          f"大类 {len((_b1.get('utype') or {}).get('breakdown') or [])}、"
+          f"商家 {(_b1.get('seller_pref') or {}).get('count')}")
+
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 

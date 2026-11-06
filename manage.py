@@ -220,6 +220,31 @@ def cmd_demo_post_images() -> int:
         return 0
 
 
+def cmd_demo_behavior() -> int:
+    """给演示账号造浏览 / 图片停留 / 收藏 / 成交（幂等；--clear 回滚）。"""
+    from app import create_app
+    import demo_behavior
+
+    app = create_app()
+    with app.app_context():
+        if "--clear" in sys.argv:
+            result = demo_behavior.clear()
+            print(f"[OK]  已回滚演示行为：浏览 {result['activities']} 条、看图 "
+                  f"{result['image_views']} 条、订单 {result['orders']} 笔，"
+                  f"商品退回在售 {result['products_restored']} 件")
+            return 0
+        n = 12
+        for a in sys.argv[2:]:
+            if a.isdigit():
+                n = max(3, min(int(a), 40))
+        stats = demo_behavior.run(per_account=n)
+        print(f"[OK]  演示行为：{stats['accounts']} 个账号造了 {stats['pages']} 条浏览、"
+              f"{stats['image_views']} 条看图、{stats['favorites']} 个收藏、"
+              f"{stats['orders']} 笔成交；跳过 {stats['skipped']} 个已有行为的账号")
+        print(f"      演示账号行为总条数：{stats['page_rows']}")
+        return 0
+
+
 def cmd_demo_products() -> int:
     """把种子清单里数据库还没有的演示商品补进去（幂等，不动已有数据）。"""
     from app import create_app
@@ -242,6 +267,7 @@ COMMANDS = {
     "image-features": cmd_image_features,
     "demo-images": cmd_demo_images,
     "demo-post-images": cmd_demo_post_images,
+    "demo-behavior": cmd_demo_behavior,
 
     "demo-products": cmd_demo_products,
     "run": cmd_run,
