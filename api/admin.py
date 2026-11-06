@@ -436,7 +436,11 @@ def admin_logs():
 
     aq = activity_query(action=action, user_id=user_id, user_q=user_q,
                         start=start_dt, end=end_dt, page_path=page_path,
-                        exclude=bool(product or order_no))
+                        # 2026-10-18 修复：关键词 / 商品 / 订单号这类"只对业务日志有意义"的筛选，
+                        # 也要把行为记录排除掉——否则按关键词搜日志时会被几百条会话行淹没
+                        # （会话行还没有 id，连"勾选删除"都点不了）。
+                        exclude=bool(product or order_no or keyword
+                                     or (action and action not in ("all", "login", "logout", "page"))))
 
     # 2026-10-18 需求②：浏览记录**默认折叠成组**（同一用户间隔 ≤30 分钟算一串），
     # 只有明确「动作=浏览」或「按浏览页面筛」时才逐条列出来。

@@ -2287,7 +2287,7 @@ def main() -> int:
     # 抽查 10 件第二批新增的商品，逐件用关键词搜回来（不写死总数，只看"能不能找到"）
     _pick_new = ["概率论与数理统计（浙大第五版）", "数据库系统概论（第 6 版）",
                  "ThinkPad T480 商务本", "小米平板 5（6+128G）", "筋膜枪（迷你）",
-                 "折叠收纳凳（可坐）", "相机 Canon EOS 200D（含镜头）",
+                 "桌面收纳盒（三层抽屉）", "相机 Canon EOS 200D（含镜头）",
                  "校园音乐会门票 1 张", "李宁篮球鞋 43 码", "多肉盆栽 三盆（含托盘）"]
     _miss_new = []
     for _name in _pick_new:
@@ -2901,6 +2901,13 @@ def main() -> int:
     _d = _logs_q(keyword="冒烟-待删日志商品", page_size=10)
     _del_ids = [x["id"] for x in _d.get("list") or []][:2]
     check("能按关键字找到刚产生的日志", len(_del_ids) == 2, f"找到 {len(_del_ids)} 条")
+
+    # 2026-10-18 修复：按关键词搜日志时，行为记录的会话行不能混进来（会话行没有 id、无法勾选删除）
+    _kw_rows = _d.get("list") or []
+    check("修复：关键词搜日志不会混进行为会话行（每行都有可勾选 id）",
+          bool(_kw_rows) and all(str(x.get("id") or "").isdigit() for x in _kw_rows)
+          and all(x.get("source") != "activity" for x in _kw_rows),
+          str([(x.get("id"), x.get("source")) for x in _kw_rows])[:140])
 
     _before_total = _logs_q(page_size=1).get("total")
     _st, r = call("POST", "/api/admin/logs/delete", body={}, token=admin_token)
