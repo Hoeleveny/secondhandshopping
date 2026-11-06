@@ -147,7 +147,7 @@ def main() -> int:
     check("GET /api/home 首页聚合",
           status == 200
           and SEED_CATS <= {c.get("name") for c in home.get("categories", [])}
-          and len(home.get("newest", [])) <= 8, str(res)[:150])
+          and len(home.get("newest", [])) <= 12, str(res)[:150])   # 2026-10-18：首页预览 8 → 12（两行 6 张）
 
     # ---------------- 交叉筛选 ----------------
     section("M03 数据交叉筛选")
@@ -2268,6 +2268,33 @@ def main() -> int:
     check("需求：补商品命令可重复执行（第二次新增 0 件，不重复灌数据）",
           _run.returncode == 0 and "新增 0 件" in _out,
           _out.strip()[-90:])
+
+
+    # ---------------- 本批需求：商品列表每页 24 件 + 一行 6 张 ----------------
+    section("本批需求 商品列表每页 24 件")
+
+    _st, r = call("GET", "/api/products?page=1")
+    _pg = r.get("data") or {}
+    _pg_list = _pg.get("list") or []
+    check("需求：商品列表默认每页 24 件",
+          _pg.get("page_size") == 24 and len(_pg_list) <= 24,
+          f"page_size={_pg.get('page_size')}、本页 {len(_pg_list)} 条")
+    _pg_total = _pg.get("total") or 0
+    if _pg_total > 24:
+        _st, r2 = call("GET", "/api/products?page=2")
+        _pg2 = (r2.get("data") or {}).get("list") or []
+        # 总量可能超过 48（一页 24 → 第 2 页也是满的），所以取 min
+        check("需求：第 2 页返回剩下的部分（不超过 24 条）",
+              0 < len(_pg2) <= 24 and len(_pg2) == min(24, _pg_total - 24),
+              f"总计 {_pg_total}、第 2 页 {len(_pg2)} 条")
+    else:
+        check("需求：第 2 页返回剩下的部分（不超过 24 条）", True, "总量不足 24，跳过")
+
+    _st, r = call("GET", "/api/home")
+    _home = r.get("data") or {}
+    check("需求：首页「最新上架」预览给 12 件（正好两行 6 张）",
+          len(_home.get("newest") or []) == 12,
+          str(len(_home.get("newest") or [])))
 
 
     # ---------------- 本批需求①：删除自己的评论 ----------------

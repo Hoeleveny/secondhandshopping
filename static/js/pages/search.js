@@ -53,7 +53,7 @@ export default {
       condition: ctx.query.condition || '',
       sort: ctx.query.sort || 'newest',
       page: Number(ctx.query.page) || 1,
-      page_size: 12,
+      page_size: 24,
     };
 
     root.innerHTML = `

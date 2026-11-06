@@ -155,7 +155,12 @@
 .grid-4 { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
 .grid-2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
 /* 商品卡保持 auto-fill：卡片尺寸统一，条目少时左对齐，不要被拉成大宽卡 */
-.grid-cards { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+.grid-cards { display: grid; gap: 16px; grid-template-columns: repeat(6, minmax(0, 1fr)); }
+/* 2026-10-18 用户要求：商品一行固定 6 张（宽屏不再自动排成 8 张），窄屏按断点递减 */
+@media (max-width: 1400px) { .grid-cards { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+@media (max-width: 1150px) { .grid-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 900px)  { .grid-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px)  { .grid-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 /* ---------------------------------------------------------------- 商品卡 */
 .product-card {

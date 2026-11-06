@@ -40,7 +40,7 @@ def home():
     newest = (
         Product.query.filter(Product.status == PRODUCT_ON_SALE)
         .order_by(Product.created_at.desc())
-        .limit(8)
+          .limit(12)   # 2026-10-18：商品一行 6 张 → 首页「最新上架」预览给 2 行
         .all()
     )
     return ok(

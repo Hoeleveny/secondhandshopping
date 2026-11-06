@@ -169,7 +169,7 @@ export default {
         data = await api.get(`/api/sellers/${uid}${qs({
           // 卖家资料接口只认「在售 / 已售」；切到「帖子」页签时按在售取一份资料（只为拿头部与计数）
           status: status === 'posts' ? 'on_sale' : status,
-          keyword, category_id: categoryId, page, page_size: 12,
+          keyword, category_id: categoryId, page, page_size: 24,
         })}`);
       } catch (err) {
         head.innerHTML = '';

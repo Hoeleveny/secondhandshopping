@@ -39,7 +39,7 @@ export default {
       listArea.innerHTML = `<div class="loading"><div class="spinner"></div>加载中…</div>`;
       let data;
       try {
-        data = await api.get(`/api/products/mine${qs({ status, page, page_size: 10 })}`);
+        data = await api.get(`/api/products/mine${qs({ status, page, page_size: 24 })}`);
       } catch (err) {
         listArea.innerHTML = emptyHtml(`加载失败：${err.message}`, '😵');
         return;

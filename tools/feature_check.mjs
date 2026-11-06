@@ -6829,6 +6829,72 @@ async function feature65(cdp) {
   await sleep(300);
 }
 
+/* ================================================================ 功能66 商品列表每页 24 件 + 一行 6 张（本批需求） */
+async function feature66(cdp) {
+  console.log('\n===== 功能66 商品列表数量与排版 =====');
+
+  const measure = () => cdp.eval(`
+    (() => {
+      const g = document.querySelector('.grid-cards');
+      if (!g) return { ok: false };
+      const cs = getComputedStyle(g);
+      return {
+        ok: true,
+        cols: cs.gridTemplateColumns.split(' ').length,
+        cards: g.querySelectorAll('.product-card').length,
+        display: cs.display,
+      };
+    })()`);
+
+  await cdp.go('/search');
+  await waitFor(cdp, `document.querySelectorAll('.grid-cards .product-card').length > 0`);
+  await sleep(900);
+
+  const m = await measure();
+  const total = await cdp.eval(`
+    (() => {
+      const t = (document.querySelector('#result-count') || {}).innerText || '';
+      const n = t.match(/共\\s*(\\d+)\\s*件/);
+      return n ? Number(n[1]) : 0;
+    })()`);
+  check('需求：商品列表一页展示 24 件（不足 24 时展示全部）',
+    m.ok === true && m.cards === Math.min(24, total || 24),
+    JSON.stringify({ cards: m.cards, total }));
+  check('需求：商品一行固定排 6 张（1500 宽）',
+    m.cols === 6 && m.display === 'grid', JSON.stringify(m));
+
+  // 翻页后仍是 24 件一页
+  if (total > 24) {
+    await cdp.eval(`
+      (() => {
+        const btn = [...document.querySelectorAll('#pager [data-page]')].find(b => b.dataset.page === '2');
+        if (btn) btn.click();
+      })()`);
+    await sleep(1500);
+    const m2 = await measure();
+    check('需求：翻到第 2 页仍是每页 24 件（剩余部分）',
+      m2.cards === total - 24, JSON.stringify({ cards2: m2.cards, total }));
+    await cdp.eval(`[...document.querySelectorAll('#pager [data-page]')].find(b => b.dataset.page === '1')?.click()`);
+    await sleep(1200);
+  } else {
+    check('需求：翻到第 2 页仍是每页 24 件（剩余部分）', true, '总量不足 24，跳过');
+  }
+
+  await cdp.shot(path.join(SHOT_DIR, 'f66-list-24.png'));
+
+  // 宽屏（1920）也保持一行 6 张，不再自动变 8 张
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1920, height: 1000, deviceScaleFactor: 1, mobile: false });
+  await cdp.go('/search?_=' + Date.now());
+  await waitFor(cdp, `document.querySelectorAll('.grid-cards .product-card').length > 0`);
+  await sleep(900);
+  const wide = await measure();
+  check('需求：1920 宽屏下仍然一行 6 张（不再自动排成 8 张）',
+    wide.cols === 6, JSON.stringify(wide));
+  await cdp.shot(path.join(SHOT_DIR, 'f66-list-1920.png'));
+  await cdp.send('Emulation.clearDeviceMetricsOverride', {});
+  await sleep(300);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -6894,6 +6960,7 @@ const GROUPS = {
   63: { title: '画像图表配色有区分度', fn: feature63 },
   64: { title: '按对象停留（商品详情 / 商家主页）', fn: feature64 },
   65: { title: '图像感知偏好（色彩统计 + 近似提示）', fn: feature65 },
+  66: { title: '商品列表每页 24 件 + 一行 6 张（本批需求）', fn: feature66 },
 };
 
 async function main() {

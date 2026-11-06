@@ -55,7 +55,7 @@ class Config:
     MAX_CONTENT_LENGTH = 20 * 1024 * 1024  # 单次请求体上限
 
     # ---------- 分页 ----------
-    DEFAULT_PAGE_SIZE = 12                # 功能文档 6.5：每页 8 / 12 条 → 取 12
+    DEFAULT_PAGE_SIZE = 24                # 2026-10-18 用户要求：商品列表每页 24 件
     MAX_PAGE_SIZE = 60
 
     # ---------- 地图（腾讯地图 JS API，GCJ-02）----------
