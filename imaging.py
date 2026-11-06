@@ -154,6 +154,72 @@ def aggregate(feats: list[dict]) -> dict:
     }
 
 
+def view_weight(dwell_ms: int, image_index: int, converted: bool) -> float:
+    """一次看图行为的偏好强度（2026-10-18 偏好分析④，用户拍板的三层加权）。
+
+    - 停留：秒数，不足 1 秒按 1 秒算（保证"看过"至少算一次曝光）；
+    - 主动翻图：第 2 张及以后 ×1.5（翻图是主动行为，比首图更能说明偏好）；
+    - 成交回推：该商品被收藏 / 下过单 ×2（看完了真的动手，最能说明喜欢）。
+    """
+    weight = max((dwell_ms or 0) / 1000.0, 1.0)
+    if (image_index or 0) >= 1:
+        weight *= 1.5
+    if converted:
+        weight *= 2.0
+    return round(weight, 4)
+
+
+FEATURE_KEYS = ("warm", "light", "sat", "skin", "edges", "grey", "colorfulness")
+
+
+def weighted_aggregate(items) -> dict:
+    """按权重汇总图片特征：items = [(feature_dict, weight), ...]。
+
+    与 `aggregate()`（等权平均）的区别：这里每一张图按"他在这张图上花了多少注意力"加权，
+    是"偏好"而不是"平均值"。
+    """
+    pairs = [(f, float(w)) for f, w in items if f and w and w > 0]
+    if not pairs:
+        return {"count": 0, "weight": 0.0, "empty": True, "text": "", "dominants": []}
+    total = sum(w for _f, w in pairs)
+    avg = {}
+    for key in FEATURE_KEYS:
+        avg[key] = round(sum(float(f.get(key) or 0) * w for f, w in pairs) / total, 4)
+    dom = {}
+    for f, w in pairs:
+        name = f.get("dominant")
+        if name:
+            dom[name] = dom.get(name, 0.0) + w
+    top = sorted(dom.items(), key=lambda kv: -kv[1])[:3]
+
+    result = {
+        "count": len(pairs),
+        "weight": round(total, 2),
+        "empty": False,
+        "dominants": [{"name": k, "weight": round(v, 2), "share": round(v / total, 3)}
+                      for k, v in top],
+    }
+    result.update(avg)
+    result["text"] = describe(avg)
+    return result
+
+
+def compare(mine: dict, base: dict, keys=("warm", "light", "sat", "skin", "edges")) -> list:
+    """个人 vs 大众基线：逐项给绝对值、差值与相对差（基线为 0 时相对差给 None）。"""
+    rows = []
+    for key in keys:
+        m = float(mine.get(key) or 0)
+        b = float(base.get(key) or 0)
+        rows.append({
+            "key": key,
+            "mine": round(m, 4),
+            "base": round(b, 4),
+            "diff": round(m - b, 4),
+            "rel": round((m - b) / b, 3) if b else None,
+        })
+    return rows
+
+
 def store_features(filename: str, folder: str):
     """算一张图的特征并入库存好；重复调用不会重复入库。返回 dict 或 None。"""
     import os

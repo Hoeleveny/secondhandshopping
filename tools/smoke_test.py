@@ -3084,6 +3084,70 @@ def main() -> int:
           all(abs(round(x["share"] - x["base_share"], 3) - x["diff"]) < 0.002 for x in _pf_rows),
           str([(x["tag"], x["share"], x["base_share"], x["diff"]) for x in _pf_rows])[:170])
 
+    # ---------------- 偏好分析④：图片偏好（三层加权 + 大众基线 + 头图/细节图） ----------------
+    section("偏好分析④ 图片偏好")
+
+    from imaging import compare as _v_cmp
+    from imaging import view_weight as _vw
+    from imaging import weighted_aggregate as _v_agg
+
+    check("偏好④：停留不足 1 秒按 1 秒算（看过就算一次曝光）",
+          _vw(0, 0, False) == 1.0, str(_vw(0, 0, False)))
+    check("偏好④：第 2 张起算主动翻图，权重 ×1.5",
+          _vw(1000, 1, False) == 1.5, str(_vw(1000, 1, False)))
+    check("偏好④：成交回推（该商品被收藏/下单）×2",
+          _vw(2000, 0, True) == 4.0, str(_vw(2000, 0, True)))
+
+    _fake = [({"warm": 1.0, "light": 0.5, "sat": 0.2, "skin": 0.0, "edges": 0.1,
+               "grey": 0.0, "colorfulness": 10, "dominant": "红"}, 3.0),
+             ({"warm": 0.0, "light": 0.9, "sat": 0.6, "skin": 0.2, "edges": 0.4,
+               "grey": 0.0, "colorfulness": 20, "dominant": "蓝"}, 1.0)]
+    _wa = _v_agg(_fake)
+    check("偏好④：加权汇总按权重取平均（3:1 → 暖色 0.75、明度 0.6）",
+          _wa["count"] == 2 and abs(_wa["warm"] - 0.75) < 1e-6
+          and abs(_wa["light"] - 0.6) < 1e-6,
+          f"warm={_wa.get('warm')} light={_wa.get('light')}")
+    check("偏好④：汇总出主色并按权重给占比",
+          bool(_wa["dominants"]) and abs(_wa["dominants"][0]["share"] - 0.75) < 1e-6,
+          str(_wa.get("dominants")))
+    _cmp = _v_cmp({"warm": 0.8}, {"warm": 0.5}, keys=("warm",))[0]
+    check("偏好④：对比给出绝对值、差值与相对差",
+          _cmp["diff"] == 0.3 and _cmp["rel"] == 0.6, str(_cmp))
+    _cmp0 = _v_cmp({"skin": 0.4}, {"skin": 0.0}, keys=("skin",))[0]
+    check("偏好④：基线为 0 时相对差给 None（不做除零）", _cmp0["rel"] is None, str(_cmp0))
+
+    # 接口层：给这个账号造几次「看图」
+    _st, r = call("GET", "/api/products?page=1&page_size=24")
+    _img_prod = next((x for x in ((r.get("data") or {}).get("list") or [])
+                      if len(x.get("images") or []) >= 2), None)
+    check("偏好④：找到一件至少两张图的商品（用来造看图记录）", bool(_img_prod),
+          str(_img_prod and _img_prod.get("id")))
+    _ip_pid = _img_prod["id"]
+    for _idx, _ms in ((0, 800), (1, 2400)):
+        call("POST", "/api/activities/image-view", token=token,
+             body={"product_id": _ip_pid, "index": _idx, "dwell_ms": _ms})
+
+    _st, r = call("GET", f"/api/admin/activities/profile?user_id={_pp_uid}", token=_ut_at)
+    _ipx = ((r.get("data") or {}).get("image_pref")) or {}
+    check("偏好④：画像接口返回「图片偏好」（个人 vs 大众 + 头图/细节图 + 权重口径）",
+          bool(_ipx) and bool(_ipx.get("note")) and isinstance(_ipx.get("position"), dict)
+          and (_ipx.get("count") or 0) >= 2, str(_ipx)[:150])
+    check("偏好④：个人侧给出冷暖/明度/饱和/人像/繁简五个值",
+          set((_ipx.get("mine") or {}).get("values") or {})
+          >= {"warm", "light", "sat", "skin", "edges"},
+          str((_ipx.get("mine") or {}).get("values")))
+    check("偏好④：对比项带 个人值 / 大众基线 / 差值",
+          bool(_ipx.get("compare")) and all(
+              {"key", "mine", "base", "diff", "rel"} <= set(x.keys())
+              for x in _ipx["compare"]), str(_ipx.get("compare"))[:160])
+    check("偏好④：头图与细节图分开统计",
+          ((_ipx.get("position") or {}).get("head") or {}).get("count", 0) >= 1
+          and ((_ipx.get("position") or {}).get("detail") or {}).get("count", 0) >= 1,
+          str((_ipx.get("position") or {}).get("head"))[:110])
+    check("偏好④：样本少于 5 张时标「样本不足」，不硬下结论",
+          (_ipx.get("count") or 0) >= 5 or _ipx.get("insufficient") is True,
+          f"count={_ipx.get('count')} insufficient={_ipx.get('insufficient')}")
+
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 

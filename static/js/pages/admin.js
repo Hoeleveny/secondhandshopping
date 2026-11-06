@@ -1416,6 +1416,14 @@ function openProfileCharts(d) {
   // 2026-10-18 偏好分析③：帖子分区偏好
   const postPref = d.post_pref || {};
   const ppTags = postPref.top || [];
+  // 2026-10-18 偏好分析④：图片偏好（三层加权 + 大众基线 + 头图/细节图）
+  const ipr = d.image_pref || {};
+  const ipCmp = ipr.compare || [];
+  const ipMine = ipr.mine || {};
+  const ipBase = ipr.base || {};
+  const ipPos = ipr.position || {};
+  const ipHead = ipPos.head || {};
+  const ipDetail = ipPos.detail || {};
 
   const pct = (v) => Math.round((v || 0) * 100);
   // 2026-10-18：图表配色。原来前两个都是 --primary（扇区同色）、后两个是灰阶，
@@ -1576,6 +1584,46 @@ function openProfileCharts(d) {
           　·　点赞 ${postPref.like_total || 0} · 评论 ${postPref.comment_total || 0}
         </div>
         <div class="muted small">占比＝该分区占他全部帖子浏览；括号里的「全站」是所有用户同分区的浏览占比，差值为正说明他比大众更偏这个分区。</div>
+      </div>
+
+      <div class="ch-card" id="ch-imgpref">
+        <div class="ch-title">图片偏好 <span class="muted small">（他 vs 大众 · 按注意力加权）</span></div>
+        ${ipCmp.length ? (() => {
+          const LABEL = { warm: '冷暖', light: '明度', sat: '饱和', skin: '疑似人像', edges: '画面繁简' };
+          return `<div class="ch-hbars">${ipCmp.map((r) => `
+            <div class="ch-hrow" data-chart="imgpref"
+                 data-tip="${LABEL[r.key] || r.key}：他 ${pct(r.mine)}%，全站 ${pct(r.base)}%，差 ${r.diff >= 0 ? '+' : ''}${pct(r.diff)} 个点${r.rel !== null && r.rel !== undefined ? '（相对 ' + (r.rel >= 0 ? '+' : '') + Math.round(r.rel * 100) + '%）' : ''}">
+              <span class="ch-hlabel" style="width:64px">${LABEL[r.key] || r.key}</span>
+              <span class="ch-htrack"><span class="ch-hfill"
+                style="width:${Math.max(3, Math.round(r.mine * 100))}%;background:var(--chart-2)"></span></span>
+              <span class="ch-hval" style="width:96px">${pct(r.mine)}% <span class="muted">/ ${pct(r.base)}%</span></span>
+            </div>`).join('')}</div>`;
+        })() : '<div class="muted small">还没有足够的看图记录</div>'}
+        <div class="muted small" style="margin-top:6px">
+          ${esc(ipr.text || '—')}　·　加权样本 ${ipr.count || 0} 张（权重 ${ipr.weight || 0}）
+          ${ipr.insufficient ? '　·　<span style="color:var(--warning)">样本不足，仅作参考</span>' : ''}
+        </div>
+        <div class="muted small">括号里是「全站大众」的同一数值。权重＝停留秒（≥1）× 主动翻图 1.5（第 2 张起）× 成交回推 2（该商品被收藏/下单）；未加权的原始平均见下方「图像感知」卡。</div>
+      </div>
+
+      <div class="ch-card" id="ch-imgpos">
+        <div class="ch-title">头图 vs 细节图 <span class="muted small">（翻图时在找什么）</span></div>
+        ${(ipHead.count || ipDetail.count) ? `<div class="ch-hbars">${[
+          { key: 'head', name: '头图（第 1 张）', d: ipHead, color: 'var(--chart-1)' },
+          { key: 'detail', name: '细节图（第 2 张起）', d: ipDetail, color: 'var(--chart-3)' },
+        ].map((x) => `
+          <div class="ch-hrow" data-chart="imgpos"
+               data-tip="${esc(x.name)}：加权 ${x.d.weight || 0}（占 ${pct(x.d.weight / Math.max(1, (ipHead.weight || 0) + (ipDetail.weight || 0)))}%）· ${x.d.count || 0} 张 · ${esc(x.d.text || '—')}">
+            <span class="ch-hlabel" style="width:118px">${esc(x.name)}</span>
+            <span class="ch-htrack"><span class="ch-hfill"
+              style="width:${Math.max(4, Math.round((x.d.weight || 0) / Math.max(1, (ipHead.weight || 0) + (ipDetail.weight || 0)) * 100))}%;background:${x.color}"></span></span>
+            <span class="ch-hval" style="width:64px">${x.d.count || 0} 张</span>
+          </div>`).join('')}</div>` : '<div class="muted small">还没有足够的看图记录</div>'}
+        <div class="muted small" style="margin-top:6px">
+          头图加权占比 ${pct(ipPos.head_weight_share)}%；两组各给一句描述：
+          头图「${esc(ipHead.text || '—')}」／细节图「${esc(ipDetail.text || '—')}」
+        </div>
+        <div class="muted small">翻到第 2 张以后是主动行为，所以加权时给 1.5 倍——细节图偏好的差异比头图更能说明他真正在意什么。</div>
       </div>
 
       <div class="ch-card" id="ch-dwell">

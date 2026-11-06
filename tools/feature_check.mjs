@@ -6607,6 +6607,35 @@ async function feature62(cdp) {
     && postPrefCard.text.includes('点赞'),
     (postPrefCard.text || '').replace(/\s+/g, ' ').slice(0, 120));
 
+  // 2026-10-18 偏好分析④：图片偏好（个人 vs 大众）与头图/细节图两张卡
+  const imgPrefCards = await cdp.eval(`
+    (() => {
+      const pref = document.querySelector('#ch-imgpref');
+      const pos = document.querySelector('#ch-imgpos');
+      const rows = pref ? [...pref.querySelectorAll('.ch-hrow')] : [];
+      const posRows = pos ? [...pos.querySelectorAll('.ch-hrow')] : [];
+      return {
+        hasPref: !!pref, hasPos: !!pos,
+        prefRows: rows.length,
+        firstTip: rows.length ? (rows[0].dataset.tip || '') : '',
+        prefText: pref ? pref.innerText : '',
+        posRows: posRows.length,
+        posText: pos ? pos.innerText : '',
+      };
+    })()`);
+  check('偏好④：画像弹窗里有「图片偏好（他 vs 大众）」卡，五行且悬停给双方数值与差值',
+    imgPrefCards.hasPref === true && imgPrefCards.prefRows === 5
+    && imgPrefCards.firstTip.includes('全站'),
+    JSON.stringify({ rows: imgPrefCards.prefRows, tip: imgPrefCards.firstTip.slice(0, 70) }));
+  check('偏好④：图片偏好卡标出权重口径与加权样本数',
+    imgPrefCards.hasPref === true && imgPrefCards.prefText.includes('加权样本')
+    && imgPrefCards.prefText.includes('成交回推'),
+    (imgPrefCards.prefText || '').replace(/\s+/g, ' ').slice(0, 130));
+  check('偏好④：画像弹窗里有「头图 vs 细节图」卡，两行分别统计',
+    imgPrefCards.hasPos === true && imgPrefCards.posRows === 2
+    && imgPrefCards.posText.includes('头图加权占比'),
+    (imgPrefCards.posText || '').replace(/\s+/g, ' ').slice(0, 120));
+
   // 悬停一根柱子 → 出现详细数据
   const hover = await cdp.eval(`
     (() => {

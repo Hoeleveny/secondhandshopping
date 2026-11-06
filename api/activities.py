@@ -763,6 +763,97 @@ def activities_profile():
         "empty": not post_rows,
     }
 
+    # ⑬ 图片偏好（2026-10-18 偏好分析④，用户拍板口径）：
+    #    偏好强度 = 停留秒（不足 1 秒按 1）× 主动翻图 1.5（第 2 张起）× 成交回推 2（该商品被收藏/下单）；
+    #    「偏好」必须相对大众——基数＝同权重聚合其他用户；再拆「头图 / 细节图」两组看他在找什么。
+    from imaging import compare as _img_compare, view_weight as _img_weight
+    from imaging import weighted_aggregate as _img_wagg
+    from models import ImageFeature, ProductImage, ProductImageView
+
+    _views_all = (ProductImageView.query
+                  .order_by(ProductImageView.created_at.desc()).limit(3000).all())
+    _v_pids = {v.product_id for v in _views_all}
+    _v_pimgs = (ProductImage.query.filter(ProductImage.product_id.in_(_v_pids)).all()
+                if _v_pids else [])
+    _urls_by_pid: dict = {}
+    for _im in sorted(_v_pimgs, key=lambda x: (x.product_id, x.id)):
+        _urls_by_pid.setdefault(_im.product_id, []).append(_im.url)
+    _all_paths = {u for urls in _urls_by_pid.values() for u in urls}
+    _feats_by_path = ({f.path: f.to_dict() for f in
+                       ImageFeature.query.filter(ImageFeature.path.in_(_all_paths)).all()}
+                      if _all_paths else {})
+
+    # 每个人的收藏/下单集合（大众基线要按各人自己的"成交回推"加权，一次批量取，避免 N+1）
+    _fav_by_user, _ord_by_user = {}, {}
+    try:
+        for _f2 in (db.session.query(FavModel)
+                    .filter(FavModel.product_id.in_(_v_pids or [-1])).all()):
+            _fav_by_user.setdefault(_f2.user_id, set()).add(_f2.product_id)
+        for _o2 in (db.session.query(OrderModel)
+                    .filter(OrderModel.product_id.in_(_v_pids or [-1])).all()):
+            _ord_by_user.setdefault(_o2.buyer_id, set()).add(_o2.product_id)
+    except Exception:                     # noqa: BLE001
+        _fav_by_user, _ord_by_user = {}, {}
+
+    _mine_items, _head_items, _detail_items, _base_items = [], [], [], []
+    for _v in _views_all:
+        _urls = _urls_by_pid.get(_v.product_id)
+        if not _urls:                     # 没图 / 图被删
+            continue
+        _idx = _v.image_index or 0
+        _path = _urls[_idx] if 0 <= _idx < len(_urls) else _urls[0]
+        _feat = _feats_by_path.get(_path)
+        if not _feat:
+            continue
+        if _v.user_id == target.id:
+            _w = _img_weight(_v.dwell_ms, _idx,
+                             _v.product_id in fav_pids or _v.product_id in order_by_pid)
+            _mine_items.append((_feat, _w))
+            (_detail_items if _idx >= 1 else _head_items).append((_feat, _w))
+        else:
+            _w = _img_weight(_v.dwell_ms, _idx,
+                             _v.product_id in _fav_by_user.get(_v.user_id, ())
+                             or _v.product_id in _ord_by_user.get(_v.user_id, ()))
+            _base_items.append((_feat, _w))
+
+    _mine = _img_wagg(_mine_items)
+    _base = _img_wagg(_base_items)
+    _head = _img_wagg(_head_items)
+    _detail = _img_wagg(_detail_items)
+    _IMG_KEYS = ("warm", "light", "sat", "skin", "edges")
+    _MIN_IMG = 5                          # 少于 5 张不下结论
+
+    def _brief(agg: dict) -> dict:
+        if agg.get("empty"):
+            return {"count": 0, "weight": 0.0, "text": "", "values": {}}
+        return {
+            "count": agg["count"], "weight": agg["weight"], "text": agg["text"],
+            "values": {k: agg[k] for k in _IMG_KEYS},
+            "dominants": agg.get("dominants") or [],
+        }
+
+    _w_total = (_mine.get("weight") or 0) if not _mine.get("empty") else 0
+    _w_head = (_head.get("weight") or 0) if not _head.get("empty") else 0
+    image_pref = {
+        "count": _mine.get("count", 0),
+        "weight": _mine.get("weight", 0.0),
+        "mine": _brief(_mine),
+        "base": _brief(_base),
+        "compare": [] if _mine.get("empty") else _img_compare(_mine, _base),
+        "position": {
+            "head": _brief(_head),
+            "detail": _brief(_detail),
+            "head_weight_share": round(_w_head / _w_total, 3) if _w_total else 0.0,
+        },
+        "dominants": _mine.get("dominants") or [],
+        "text": _mine.get("text", ""),
+        "insufficient": _mine.get("count", 0) < _MIN_IMG,
+        "rule": "少于 %d 张不下结论" % _MIN_IMG,
+        "note": "偏好强度＝停留秒（≥1）× 主动翻图 1.5（第 2 张起）× 成交回推 2（该商品被收藏/下单）；"
+                "大众基线＝同权重聚合其他用户；色彩按像素统计，人像/繁简是算法近似",
+        "empty": bool(_mine.get("empty")),
+    }
+
     # ⑧ 图片偏好（图片级埋点）
     imgs = (ProductImageView.query.filter(ProductImageView.user_id == target.id)
             .order_by(ProductImageView.created_at.desc()).limit(500).all())
@@ -849,6 +940,7 @@ def activities_profile():
         "product_pref": product_pref,
         "seller_pref": seller_pref,
         "post_pref": post_pref,
+        "image_pref": image_pref,
         "dwell_kinds": dwell_kinds,
         "top_dwell": top_dwell,
         "image_perception": image_perception,
