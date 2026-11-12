@@ -315,6 +315,8 @@ class Order(db.Model):
     )
     trade_note = db.Column(db.String(255))
     meet_place_id = db.Column(db.BigInteger, db.ForeignKey("campus_places.id"))
+    # 2026-10-18 P0 埋点：下单时他停在第几张图（0 = 头图），给"结局动作落图"用
+    image_index = db.Column(db.Integer, nullable=False, default=0)
     buyer_lng = db.Column(db.Numeric(10, 7))
     buyer_lat = db.Column(db.Numeric(10, 7))
     seller_lng = db.Column(db.Numeric(10, 7))
@@ -348,6 +350,7 @@ class Order(db.Model):
             "status": self.status,
             "status_text": self.STATUS_TEXT.get(self.status, self.status),
             "trade_note": self.trade_note or "",
+            "image_index": self.image_index or 0,   # 下单时停留的图片序号（P0 埋点）
             "buyer_id": self.buyer_id,
             "buyer_nickname": self.buyer.nickname if self.buyer else None,
             "seller_id": self.seller_id,
@@ -383,6 +386,8 @@ class Favorite(db.Model):
     id = db.Column(db.BigInteger, primary_key=True)
     user_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
     product_id = db.Column(db.BigInteger, db.ForeignKey("products.id"), nullable=False)
+    # 2026-10-18 P0 埋点：收藏时他停在第几张图（0 = 头图）
+    image_index = db.Column(db.Integer, nullable=False, default=0)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
     product = db.relationship("Product")
@@ -1011,6 +1016,49 @@ class ImageFeature(db.Model):
             "warm": self.warm, "grey": self.grey, "light": self.light, "sat": self.sat,
             "colorfulness": self.colorfulness, "edges": self.edges,
             "skin": self.skin, "dominant": self.dominant,
+        }
+
+
+class ImageEvent(db.Model):
+    """图片级事件（2026-10-18 P0 埋点）：曝光 / 查看 / 结局动作。
+
+    为什么单独一张表：`product_image_views` 只记了"看了第几张 + 停留多久"，
+    缺**曝光**（看见但没点，分不清"不感兴趣"和"没被看到"）与**负反馈**（秒退、滑过）；
+    收藏/下单时停在哪张图也需要独立留痕，才能把"成交回推"精确到图。
+    """
+
+    __tablename__ = "image_events"
+
+    EVENTS = {"exposure": "曝光", "view": "查看", "convert": "结局动作"}
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete="CASCADE"),
+                        nullable=False)
+    product_id = db.Column(db.BigInteger, db.ForeignKey("products.id", ondelete="CASCADE"),
+                           nullable=False)
+    image_index = db.Column(db.Integer, nullable=False, default=0)
+    event = db.Column(
+        db.Enum("exposure", "view", "convert", name="image_event_enum"),
+        nullable=False, default="exposure",
+    )
+    dwell_ms = db.Column(db.Integer, nullable=False, default=0)
+    source = db.Column(db.String(16), nullable=False, default="")   # list / detail / fav / order
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
+
+    user = db.relationship("User")
+    product = db.relationship("Product")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "product_id": self.product_id,
+            "image_index": self.image_index,
+            "event": self.event,
+            "event_text": self.EVENTS.get(self.event, self.event),
+            "dwell_ms": self.dwell_ms,
+            "source": self.source,
+            "created_at": _dt(self.created_at),
         }
 
 

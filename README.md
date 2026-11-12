@@ -1429,3 +1429,39 @@ sim(a, b) = co(a, b) / √(view(a) × view(b))
 **测试**：冒烟 7 项（`mode` 字段与候选数、`recall` 来源合法性且是返回商品的子集、baseline 不带来源、
 两种模式都排除自己的商品、`as_of` 截断后不再个性化、非法 `as_of` 不报错、guest 可用）；
 浏览器分组 61（首页猜你喜欢）与 67（相似商品）全过；E2E 22 页无问题。
+
+## 四十二、P0 埋点：曝光 / 负反馈 / 结局动作落图（2026-10-18 第六批）
+
+**需求**：按 `docs/偏好分析设计.md` §3.1 补三类埋点——文档里写得很明白：**现在缺的不是模型，是标签**。
+没有曝光就分不清"不感兴趣"和"没被看到"；没有负反馈就没有负样本；不知道"收藏时停在哪张图"，
+"成交回推"就只能到商品级。
+
+**数据层**（迁移 `022_image_events.sql`，**26 → 27 张表**）：
+
+- 新表 `image_events`：`(user_id, product_id, image_index, event, dwell_ms, source, created_at)`，
+  `event` 三态 `exposure` / `view` / `convert`；外键 `ON DELETE CASCADE`，用户或商品删掉时事件一起清；
+- `favorites.image_index`、`orders.image_index`：结局动作落在**具体第几张图**（默认 0 = 头图）；
+  `schema.sql` 同步、`backup.py` 的 `INSERT_ORDER` 补上 `image_events`（备份/恢复/重置都覆盖到）。
+
+**接口**：
+
+| 接口 | 作用 |
+|---|---|
+| `POST /api/activities/image-event` | 上报 `{product_id, index, event, dwell_ms, source}`；**曝光 5 秒内去重**（去重键含 `source`——列表滑过一遍再点进详情看首图，是两个场景的曝光，都该算）；非法事件类型/商品不存在都拒 |
+| `POST /api/favorites`（扩展） | 收 `image_index`，存进 `favorites` 并写一条 `convert` 事件（`source=fav`）；返回里回显 `image_index` |
+| `POST /api/orders`（扩展） | 同上（`source=order`），`orders.image_index` 随订单详情返回 |
+| `GET /api/admin/activities/image-events` | 管理员按 用户/商品/事件 查明细，带各事件计数——**验收用**，普通用户 403 |
+
+**前端**：
+
+- **列表曝光一次覆盖所有列表**：挂在 `components.bindProductCards()` 上的 `IntersectionObserver`
+  （看到 ≥50% 才报、每张卡只报一次、游客不报），首页/搜索/收藏/我的商品/卖家主页/相似商品全部生效；
+- **详情页**：首图与每次切图都报 `exposure`（`source=detail`）；当前图索引记在 `#gallery-main[data-index]` 上，
+  **收藏与下单时随请求带上**，于是"结局动作"能精确落到那张图。
+
+**负反馈口径**（先定口径，排序模型后面才用）：同一 `exposure` 的 `dwell_ms < 1000` 视为弱负反馈，
+与 `convert` 一起构成正负样本；`view` 事件沿用原有 `product_image_views`（不重复写，避免两套数据打架）。
+
+**测试**：冒烟 9 项（曝光上报与 5 秒去重、非法事件/商品/未登录被拒、收藏回显图索引、
+`convert` 事件落库、管理员可按用户查、普通用户 403）；浏览器新分组 **68**（3 项）：
+列表卡片曝光真的上报、详情首图曝光（index=0）、点收藏后 `convert` 事件带上图索引。

@@ -187,6 +187,13 @@ export default {
       imgReported = true;
       reportImage(imgIndex);
     };
+    // 2026-10-18 P0 埋点：曝光（他看见这张图但未必停留）。与"查看"分开记，才有负样本可用。
+    const reportExposure = (viewedIndex) => {
+      if (!store.isLoggedIn) return;
+      api.post('/api/activities/image-event', {
+        product_id: Number(id), index: viewedIndex, event: 'exposure', source: 'detail',
+      }).catch(() => {});                    // 纯统计，失败静默
+    };
 
     // 2026-10-18 需求②：点大图全屏放大查看（更实用的图片呈现）
     const mainImg = root.querySelector('#gallery-main');
@@ -205,11 +212,13 @@ export default {
       document.body.appendChild(mask);
     };
     if (mainImg) {
+      mainImg.dataset.index = '0';
       mainImg.style.cursor = 'zoom-in';
       mainImg.addEventListener('click', () => {
         const im = mainImg.querySelector('img');
         if (im) openImageZoom(im.getAttribute('src'));
       });
+      reportExposure(0);                     // 详情页首图曝光
     }
     window.addEventListener('pagehide', flushImage, { once: true });
     // 图片切换
@@ -225,8 +234,10 @@ export default {
           imgIndex = index;
           imgSince = Date.now();
         }
-        root.querySelector('#gallery-main').innerHTML =
-          `<img src="${esc(imgUrl(images[index]))}" alt="">`;
+        const main = root.querySelector('#gallery-main');
+        main.innerHTML = `<img src="${esc(imgUrl(images[index]))}" alt="">`;
+        main.dataset.index = String(index);   // 供收藏/下单记录"停在哪张图"
+        reportExposure(index);                // 每次切图都记一次曝光
         thumbs.querySelectorAll('img').forEach(el => el.classList.remove('active'));
         img.classList.add('active');
       });
@@ -239,6 +250,12 @@ export default {
 };
 
 /* ------------------------------------------------------------------ 看过这个的人还看 */
+/** 当前停留的是第几张图（收藏/下单时随请求带上，用于"结局动作落图"）。 */
+function currentImageIndex() {
+  const el = document.querySelector('#gallery-main');
+  const n = el ? Number(el.dataset.index || 0) : 0;
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
 /* 推荐位失败一律静默：它只是详情页的附加区块，不能影响商品本身能否打开。 */
 async function loadSimilarProducts(root, id) {
   let data;
@@ -339,7 +356,9 @@ async function renderActions(root, product, id) {
           product.favorited = false;
           toast('已取消收藏');
         } else {
-          await api.post('/api/favorites', { product_id: Number(id) });
+          await api.post('/api/favorites', {
+            product_id: Number(id), image_index: currentImageIndex(),
+          });
           product.favorited = true;
           toast('收藏成功');
         }
@@ -430,6 +449,7 @@ async function openBuyModal(product) {
             product_id: product.id,
             meet_place_id: Number(modal.querySelector('#buy-place').value),
             trade_note: modal.querySelector('#buy-note').value.trim(),
+            image_index: currentImageIndex(),
           });
           close();
           toast('下单成功，请与卖家约定自提时间');

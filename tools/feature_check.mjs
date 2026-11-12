@@ -7090,6 +7090,63 @@ async function feature67(cdp) {
     hash.includes(`/product/${target}`), hash);
 }
 
+/* ================================================================ 功能68 P0 埋点（曝光 / 结局动作落图） */
+async function feature68(cdp) {
+  console.log('\n===== 功能68 P0 埋点：曝光与结局动作落图 =====');
+
+  const buyerToken = await login('buyer1', '123456', 'buyer');
+  const buyer = (await api('GET', '/api/auth/me', { token: buyerToken })).data.user;
+  const adminToken = await login('admin', '123456', 'admin');
+  const pool = (await api('GET', '/api/products?page_size=3')).data?.list || [];
+  const target = pool[0];
+  if (!target) {
+    check('需求⑤：先取到一件在售商品', false, '没有在售商品');
+    return;
+  }
+  await api('DELETE', `/api/favorites/${target.id}`, { token: buyerToken }).catch(() => null);
+
+  // ① 列表卡片曝光（bindProductCards 里的 IntersectionObserver）
+  await cdp.loginAs('buyer1', '123456', 'buyer');
+  await cdp.go('/search');
+  await waitFor(cdp, `document.querySelectorAll('.grid-cards .product-card').length > 0`);
+  await sleep(1600);                       // 等 observer 触发 + 上报落地
+  const listEvents = (await api(
+    'GET', `/api/admin/activities/image-events?user_id=${buyer.id}&event=exposure&limit=50`,
+    { token: adminToken })).data;
+  const fromList = (listEvents.list || []).filter(x => x.source === 'list');
+  check('需求⑤：列表卡片图的曝光已上报（source=list）',
+    fromList.length > 0, JSON.stringify(listEvents.counts));
+
+  // ② 详情页曝光
+  await cdp.go(`/product/${target.id}`);
+  await waitFor(cdp, `document.querySelectorAll('#action-bar button').length > 0`);
+  await sleep(1400);
+  const detailEvents = (await api(
+    'GET', `/api/admin/activities/image-events?product_id=${target.id}&event=exposure&limit=20`,
+    { token: adminToken })).data;
+  const fromDetail = (detailEvents.list || []).filter(x => x.source === 'detail');
+  check('需求⑤：详情页首图曝光已上报（source=detail，index=0）',
+    fromDetail.length > 0 && fromDetail.every(x => x.image_index === 0),
+    JSON.stringify((fromDetail[0] || {})));
+
+  // ③ 收藏 → 结局动作落图（convert 事件带 image_index）
+  await cdp.eval(`
+    (() => {
+      const btn = document.querySelector('#action-bar button[data-act="fav"]');
+      if (btn) btn.click();
+    })()`);
+  await sleep(1400);
+  const conv = (await api(
+    'GET', `/api/admin/activities/image-events?product_id=${target.id}&event=convert&limit=20`,
+    { token: adminToken })).data;
+  const convRow = (conv.list || []).find(x => x.source === 'fav' && x.product_id === target.id);
+  check('需求⑤：收藏后写入 convert 事件，并带上「当时停在第几张图」',
+    !!convRow && Number.isInteger(convRow.image_index), JSON.stringify(convRow || {}));
+
+  await cdp.shot(path.join(SHOT_DIR, 'f68-telemetry.png'));
+  await api('DELETE', `/api/favorites/${target.id}`, { token: buyerToken }).catch(() => null);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -7157,6 +7214,7 @@ const GROUPS = {
   65: { title: '图像感知偏好（色彩统计 + 近似提示）', fn: feature65 },
   66: { title: '商品列表每页 24 件 + 一行 6 张（本批需求）', fn: feature66 },
   67: { title: '看过这个的人还看（共视相似）', fn: feature67 },
+  68: { title: 'P0 埋点：曝光与结局动作落图', fn: feature68 },
 };
 
 async function main() {

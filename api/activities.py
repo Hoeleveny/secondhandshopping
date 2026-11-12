@@ -94,6 +94,56 @@ def report_image_view():
     return ok(msg="ok")
 
 
+@bp.post("/activities/image-event")
+@login_required
+def report_image_event():
+    """图片级事件（2026-10-18 P0 埋点）：曝光 / 查看 / 结局动作。
+
+    为什么需要：`product_image_views` 只有"看了第几张 + 停留"，
+    缺**曝光**（看见但没点，分不清"不感兴趣"和"没被看到"）与**负反馈**（秒退）；
+    `convert` 由收藏/下单接口在成交动作发生时写入，用来把结局动作落到具体那张图。
+
+    **曝光去重**：同一用户 + 同一商品 + 同一张图，5 秒内只记一条——
+    列表滚动、重渲染、返回页面都会重复触发，不去重会把曝光数灌成假高。
+    """
+    from models import ImageEvent
+
+    me = current_user()
+    body = json_body() or {}
+    event = (body.get("event") or "exposure").strip().lower()
+    if event not in ImageEvent.EVENTS:
+        return fail("事件类型不合法")
+    try:
+        product_id = int(body.get("product_id"))
+        index = max(0, int(body.get("index") or 0))
+        dwell = max(0, min(int(body.get("dwell_ms") or 0), 30 * 60 * 1000))
+    except (TypeError, ValueError):
+        return fail("参数不合法")
+    if Product.query.get(product_id) is None:
+        return fail("商品不存在", 404)
+    source = (body.get("source") or "")[:16]
+
+    if event == "exposure":
+        since = datetime.now() - timedelta(seconds=5)
+        # 去重键带上 source：列表里滑过一遍、再点进详情看首图，是两个不同场景的曝光，都该记
+        dup = (ImageEvent.query
+               .filter(ImageEvent.user_id == me.id,
+                       ImageEvent.product_id == product_id,
+                       ImageEvent.image_index == index,
+                       ImageEvent.event == "exposure",
+                       ImageEvent.source == source,
+                       ImageEvent.created_at >= since)
+               .first())
+        if dup is not None:
+            return ok({"skipped": True}, msg="5 秒内重复曝光，已忽略")
+
+    row = ImageEvent(user_id=me.id, product_id=product_id, image_index=index,
+                     event=event, dwell_ms=dwell, source=source)
+    db.session.add(row)
+    db.session.commit()
+    return ok({"id": row.id, "skipped": False}, msg="ok")
+
+
 # ---------------------------------------------------------------- 管理端
 @bp.get("/admin/activities")
 @admin_required
@@ -318,6 +368,36 @@ def delete_activities():
         db.session.delete(r)
     db.session.commit()
     return ok({"deleted": len(rows)}, msg="已删除 %d 条行为记录" % len(rows))
+
+
+@bp.get("/admin/activities/image-events")
+@admin_required
+def admin_image_events():
+    """图片级事件明细（P0 埋点验收用）：按用户 / 商品 / 事件筛，倒序返回 + 各事件计数。
+
+    有了它，管理员才能确认"曝光/负反馈/结局动作"这些新埋点真的在收数据。
+    """
+    from models import ImageEvent
+
+    user_id = arg_int("user_id")
+    product_id = arg_int("product_id")
+    event = arg_str("event")
+    limit = arg_int("limit", 50) or 50
+    limit = max(1, min(limit, 200))
+
+    q = ImageEvent.query
+    if user_id:
+        q = q.filter(ImageEvent.user_id == user_id)
+    if product_id:
+        q = q.filter(ImageEvent.product_id == product_id)
+    if event and event != "all":
+        q = q.filter(ImageEvent.event == event)
+    rows = (q.order_by(ImageEvent.created_at.desc(), ImageEvent.id.desc())
+            .limit(limit).all())
+    counts = dict(db.session.query(ImageEvent.event, func.count())
+                  .group_by(ImageEvent.event).all())
+    return ok({"list": [x.to_dict() for x in rows], "total": q.count(),
+               "counts": counts})
 
 
 # ---------------------------------------------------------------- 按用户小结（画像参考）

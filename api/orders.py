@@ -84,6 +84,12 @@ def create_order():
         return fail("自提点不存在")
 
     trade_note = (body.get("trade_note") or "").strip()[:255]
+    # 2026-10-18 P0 埋点：下单时停在第几张图（0 = 头图）
+    raw_index = body.get("image_index")
+    try:
+        image_index = max(0, int(raw_index or 0))
+    except (TypeError, ValueError):
+        image_index = 0
 
     # 新批需求③：下单只是「意向」，不锁商品；但同一个买家对同一件商品不能堆多条意向
     dup = Order.query.filter(
@@ -102,10 +108,17 @@ def create_order():
         status=ORDER_AWAITING,
         trade_note=trade_note or None,
         meet_place_id=place.id,
+        image_index=image_index,
     )
     db.session.add(order)
     db.session.flush()
     order.order_no = f"CM{datetime.now():%Y%m%d%H%M%S}{order.id:06d}"
+    if raw_index is not None:
+        from models import ImageEvent
+
+        db.session.add(ImageEvent(user_id=user.id, product_id=product.id,
+                                  image_index=image_index, event="convert",
+                                  source="order"))
     import audit
 
     audit.record("order_create", "order", order.id,

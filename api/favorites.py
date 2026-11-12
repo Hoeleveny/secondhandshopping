@@ -35,7 +35,8 @@ def list_favorites():
 @login_required
 def add_favorite():
     user = current_user()
-    product_id = json_body().get("product_id")
+    body = json_body() or {}
+    product_id = body.get("product_id")
     if not product_id:
         return fail("请指定商品")
 
@@ -43,13 +44,26 @@ def add_favorite():
     if product is None or product.status == PRODUCT_DELETED:
         return fail("商品不存在", 404)
 
+    # 2026-10-18 P0 埋点：记下"收藏时他停在第几张图"，并把结局动作写成 convert 事件
+    raw_index = body.get("image_index")
+    try:
+        image_index = max(0, int(raw_index or 0))
+    except (TypeError, ValueError):
+        image_index = 0
+
     exists = Favorite.query.filter_by(user_id=user.id, product_id=product.id).first()
     if exists:
         return ok({"favorited": True}, msg="已经在收藏里了")
 
-    db.session.add(Favorite(user_id=user.id, product_id=product.id))
+    db.session.add(Favorite(user_id=user.id, product_id=product.id,
+                            image_index=image_index))
+    if raw_index is not None:
+        from models import ImageEvent
+
+        db.session.add(ImageEvent(user_id=user.id, product_id=product.id,
+                                  image_index=image_index, event="convert", source="fav"))
     db.session.commit()
-    return ok({"favorited": True}, msg="收藏成功")
+    return ok({"favorited": True, "image_index": image_index}, msg="收藏成功")
 
 
 @bp.delete("/favorites/<int:pid>")

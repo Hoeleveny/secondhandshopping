@@ -2,6 +2,8 @@
    可复用片段：商品卡、订单卡、帖子条目
    ========================================================================== */
 import { esc, fmtPrice, fmtTime, avatarHtml, coverHtml, statusFlagHtml, statusBadgeHtml, starsHtml } from './ui.js';
+import { api } from './api.js';
+import { store } from './store.js';
 
 /* ---------------------------------------------------------------- 商品卡 */
 export function productCardHtml(product) {
@@ -26,10 +28,29 @@ export function productCardHtml(product) {
   </article>`;
 }
 
+/* 2026-10-18 P0 埋点：列表卡片图曝光。
+   一次性挂在 bindProductCards 上，首页/搜索/收藏/我的商品/卖家主页都覆盖；
+   同一张卡只报一次（WeakSet），滚动与重渲染不会把曝光灌成假高；游客不报。 */
 export function bindProductCards(root) {
   root.querySelectorAll('[data-product]').forEach(card => {
     card.addEventListener('click', () => { location.hash = `#/product/${card.dataset.product}`; });
   });
+  if (!store.isLoggedIn || typeof IntersectionObserver === 'undefined') return;
+  const seen = new WeakSet();
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting || entry.intersectionRatio < 0.5) return;
+      const card = entry.target;
+      if (seen.has(card)) return;
+      seen.add(card);
+      api.post('/api/activities/image-event', {
+        product_id: Number(card.dataset.product), index: 0,
+        event: 'exposure', source: 'list',
+      }).catch(() => {});
+      io.unobserve(card);
+    });
+  }, { threshold: [0.5] });
+  root.querySelectorAll('[data-product]').forEach(card => io.observe(card));
 }
 
 /* ---------------------------------------------------------------- 订单卡 */

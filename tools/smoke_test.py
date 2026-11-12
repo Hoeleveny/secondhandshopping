@@ -3460,6 +3460,53 @@ def main() -> int:
           len((r.get("data") or {}).get("list") or []) <= 3, "")
     _st, r = call("GET", "/api/products/999999/similar")
     check("第四批：商品不存在时返回错误", r.get("code") != 0, str(r)[:100])
+    # ---------------- 第五批：P0 埋点（曝光 / 负反馈 / 结局动作落图） ----------------
+    section("第五批 P0 埋点")
+
+    _st, r = call("GET", "/api/auth/me", token=token)
+    _ev_uid = ((r.get("data") or {}).get("user") or {}).get("id")
+    _st, r = call("GET", "/api/products?page_size=3")
+    _ev_pid = (((r.get("data") or {}).get("list") or [{}])[0]).get("id")
+
+    _st, r = call("POST", "/api/activities/image-event", token=token,
+                  body={"product_id": _ev_pid, "index": 1, "event": "exposure",
+                        "source": "detail"})
+    check("第五批：能上报图片曝光（返回事件 id）",
+          r.get("code") == 0 and bool((r.get("data") or {}).get("id")), str(r)[:120])
+    _st, r = call("POST", "/api/activities/image-event", token=token,
+                  body={"product_id": _ev_pid, "index": 1, "event": "exposure",
+                        "source": "detail"})
+    check("第五批：5 秒内重复曝光被去重（滚动/重渲染不会把曝光灌高）",
+          (r.get("data") or {}).get("skipped") is True, str(r.get("data")))
+    check("第五批：非法事件类型被拒",
+          call("POST", "/api/activities/image-event", token=token,
+               body={"product_id": _ev_pid, "event": "nope"})[1].get("code") != 0, "")
+    check("第五批：商品不存在时上报被拒",
+          call("POST", "/api/activities/image-event", token=token,
+               body={"product_id": 999999, "event": "exposure"})[1].get("code") != 0, "")
+    check("第五批：未登录不能上报曝光",
+          call("POST", "/api/activities/image-event",
+               body={"product_id": _ev_pid, "event": "exposure"})[0] == 401, "")
+
+    _st, r = call("POST", "/api/favorites", token=token,
+                  body={"product_id": _ev_pid, "image_index": 2})
+    check("第五批：收藏会记下「停在第几张图」",
+          r.get("code") == 0 and (r.get("data") or {}).get("image_index") == 2,
+          str(r.get("data")))
+    call("DELETE", f"/api/favorites/{_ev_pid}", token=token)
+
+    _st, r = call("GET", "/api/admin/activities/image-events?event=convert", token=_ut_at)
+    _ev_conv = (r.get("data") or {}).get("list") or []
+    check("第五批：收藏写 convert 事件（结局动作能回溯到具体哪张图）",
+          r.get("code") == 0 and any(x.get("event") == "convert" for x in _ev_conv),
+          str([(x.get("event"), x.get("source")) for x in _ev_conv[:3]]))
+    _st, r = call("GET", f"/api/admin/activities/image-events?user_id={_ev_uid}&limit=5",
+                  token=_ut_at)
+    check("第五批：管理员能按用户查图片事件（带各事件计数）",
+          r.get("code") == 0 and isinstance((r.get("data") or {}).get("counts"), dict),
+          str((r.get("data") or {}).get("counts")))
+    check("第五批：图片事件明细不对普通用户开放",
+          call("GET", "/api/admin/activities/image-events", token=token)[1].get("code") != 0, "")
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 

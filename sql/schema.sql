@@ -203,6 +203,7 @@ CREATE TABLE `orders` (
                                      COMMENT '待卖家确认(意向)/待完成/已完成/已取消（迁移 013）',
   `trade_note`       VARCHAR(255)    NULL COMMENT '交易说明',
   `meet_place_id`    BIGINT UNSIGNED NULL COMMENT '约定自提点',
+  `image_index`      INT             NOT NULL DEFAULT 0 COMMENT '下单时停留的图片序号（迁移 022，P0 埋点）',
   `buyer_lng`        DECIMAL(10,7)   NULL COMMENT '买家位置 GCJ-02',
   `buyer_lat`        DECIMAL(10,7)   NULL,
   `seller_lng`       DECIMAL(10,7)   NULL COMMENT '卖家位置 GCJ-02',
@@ -232,6 +233,7 @@ CREATE TABLE `favorites` (
   `id`         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `user_id`    BIGINT UNSIGNED NOT NULL,
   `product_id` BIGINT UNSIGNED NOT NULL,
+  `image_index` INT            NOT NULL DEFAULT 0 COMMENT '收藏时停留的图片序号（迁移 022，P0 埋点）',
   `created_at` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_favorites_user_product` (`user_id`, `product_id`),
@@ -547,4 +549,21 @@ CREATE TABLE IF NOT EXISTS image_features (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_image_features_path (path)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------- 图片级事件（迁移 022，P0 埋点）
+CREATE TABLE IF NOT EXISTS image_events (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id BIGINT UNSIGNED NOT NULL,
+  product_id BIGINT UNSIGNED NOT NULL,
+  image_index INT NOT NULL DEFAULT 0,
+  event ENUM('exposure', 'view', 'convert') NOT NULL DEFAULT 'exposure',
+  dwell_ms INT NOT NULL DEFAULT 0,
+  source VARCHAR(16) NOT NULL DEFAULT '',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_image_events_user_time (user_id, created_at),
+  KEY idx_image_events_product (product_id, event),
+  CONSTRAINT fk_image_events_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+  CONSTRAINT fk_image_events_product FOREIGN KEY (product_id) REFERENCES products (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
