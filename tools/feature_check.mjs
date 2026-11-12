@@ -401,6 +401,8 @@ async function feature3(cdp) {
 
   // ---- 商品卡上也展示想要人数 ----
   await cdp.go('/search');
+  // 列表是异步渲染的：先等卡片出来再读，否则偶发读到空串（本轮踩到）
+  await waitFor(cdp, `!!document.querySelector('#result-area .pc-foot')`);
   const cardFoot = await cdp.eval(`
     document.querySelector('#result-area .pc-foot')?.innerText.replace(/\\s+/g, ' ').trim() || ''`);
   check('商品卡上展示「浏览 · 想要」人数', /❤️/.test(cardFoot), cardFoot);
