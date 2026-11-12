@@ -2325,18 +2325,18 @@ def main() -> int:
     check("需求：在售商品数量明显增加（≥ 70 件，清单已到 100 件）",
           (_hs.get("on_sale") or 0) >= 70, f"在售 {_hs.get('on_sale')} 件")
 
-    # 抽查 10 件第二批新增的商品，逐件用关键词搜回来（不写死总数，只看"能不能找到"）
-    _pick_new = ["概率论与数理统计（浙大第五版）", "数据库系统概论（第 6 版）",
-                 "ThinkPad T480 商务本", "小米平板 5（6+128G）", "筋膜枪（迷你）",
-                 "桌面收纳盒（三层抽屉）", "相机 Canon EOS 200D（含镜头）",
-                 "校园音乐会门票 1 张", "李宁篮球鞋 43 码", "多肉盆栽 三盆（含托盘）"]
+    # 抽查 10 件在售商品，逐件用关键词搜回来（不写死具体商品：演示数据会被
+    # 成交/下架/软删除改状态，写死名字会让这条断言随数据状态假红——2026-11-12 踩过）
+    _st, r = call("GET", "/api/products?page_size=10&sort=newest")
+    _pick_new = [x["name"] for x in ((r.get("data") or {}).get("list") or [])][:10]
+    check("需求：能取到至少 10 件在售商品做搜索抽查", len(_pick_new) >= 10, str(len(_pick_new)))
     _miss_new = []
     for _name in _pick_new:
         _st, r = call("GET", "/api/products?keyword=" + quote(_name))
         _hits = [x["name"] for x in ((r.get("data") or {}).get("list") or [])]
         if _name not in _hits:
             _miss_new.append(_name)
-    check("需求：抽查 10 件新商品都能搜到", not _miss_new, str(_miss_new))
+    check("需求：抽查 10 件在售商品都能搜到", not _miss_new, str(_miss_new))
 
     # 21 个小类都要有货：从分类接口拿全部小类，再把在售商品翻两页收集 subcategory_id
     _st, r = call("GET", "/api/categories?with_subs=1")
@@ -3579,6 +3579,56 @@ def main() -> int:
           isinstance(_tp_rows, list) and bool(_tp_.get("note"))
           and all({"tag", "weight", "share", "products"} <= set(x) for x in _tp_rows)
           if _tp_rows else bool(_tp_.get("note")), str(_tp_)[:130])
+    # ---------------- 第八批：管理员可编辑商品内容 ----------------
+    section("第八批 管理员编辑商品")
+
+    _st, r = call("POST", "/api/products", token=seller_token,
+                  body={"name": "冒烟测试-管理员可编辑", "price": 10, "category_id": 1,
+                        "subcategory_id": 1, "condition": "九成新", "description": "原始描述",
+                        "default_place_id": 2, "images": [], "tags": ["急出"]})
+    _ap = r.get("data") or {}
+    _ap_id = _ap.get("id")
+    check("第八批：卖家先发布一件带标签的商品", bool(_ap_id), str(r)[:120])
+
+    _st, r = call("PUT", f"/api/products/{_ap_id}", token=admin_token,
+                  body={"name": "冒烟测试-管理员已改", "price": 33.5, "category_id": 1,
+                        "subcategory_id": 1, "condition": "八成新",
+                        "description": "管理员改过的描述", "default_place_id": 2,
+                        "images": [], "tags": ["急出", "可小刀"]})
+    _apd = r.get("data") or {}
+    check("第八批：管理员能改别人商品的名称/价格/成色/描述/标签",
+          r.get("code") == 0 and _apd.get("name") == "冒烟测试-管理员已改"
+          and float(_apd.get("price") or 0) == 33.5
+          and _apd.get("condition") == "八成新"
+          and sorted(_apd.get("tags") or []) == ["可小刀", "急出"],
+          str(_apd)[:140])
+
+    _st, r = call("GET", f"/api/products/{_ap_id}")
+    _ap2 = r.get("data") or {}
+    check("第八批：改动落库（再查详情仍是新值）",
+          _ap2.get("name") == "冒烟测试-管理员已改"
+          and _ap2.get("description") == "管理员改过的描述",
+          str(_ap2.get("name")))
+
+    _st, r = call("PUT", f"/api/products/{_ap_id}", token=buyer1,
+                  body={"name": "冒烟测试-越权", "price": 1, "category_id": 1,
+                        "subcategory_id": 1, "condition": "全新", "description": "",
+                        "default_place_id": 2, "images": []})
+    check("第八批：普通用户仍不能改别人的商品（403）",
+          r.get("code") == 403, str(r)[:100])
+
+    _st, r = call("GET", "/api/admin/logs?action=product_update&page_size=5",
+                  token=admin_token)
+    _ap_logs = (r.get("data") or {}).get("list") or []
+    check("第八批：管理员改动记进操作日志并标出「管理员」",
+          any("管理员编辑商品" in (x.get("summary") or "") for x in _ap_logs),
+          str([(x.get("summary") or "")[:16] for x in _ap_logs])[:120])
+
+    _st, r = call("POST", "/api/products", token=admin_token,
+                  body={"name": "冒烟测试-管理员发布", "price": 1, "category_id": 1,
+                        "subcategory_id": 1, "condition": "全新", "description": "",
+                        "default_place_id": 2, "images": []})
+    check("第八批：管理员仍不能发布商品（权限边界不变）", r.get("code") == 403, str(r)[:100])
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 

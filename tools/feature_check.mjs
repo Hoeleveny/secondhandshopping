@@ -2260,8 +2260,14 @@ async function feature20(cdp) {
     body: { target_type: 'post', post_id: post.id, reason: '虚假信息' },
   });
 
-  const myProduct = (await api('GET', '/api/products/mine?status=on_sale&page_size=1',
-    { token: sellerToken })).data.list[0];
+  // 用自己新建的商品做被举报对象（原来抓卖家现成的在售商品，会在演示商品上留下
+  // 一条永不处理的举报，还会污染演示库存——2026-11-12 修正）
+  const myProduct = (await api('POST', '/api/products', {
+    token: sellerToken,
+    body: { name: `自动化测试：被举报商品-${String(Date.now()).slice(-6)}`, price: 12,
+            category_id: 1, subcategory_id: 1, condition: '九成新',
+            description: '举报流程用', default_place_id: 2, images: [] },
+  })).data;
   await api('POST', '/api/reports', {
     token: reporterToken,
     body: { target_type: 'product', product_id: myProduct.id, reason: '虚假信息' },
@@ -7217,6 +7223,87 @@ async function feature69(cdp) {
   await api('DELETE', `/api/products/${created.id}`, { token: sellerToken }).catch(() => null);
 }
 
+/* ================================================================ 功能70 管理员编辑商品（需求⑨） */
+async function feature70(cdp) {
+  console.log('\n===== 功能70 管理员编辑商品内容 =====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const name = `自动化测试-管理员编辑-${String(Date.now()).slice(-6)}`;
+  const created = (await api('POST', '/api/products', {
+    token: sellerToken,
+    body: { name, price: 10, category_id: 1, subcategory_id: 1, condition: '九成新',
+            description: '管理员编辑用例', default_place_id: 2, images: [], tags: ['急出'] },
+  })).data;
+  if (!created) {
+    check('需求⑨：先建一件待编辑的商品', false, '创建失败');
+    return;
+  }
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=products');
+  await waitFor(cdp, `document.querySelectorAll('#ad-list [data-edit]').length > 0`);
+
+  // 只验"有入口"：按关键词筛到这件商品，确认行内有编辑按钮
+  await cdp.eval(`
+    (() => {
+      const k = document.querySelector('#ad-keyword');
+      k.value = ${JSON.stringify(name)};
+      document.querySelector('#ad-search').click();
+    })()`);
+  await waitFor(cdp, `[...document.querySelectorAll('#ad-list tr')]
+    .some(r => r.innerText.includes(${JSON.stringify(name)}))`, { timeout: 8000 });
+  const hasEdit = await cdp.eval(`
+    (() => {
+      const row = [...document.querySelectorAll('#ad-list tr')]
+        .find(r => r.innerText.includes(${JSON.stringify(name)}));
+      return row ? !!row.querySelector('[data-edit]') : false;
+    })()`);
+  check('需求⑨：商品管理每行都有「编辑」按钮', hasEdit === true, String(hasEdit));
+
+  // 点编辑 → 进编辑页，信息已回填
+  await cdp.eval(`
+    (() => {
+      const row = [...document.querySelectorAll('#ad-list tr')]
+        .find(r => r.innerText.includes(${JSON.stringify(name)}));
+      row.querySelector('[data-edit]').click();
+    })()`);
+  await waitFor(cdp, `location.hash.endsWith('/edit')`, { timeout: 8000 });
+  await waitFor(cdp, `!!document.querySelector('#f-price')`);
+  const prefill = await cdp.eval(`
+    (() => ({
+      name: document.querySelector('#f-name').value,
+      price: document.querySelector('#f-price').value,
+      tags: document.querySelector('#f-tags').value,
+      title: document.querySelector('.page-head h1')?.innerText.trim() || '',
+    }))()`);
+  check('需求⑨：管理员点编辑能打开编辑页并回填（名称/价格/标签）',
+    prefill.name === name && Number(prefill.price) === 10 && prefill.tags.includes('急出'),
+    JSON.stringify(prefill));
+  check('需求⑨：页面标题是「编辑商品」（不是发布）',
+    prefill.title.includes('编辑商品'), prefill.title);
+
+  // 改价格 + 描述，保存 → 跳回详情页，新值生效
+  await cdp.eval(`
+    (() => {
+      const price = document.querySelector('#f-price');
+      price.value = '33.5';
+      price.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+  await cdp.eval(`document.querySelector('#btn-submit').click()`);
+  await waitFor(cdp, `location.hash.includes('/product/${created.id}')`, { timeout: 10000 });
+  await waitFor(cdp, `!!document.querySelector('.detail-price')`);
+  const shown = await cdp.eval(`document.querySelector('.detail-price').innerText.trim()`);
+  check('需求⑨：保存后详情页价格已变（33.5）',
+    shown.includes('33.5'), shown);
+
+  const after = (await api('GET', `/api/products/${created.id}`)).data;
+  check('需求⑨：改动确实落库（接口再查也是 33.5）',
+    Number(after.price) === 33.5, String(after.price));
+
+  await cdp.shot(path.join(SHOT_DIR, 'f70-admin-edit.png'));
+  await api('DELETE', `/api/products/${created.id}`, { token: sellerToken }).catch(() => null);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -7286,6 +7373,7 @@ const GROUPS = {
   67: { title: '看过这个的人还看（共视相似）', fn: feature67 },
   68: { title: 'P0 埋点：曝光与结局动作落图', fn: feature68 },
   69: { title: '商品标签：发布 / 展示 / 筛选', fn: feature69 },
+  70: { title: '管理员编辑商品内容', fn: feature70 },
 };
 
 async function main() {

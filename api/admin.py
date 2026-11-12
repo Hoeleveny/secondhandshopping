@@ -589,6 +589,11 @@ def admin_delete_product(pid: int):
     if product is None or product.status == PRODUCT_DELETED:
         return fail("商品不存在", 404)
     product.status = PRODUCT_DELETED
+    # 2026-10-18 第八批：管理员删商品也要留痕（原来这里没有日志，删了查不到是谁干的）
+    import audit
+
+    audit.record("product_delete", "product", product.id,
+                 f"管理员删除商品「{product.name}」（{product.product_code}）")
     db.session.commit()
     return ok(msg="商品已删除")
 

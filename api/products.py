@@ -758,8 +758,11 @@ def update_product(pid: int):
     _replace_images(product, images)
     if tag_list is not None:
         tags_mod.apply(product, tag_list, replace=True)
+    # 管理员改别人的商品时，日志里要能看出来是谁改的（卖家自己改就不加前缀）
+    _by_admin = user.role == ROLE_ADMIN and product.seller_id != user.id
     audit.record("product_update", "product", product.id,
-                 f"编辑商品「{product.name}」（{product.product_code}，¥{product.price}）")
+                 f"{'管理员' if _by_admin else ''}编辑商品「{product.name}」"
+                 f"（{product.product_code}，¥{product.price}）")
     db.session.commit()
     return ok(product.to_dict(detail=True), msg="保存成功")
 

@@ -152,6 +152,7 @@ async function renderProducts(panel) {
                 <td class="muted small">${esc(fmtTime(p.created_at))}</td>
                 <td>
                   <div class="ops">
+                    ${p.status !== 'deleted' ? `<button class="btn btn-sm" data-edit="${p.id}">✏️ 编辑</button>` : ''}
                     ${p.status === 'on_sale' ? `<button class="btn btn-sm" data-off="${p.id}">下架</button>` : ''}
                     ${p.status === 'off_shelf' ? `<button class="btn btn-sm" data-on="${p.id}">重新上架</button>` : ''}
                     ${p.status !== 'deleted' ? `<button class="btn btn-danger btn-sm" data-del="${p.id}">删除</button>` : ''}
@@ -170,6 +171,9 @@ async function renderProducts(panel) {
       el.addEventListener('click', () => changeStatus(el.dataset.on, 'on_sale')));
     listBox.querySelectorAll('[data-del]').forEach(el =>
       el.addEventListener('click', () => removeProduct(el.dataset.del)));
+    // 2026-10-18 第八批：管理员可直接编辑商品内容（走卖家那套编辑页，权限接口层已放行）
+    listBox.querySelectorAll('[data-edit]').forEach(el =>
+      el.addEventListener('click', () => { location.hash = `#/product/${el.dataset.edit}/edit`; }));
 
     renderPagination(pager, {
       page: data.page,
