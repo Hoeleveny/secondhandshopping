@@ -35,10 +35,16 @@ export default {
       <div class="card">
         <div class="detail-wrap">
           <div>
-            <div class="gallery-main" id="gallery-main">
-              ${images.length ? `<img src="${esc(imgUrl(images[0]))}" alt="${esc(product.name)}">`
-                              : `<span>${esc(product.category_icon || '📦')}</span>`}
-            </div>
+      <div class="gallery-shell">
+        <div class="gallery-main" id="gallery-main">
+          ${images.length ? `<img src="${esc(imgUrl(images[0]))}" alt="${esc(product.name)}">`
+                          : `<span>${esc(product.category_icon || '📦')}</span>`}
+        </div>
+        ${images.length > 1 ? `
+          <button type="button" class="gal-nav gal-prev" id="gal-prev" aria-label="上一张" title="上一张（←）">‹</button>
+          <button type="button" class="gal-nav gal-next" id="gal-next" aria-label="下一张" title="下一张（→）">›</button>
+          <span class="gal-count" id="gal-count">1 / ${images.length}</span>` : ''}
+      </div>
             ${images.length > 1 ? `
               <div class="gallery-thumbs" id="thumbs">
                 ${images.map((img, i) => `<img src="${esc(imgUrl(img))}" data-i="${i}" class="${i === 0 ? 'active' : ''}">`).join('')}
@@ -229,25 +235,63 @@ export default {
       reportExposure(0);                     // 详情页首图曝光
     }
     window.addEventListener('pagehide', flushImage, { once: true });
-    // 图片切换
+
+    // 2026-10-18 第十批：图片「上一张 / 下一张」按钮 + 序号 + 键盘（←/→）
+    const galCount = root.querySelector('#gal-count');
+    const galPrev = root.querySelector('#gal-prev');
+    const galNext = root.querySelector('#gal-next');
+    const totalImages = images.length;
+    const syncThumbs = (index) => {
+      root.querySelectorAll('#thumbs img').forEach((t, i) =>
+        t.classList.toggle('active', i === index));
+    };
+    /** 切到第 index 张：夹到合法范围、不循环；停留与曝光埋点跟着走。 */
+    const showImage = (index) => {
+      if (!totalImages) return;
+      const target = Math.max(0, Math.min(totalImages - 1, index));
+      if (target !== imgIndex) {
+        reportImage(imgIndex);          // 结算上一张的停留
+        imgIndex = target;
+        imgSince = Date.now();
+      }
+      const main = root.querySelector('#gallery-main');
+      if (!main) return;
+      main.innerHTML = `<img src="${esc(imgUrl(images[target]))}" alt="">`;
+      main.dataset.index = String(target);   // 供收藏/下单记录"停在哪张图"
+      syncThumbs(target);
+      if (galCount) galCount.textContent = `${target + 1} / ${totalImages}`;
+      if (galPrev) galPrev.disabled = target <= 0;
+      if (galNext) galNext.disabled = target >= totalImages - 1;
+      reportExposure(target);                // 每次切图都记一次曝光
+    };
+    if (galPrev) galPrev.addEventListener('click', () => showImage(imgIndex - 1));
+    if (galNext) galNext.addEventListener('click', () => showImage(imgIndex + 1));
+    if (totalImages) {                      // 初始停在头图：上一张置灰、序号就位
+      if (galPrev) galPrev.disabled = true;
+      if (galNext) galNext.disabled = totalImages <= 1;
+      if (galCount) galCount.textContent = `1 / ${totalImages}`;
+    }
+    const onGalleryKey = (event) => {
+      if (!mainImg || !mainImg.isConnected
+          || document.querySelector('#gallery-main') !== mainImg) {
+        document.removeEventListener('keydown', onGalleryKey);   // 已经离开当前商品
+        return;
+      }
+      if (document.querySelector('.modal-mask, .img-zoom')) return;   // 弹窗/放大时不抢键
+      const tag = (document.activeElement && document.activeElement.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      if (event.key === 'ArrowLeft') { event.preventDefault(); showImage(imgIndex - 1); }
+      else if (event.key === 'ArrowRight') { event.preventDefault(); showImage(imgIndex + 1); }
+    };
+    if (totalImages > 1) document.addEventListener('keydown', onGalleryKey);
+
+    // 图片切换（点缩略图）
     const thumbs = root.querySelector('#thumbs');
     if (thumbs) {
       thumbs.addEventListener('click', (event) => {
         const img = event.target.closest('img[data-i]');
         if (!img) return;
-        const index = Number(img.dataset.i);
-        // 切换前先把上一张的停留结算掉
-        if (index !== imgIndex) {
-          reportImage(imgIndex);
-          imgIndex = index;
-          imgSince = Date.now();
-        }
-        const main = root.querySelector('#gallery-main');
-        main.innerHTML = `<img src="${esc(imgUrl(images[index]))}" alt="">`;
-        main.dataset.index = String(index);   // 供收藏/下单记录"停在哪张图"
-        reportExposure(index);                // 每次切图都记一次曝光
-        thumbs.querySelectorAll('img').forEach(el => el.classList.remove('active'));
-        img.classList.add('active');
+        showImage(Number(img.dataset.i));
       });
     }
 

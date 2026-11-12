@@ -7385,6 +7385,97 @@ async function feature71(cdp) {
   await cdp.go('/search');
 }
 
+/* ================================================================ 功能72 详情页图片翻页按钮（需求⑪） */
+async function feature72(cdp) {
+  console.log('\n===== 功能72 详情页图片翻页按钮 =====');
+
+  // 找一件有多张图（≥2）的在售商品
+  const pool = (await api('GET', '/api/products?page_size=40')).data?.list || [];
+  const target = pool.find(p => (p.images || []).length >= 2);
+  if (!target) {
+    check('需求⑪：先找到一件有多张图的商品', false, '没有多图商品');
+    return;
+  }
+  const total = target.images.length;
+
+  await cdp.logout();
+  await cdp.go(`/product/${target.id}`);
+  await waitFor(cdp, `!!document.querySelector('#gal-prev') && !!document.querySelector('#gal-next')`);
+
+  const read = () => cdp.eval(`
+    (() => {
+      const box = document.querySelector('#gallery-main');
+      const img = box ? box.querySelector('img') : null;
+      const thumbs = [...document.querySelectorAll('#thumbs img')];
+      return {
+        count: (document.querySelector('#gal-count') || {}).innerText || '',
+        prevDisabled: !!document.querySelector('#gal-prev')?.disabled,
+        nextDisabled: !!document.querySelector('#gal-next')?.disabled,
+        index: Number(box?.dataset.index ?? -1),
+        src: img ? img.getAttribute('src') : '',
+        activeThumb: thumbs.findIndex(x => x.classList.contains('active')),
+      };
+    })()`);
+
+  const first = await read();
+  check(`需求⑪：多图商品显示「上一张/下一张」与序号（1 / ${total}）`,
+    first.count === `1 / ${total}` && first.prevDisabled === true && first.nextDisabled === false,
+    JSON.stringify(first));
+  check('需求⑪：初始停在头图，缩略图第 1 张高亮',
+    first.index === 0 && first.activeThumb === 0, JSON.stringify(first));
+
+  await cdp.eval(`document.querySelector('#gal-next').click()`);
+  await sleep(300);
+  const second = await read();
+  check('需求⑪：点「下一张」切到第 2 张（序号、主图、缩略图同步）',
+    second.count === `2 / ${total}` && second.index === 1
+    && second.activeThumb === 1 && second.src !== first.src, JSON.stringify(second));
+
+  // 一路点到末张：末张「下一张」置灰，再点也不会越过
+  await cdp.eval(`
+    (() => {
+      for (let i = 0; i < 12; i++) {
+        const btn = document.querySelector('#gal-next');
+        if (btn && !btn.disabled) btn.click();
+      }
+    })()`);
+  await sleep(300);
+  const last = await read();
+  check('需求⑪：翻到末张后「下一张」置灰（不循环）',
+    last.count === `${total} / ${total}` && last.nextDisabled === true,
+    JSON.stringify(last));
+  await cdp.eval(`document.querySelector('#gal-next').click()`);
+  await sleep(200);
+  const stillLast = await read();
+  check('需求⑪：末张再点「下一张」不会回绕',
+    stillLast.index === total - 1, JSON.stringify(stillLast));
+
+  await cdp.eval(`document.querySelector('#gal-prev').click()`);
+  await sleep(300);
+  const back = await read();
+  check('需求⑪：点「上一张」能往回翻',
+    back.count === `${total - 1} / ${total}` && back.index === total - 2, JSON.stringify(back));
+
+  // 键盘 →
+  await cdp.eval(`document.activeElement && document.activeElement.blur()`);
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+  await sleep(300);
+  const keyed = await read();
+  check('需求⑪：键盘 → 也能翻到下一张',
+    keyed.index === back.index + 1, JSON.stringify(keyed));
+
+  // 点第 1 张缩略图 → 回到头图，序号同步
+  await cdp.eval(`document.querySelector('#thumbs img[data-i="0"]').click()`);
+  await sleep(300);
+  const thumbBack = await read();
+  check('需求⑪：点缩略图后序号与按钮状态同步',
+    thumbBack.count === `1 / ${total}` && thumbBack.prevDisabled === true,
+    JSON.stringify(thumbBack));
+
+  await cdp.shot(path.join(SHOT_DIR, 'f72-gallery-nav.png'));
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -7456,6 +7547,7 @@ const GROUPS = {
   69: { title: '商品标签：发布 / 展示 / 筛选', fn: feature69 },
   70: { title: '管理员编辑商品内容', fn: feature70 },
   71: { title: '搜索页标签排版', fn: feature71 },
+  72: { title: '详情页图片翻页按钮', fn: feature72 },
 };
 
 async function main() {
