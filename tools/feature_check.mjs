@@ -7047,6 +7047,49 @@ async function feature66(cdp) {
   await sleep(300);
 }
 
+/* ================================================================ 功能67 看过这个的人还看（共视相似） */
+async function feature67(cdp) {
+  console.log('\n===== 功能67 看过这个的人还看（Amazon item-to-item 共视） =====');
+
+  await cdp.go('/product/1');
+  await waitFor(cdp, `document.querySelectorAll('#similar-box .product-card').length > 0`,
+    { timeout: 12000 });
+  await sleep(400);
+  const info = await cdp.eval(`
+    (() => {
+      const box = document.querySelector('#similar-box');
+      if (!box) return { hasBox: false };
+      const cards = [...box.querySelectorAll('.product-card')];
+      return {
+        hasBox: true,
+        title: box.querySelector('.card-head h2')?.innerText || '',
+        sub: box.querySelector('.card-head span')?.innerText || '',
+        cards: cards.length,
+        firstId: cards.length ? cards[0].dataset.product : '',
+        hasCover: cards.some(c => !!c.querySelector('.pc-cover')),
+      };
+    })()`);
+  check('需求④：商品详情页出现「看过这个的人还看」区块',
+    info.hasBox === true && info.title.includes('还看'), JSON.stringify(info).slice(0, 120));
+  check('需求④：区块里最多 6 张商品卡，且卡片带封面',
+    info.cards > 0 && info.cards <= 6 && info.hasCover === true, JSON.stringify(info.cards));
+  check('需求④：区块头部给出推荐依据（共视轨迹 / 同类回落）',
+    info.sub.length > 0 && (info.sub.includes('轨迹') || info.sub.includes('回落')), info.sub);
+
+  // 滚到底再截图，否则「还看」区块在首屏之外，截出来看不到
+  await cdp.eval(`window.scrollTo(0, document.body.scrollHeight)`);
+  await sleep(400);
+  await cdp.shot(path.join(SHOT_DIR, 'f67-similar.png'));
+  await cdp.eval(`window.scrollTo(0, 0)`);
+
+  const target = info.firstId;
+  await cdp.eval(`document.querySelector('#similar-box .product-card').click()`);
+  await waitFor(cdp, `location.hash.includes('/product/${target}')`, { timeout: 8000 });
+  const hash = await cdp.eval('location.hash');
+  check('需求④：点相似商品卡片能进它的详情页',
+    hash.includes(`/product/${target}`), hash);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -7113,6 +7156,7 @@ const GROUPS = {
   64: { title: '按对象停留（商品详情 / 商家主页）', fn: feature64 },
   65: { title: '图像感知偏好（色彩统计 + 近似提示）', fn: feature65 },
   66: { title: '商品列表每页 24 件 + 一行 6 张（本批需求）', fn: feature66 },
+  67: { title: '看过这个的人还看（共视相似）', fn: feature67 },
 };
 
 async function main() {

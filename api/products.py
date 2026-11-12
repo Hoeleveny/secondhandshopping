@@ -278,6 +278,91 @@ def recommend_products():
     })
 
 
+@bp.get("/products/<int:pid>/similar")
+def similar_products(pid: int):
+    """看过这个的人还看（2026-10-18 第四批，参考 Amazon item-to-item 协同过滤）。
+
+    相似度口径（用户拍板）：同用户 30 分钟内先后浏览算一次共视，同一会话同一对只算一次；
+    `sim = 共视数 / √(各自会话数乘积)`（余弦归一，压掉热门与"什么都看"的偏置）。
+    只在售、排除自己与已拉黑作者；相似不足时依次回落「同小类 → 同大类 → 热门」。
+    """
+    from models import UserActivity
+
+    import similar
+
+    limit = arg_int("limit", 6) or 6
+    limit = max(1, min(limit, 12))
+
+    base = Product.query.get(pid)
+    if base is None or base.status == PRODUCT_DELETED:
+        return fail("商品不存在或已下架", 404)
+    viewer = current_user()
+    hidden = hidden_author_ids(viewer.id) if viewer else set()
+
+    rows = (db.session.query(UserActivity.user_id, UserActivity.page,
+                             UserActivity.created_at)
+            .filter(UserActivity.kind == "page",
+                    UserActivity.page.like("/product/%"))
+            .all())
+    parsed = []
+    for uid, page, at in rows:
+        ref = similar.parse_page(page)
+        if ref is not None:
+            parsed.append((uid, ref, at))
+    co, pop = similar.build_stats(parsed)
+
+    items, basis = [], {}
+    for other_id, score, cnt in similar.similarity(pid, co, pop, limit=limit * 3):
+        prod = Product.query.get(other_id)
+        if prod is None or prod.status != PRODUCT_ON_SALE or prod.id == pid:
+            continue
+        if prod.seller_id in hidden:
+            continue
+        items.append(prod)
+        basis[prod.id] = {"why": "共视", "score": score, "co": cnt}
+        if len(items) >= limit:
+            break
+
+    # 回落：共视样本太稀时，用同类/热门补齐（推荐位不能空着）
+    picked = {p.id for p in items} | {pid}
+    for label, cond in (("同小类", Product.subcategory_id == base.subcategory_id),
+                        ("同大类", Product.category_id == base.category_id)):
+        need = limit - len(items)
+        if need <= 0:
+            break
+        for prod in (Product.query.filter(Product.status == PRODUCT_ON_SALE, cond,
+                                          Product.id != pid)
+                     .order_by(Product.views.desc(), Product.id.desc())
+                     .limit(need + 10).all()):
+            if prod.id in picked or prod.seller_id in hidden:
+                continue
+            items.append(prod)
+            basis[prod.id] = {"why": label}
+            picked.add(prod.id)
+            if len(items) >= limit:
+                break
+    if len(items) < limit:
+        for prod in (Product.query.filter(Product.status == PRODUCT_ON_SALE,
+                                          Product.id != pid)
+                     .order_by(Product.views.desc(), Product.id.desc())
+                     .limit(limit + 10).all()):
+            if prod.id in picked or prod.seller_id in hidden:
+                continue
+            items.append(prod)
+            basis[prod.id] = {"why": "热门"}
+            if len(items) >= limit:
+                break
+
+    top_reason = "按同类浏览轨迹推荐" if items and basis.get(items[0].id, {}).get("why") == "共视" \
+        else "相似样本不足，按同类/热门回落"
+    return ok({
+        "list": [p.to_dict() for p in items],
+        "basis": {str(k): v for k, v in basis.items()},
+        "reason": top_reason,
+        "co_view_pairs": len(co),
+    })
+
+
 @bp.get("/products/<int:pid>")
 def product_detail(pid: int):
     product = Product.query.get(pid)

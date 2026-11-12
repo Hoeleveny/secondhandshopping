@@ -4,7 +4,7 @@
 import { api } from '../api.js';
 import { store } from '../store.js';
 import { ensureMeta, ensurePlaces } from '../data.js';
-import { reviewItemHtml, commentTextHtml } from '../components.js';
+import { reviewItemHtml, commentTextHtml, productCardHtml, bindProductCards } from '../components.js';
 import {
   confirmDialog, emptyHtml, esc, fmtPrice, fmtTime, go, imgUrl,
   loadingHtml, openModal, ratingBadgeHtml, statusFlagHtml, toast,
@@ -233,8 +233,37 @@ export default {
     }
 
     renderActions(root, product, id);
+    // 2026-10-18 第四批：看过这个的人还看（Amazon item-to-item 共视相似度）
+    loadSimilarProducts(root, id);
   },
 };
+
+/* ------------------------------------------------------------------ 看过这个的人还看 */
+/* 推荐位失败一律静默：它只是详情页的附加区块，不能影响商品本身能否打开。 */
+async function loadSimilarProducts(root, id) {
+  let data;
+  try {
+    data = await api.get(`/api/products/${id}/similar?limit=6`);
+  } catch (err) {
+    return;
+  }
+  const list = (data && data.list) || [];
+  if (!list.length) return;
+
+  const box = document.createElement('section');
+  box.className = 'card';
+  box.id = 'similar-box';
+  box.innerHTML = `
+    <div class="card-head">
+      <h2>看过这个的人还看</h2>
+      <span class="muted small">${esc(data.reason || '')} · 共 ${list.length} 件</span>
+    </div>
+    <div class="grid-cards" id="similar-list">
+      ${list.map(productCardHtml).join('')}
+    </div>`;
+  root.appendChild(box);
+  bindProductCards(box);
+}
 
 /* ------------------------------------------------------------------ 操作区 */
 async function renderActions(root, product, id) {

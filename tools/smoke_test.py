@@ -3368,6 +3368,57 @@ def main() -> int:
     check("修复：最新一条必须能拿到（旧实现超过 300 条后只能看到最旧的）",
           bool(_thread) and "长会话 304" in ((_thread[-1] or {}).get("content") or ""),
           str((_thread[-1] if _thread else {}).get("content"))[:60])
+    # ---------------- 第四批：看过这个的人还看（Amazon item-to-item 共视） ----------------
+    section("第四批 共视相似商品")
+
+    import similar as _sim
+    from datetime import datetime as _dt, timedelta as _td
+
+    _b = _dt(2026, 10, 18, 10, 0, 0)
+    _rows = [
+        (1, 100, _b), (1, 101, _b + _td(minutes=1)), (1, 100, _b + _td(minutes=2)),
+        (2, 100, _b + _td(minutes=3)), (2, 101, _b + _td(minutes=4)),
+        (3, 100, _b + _td(minutes=5)), (3, 102, _b + _td(minutes=6)),
+        (4, 100, _b), (4, 101, _b + _td(minutes=40)),      # 超 30 分钟：不算共视
+    ]
+    _co, _pop = _sim.build_stats(_rows)
+    check("第四批：共视只统计 30 分钟内的先后浏览（超时的那个用户不算）",
+          _co.get((100, 101)) == 2 and _co.get((100, 102)) == 1, str(dict(_co)))
+    check("第四批：会话数按「同会话同商品只算一次」计",
+          _pop.get(100) == 4 and _pop.get(101) == 3 and _pop.get(102) == 1, str(dict(_pop)))
+    _ranked = _sim.similarity(100, _co, _pop, limit=5)
+    check("第四批：相似度用余弦归一（2/√(4×3)=0.5774 > 1/√(4×1)=0.5）",
+          _ranked[0][0] == 101 and abs(_ranked[0][1] - 0.5774) < 1e-4
+          and _ranked[1][0] == 102 and abs(_ranked[1][1] - 0.5) < 1e-4, str(_ranked))
+    check("第四批：路径解析只认 /product/<id>",
+          _sim.parse_page("/product/12") == 12
+          and _sim.parse_page("/seller/4") is None
+          and _sim.parse_page("/post/3") is None, "")
+
+    _st, r = call("GET", "/api/products/1/similar?limit=6")
+    _sd = r.get("data") or {}
+    _slist = _sd.get("list") or []
+    check("第四批：相似商品接口返回列表（共视 + 同类回落）",
+          r.get("code") == 0 and bool(_slist), str(_sd)[:120])
+    check("第四批：最多 6 件、且不含商品自己",
+          len(_slist) <= 6 and all(x["id"] != 1 for x in _slist),
+          str([x["id"] for x in _slist]))
+    check("第四批：推荐的商品都在售",
+          all(x.get("status") == "on_sale" for x in _slist),
+          str([(x["id"], x.get("status")) for x in _slist]))
+    check("第四批：给出推荐依据与共视对数",
+          bool(_sd.get("reason")) and (_sd.get("co_view_pairs") or 0) > 0,
+          f"{_sd.get('reason')} / {_sd.get('co_view_pairs')}")
+    check("第四批：每件都标了推荐来源（共视/同小类/同大类/热门）",
+          all((_sd.get("basis") or {}).get(str(x["id"]), {}).get("why")
+              in ("共视", "同小类", "同大类", "热门") for x in _slist),
+          str(_sd.get("basis"))[:140])
+
+    _st, r = call("GET", "/api/products/1/similar?limit=3")
+    check("第四批：limit 生效（最多 3 件）",
+          len((r.get("data") or {}).get("list") or []) <= 3, "")
+    _st, r = call("GET", "/api/products/999999/similar")
+    check("第四批：商品不存在时返回错误", r.get("code") != 0, str(r)[:100])
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 
