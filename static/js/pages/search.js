@@ -104,16 +104,20 @@ export default {
             </select>
           </div>
           <div class="form-row">
-            <label>商品标签</label>
-            <div id="tag-filter" class="row" style="flex-wrap:wrap;gap:6px"></div>
-            <div class="hint">点标签叠加筛选；再点一次取消（来自在售商品的热门标签）</div>
-          </div>
-          <div class="form-row">
             <label>排序</label>
             <select class="select" id="f-sort">
               ${SORTS.map(s => `<option value="${s.value}" ${state.sort === s.value ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}
             </select>
           </div>
+        </div>
+        <!-- 2026-10-18 第九批：标签独立成行、跨满宽度（原来塞在 4 列网格里会把整行撑很高） -->
+        <div class="filter-tags" id="tag-block">
+          <div class="filter-tags-head">
+            <span class="small">商品标签</span>
+            <span class="muted small">点一下筛选，再点取消</span>
+            <button type="button" class="link-btn" id="tag-toggle" hidden></button>
+          </div>
+          <div id="tag-filter" class="tag-chips-row"></div>
         </div>
         <div class="row-between mt-8">
           <span class="muted small" id="result-count">正在查询…</span>
@@ -135,16 +139,32 @@ export default {
     const maxInput = $('#f-max-price');
     const presetSelect = $('#f-price');
 
-    /* ---------- 2026-10-18 第七批：热门标签 chips ---------- */
+    /* ---------- 2026-10-18 第七批/第九批：热门标签 chips（独立成行，默认折叠 12 个） ---------- */
     const tagFilter = $('#tag-filter');
+    const tagToggle = $('#tag-toggle');
+    const TAG_COLLAPSED = 12;
     let hotTags = [];
+    let tagExpanded = false;
     function renderTagChips() {
-      tagFilter.innerHTML = hotTags.length
-        ? hotTags.map(t => `<button type="button"
+      let shown = tagExpanded ? hotTags.slice() : hotTags.slice(0, TAG_COLLAPSED);
+      // 折叠状态下如果当前选中的标签排在 12 名之外，也把它提到第一位显示，避免"选中了却看不见"
+      if (!tagExpanded && state.tag && !shown.some(t => t.tag === state.tag)) {
+        const picked = hotTags.find(t => t.tag === state.tag);
+        if (picked) shown = [picked, ...shown.slice(0, TAG_COLLAPSED - 1)];
+      }
+      tagFilter.innerHTML = shown.length
+        ? shown.map(t => `<button type="button"
               class="tag-chip ${state.tag === t.tag ? 'active' : ''}"
               data-filter-tag="${esc(t.tag)}">${esc(t.tag)} ${t.count}</button>`).join('')
         : '<span class="muted small">还没有商品打标签</span>';
+      const rest = hotTags.length - TAG_COLLAPSED;
+      tagToggle.hidden = rest <= 0;
+      tagToggle.textContent = tagExpanded ? '收起 ▴' : `展开全部（还有 ${rest} 个）`;
     }
+    tagToggle.addEventListener('click', () => {
+      tagExpanded = !tagExpanded;
+      renderTagChips();
+    });
     api.get('/api/products/tags').then((d) => {
       hotTags = d.tags || [];
       if (state.tag && !hotTags.some(t => t.tag === state.tag)) {

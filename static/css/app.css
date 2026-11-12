@@ -909,3 +909,11 @@
   color: var(--text-sub); cursor: pointer; transition: border-color .15s, color .15s; }
 .tag-chip:hover { border-color: var(--primary); color: var(--primary); }
 .tag-chip.active { border-color: var(--primary); color: var(--primary); background: var(--surface); }
+/* 2026-10-18 第九批：搜索页「商品标签」独立成行（原来塞在 4 列网格里会把整行撑高、和右侧列错位） */
+.filter-tags { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border); }
+.filter-tags-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.filter-tags-head .link-btn { margin-left: auto; background: none; border: 0; padding: 0;
+  color: var(--primary); cursor: pointer; font-size: 12px; }
+.filter-tags-head .link-btn[hidden] { display: none; }
+.tag-chips-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-chips-row .tag-chip { margin: 0; }

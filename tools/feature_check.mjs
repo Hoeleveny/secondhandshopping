@@ -7304,6 +7304,87 @@ async function feature70(cdp) {
   await api('DELETE', `/api/products/${created.id}`, { token: sellerToken }).catch(() => null);
 }
 
+/* ================================================================ 功能71 搜索页标签排版（需求⑩） */
+async function feature71(cdp) {
+  console.log('\n===== 功能71 搜索页「商品标签」排版 =====');
+
+  await cdp.logout();
+  await cdp.go('/search');
+  await waitFor(cdp, `document.querySelectorAll('#tag-filter [data-filter-tag]').length > 0`);
+
+  // ① 结构：标签区不在 4 列筛选网格里，而是网格下方独占一行
+  const geo = await cdp.eval(`
+    (() => {
+      const block = document.querySelector('#tag-block');
+      const grid = document.querySelector('.form-grid');
+      const b = block.getBoundingClientRect();
+      const g = grid.getBoundingClientRect();
+      return {
+        insideGrid: !!document.querySelector('.form-grid #tag-filter'),
+        blockTop: Math.round(b.top),
+        gridBottom: Math.round(g.bottom),
+        blockW: Math.round(b.width),
+        gridW: Math.round(g.width),
+        overflow: block.scrollWidth - block.clientWidth,
+      };
+    })()`);
+  check('需求⑩：标签区已移出筛选网格（不再是网格里的一个格子）',
+    geo.insideGrid === false, JSON.stringify(geo));
+  check('需求⑩：标签区在筛选网格下方、跨满整行（宽度≈网格宽度）',
+    geo.blockTop >= geo.gridBottom - 2 && geo.blockW >= geo.gridW - 4,
+    JSON.stringify(geo));
+  check('需求⑩：标签不横向溢出容器', geo.overflow <= 2, String(geo.overflow));
+
+  // ② 折叠：默认只显示 12 个 + 「展开全部」
+  const collapsed = await cdp.eval(`
+    (() => ({
+      chips: document.querySelectorAll('#tag-filter [data-filter-tag]').length,
+      toggle: (() => { const t = document.querySelector('#tag-toggle');
+        return { hidden: t.hidden, text: t.innerText.trim() }; })(),
+    }))()`);
+  check('需求⑩：默认折叠为 12 个标签，并显示「展开全部」',
+    collapsed.chips === 12 && collapsed.toggle.hidden === false
+    && collapsed.toggle.text.includes('展开全部'), JSON.stringify(collapsed));
+
+  // ③ 展开 → 全部标签出现，按钮变「收起」
+  await cdp.eval(`document.querySelector('#tag-toggle').click()`);
+  await sleep(300);
+  const expanded = await cdp.eval(`
+    (() => ({
+      chips: document.querySelectorAll('#tag-filter [data-filter-tag]').length,
+      toggle: document.querySelector('#tag-toggle').innerText.trim(),
+    }))()`);
+  check('需求⑩：展开后显示全部标签且按钮变「收起」',
+    expanded.chips > 12 && expanded.toggle.includes('收起'), JSON.stringify(expanded));
+
+  // ④ 点标签仍能筛选：高亮 + 结果数与接口一致
+  const picked = await cdp.eval(`
+    (() => {
+      const chip = document.querySelector('#tag-filter [data-filter-tag]');
+      chip.click();
+      return chip.dataset.filterTag;
+    })()`);
+  await waitFor(cdp, `location.hash.includes('tag=')`);
+  await sleep(1200);
+  const filtered = await cdp.eval(`
+    (() => ({
+      hash: decodeURIComponent(location.hash),
+      active: (document.querySelector('#tag-filter .tag-chip.active') || {}).innerText || '',
+      count: document.querySelector('#result-count').innerText.trim(),
+      cards: document.querySelectorAll('#result-area .product-card').length,
+    }))()`);
+  const apiCount = (await api('GET', `/api/products?tag=${encodeURIComponent(picked)}&page_size=1`))
+    .data.total;
+  check('需求⑩：点标签能筛选，且当前标签高亮',
+    filtered.hash.includes(picked) && filtered.active.includes(picked),
+    JSON.stringify({ hash: filtered.hash, active: filtered.active }));
+  check('需求⑩：筛选结果数与接口一致',
+    filtered.count.includes(String(apiCount)), `${filtered.count} vs ${apiCount}`);
+
+  await cdp.shot(path.join(SHOT_DIR, 'f71-tag-layout.png'));
+  await cdp.go('/search');
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -7374,6 +7455,7 @@ const GROUPS = {
   68: { title: 'P0 埋点：曝光与结局动作落图', fn: feature68 },
   69: { title: '商品标签：发布 / 展示 / 筛选', fn: feature69 },
   70: { title: '管理员编辑商品内容', fn: feature70 },
+  71: { title: '搜索页标签排版', fn: feature71 },
 };
 
 async function main() {
