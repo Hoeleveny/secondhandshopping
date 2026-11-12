@@ -115,6 +115,14 @@ def list_products():
     if seller_id:
         q = q.filter(Product.seller_id == seller_id)
 
+    # 2026-10-18 第七批：按标签筛（`?tag=考研`）；标签存在 product_tags 表里，走子查询
+    tag = arg_str("tag")
+    if tag:
+        from models import ProductTag
+
+        q = q.filter(Product.id.in_(
+            db.session.query(ProductTag.product_id).filter(ProductTag.tag == tag)))
+
     sort = arg_str("sort") or "newest"
     order = SORTS.get(sort, SORTS["newest"])()
 
@@ -367,6 +375,20 @@ def recommend_products():
         "as_of": as_of.strftime("%Y-%m-%d %H:%M:%S") if as_of else None,
         "candidates": len(cand),
     })
+
+
+@bp.get("/products/tags")
+def popular_tags():
+    """热门商品标签（按在售商品数排序）——搜索页的标签筛选 chips 与发布页的预设词用它。"""
+    from models import ProductTag
+
+    rows = (db.session.query(ProductTag.tag, func.count(ProductTag.id))
+            .join(Product, Product.id == ProductTag.product_id)
+            .filter(Product.status == PRODUCT_ON_SALE)
+            .group_by(ProductTag.tag)
+            .order_by(func.count(ProductTag.id).desc(), ProductTag.tag.asc())
+            .limit(24).all())
+    return ok({"tags": [{"tag": tag, "count": count} for tag, count in rows]})
 
 
 @bp.get("/products/<int:pid>/similar")
@@ -673,9 +695,18 @@ def create_product():
     if user.role == ROLE_ADMIN:
         return fail("管理员不发布商品，请使用普通账号", 403)
 
-    data, error = _parse_product_body(json_body())
+    body = json_body()
+    data, error = _parse_product_body(body)
     if error:
         return fail(error)
+
+    # 2026-10-18 第七批：商品标签（≤5 个、每个 ≤8 字）
+    import tags as tags_mod
+
+    tag_list = tags_mod.normalize(body.get("tags"))
+    tag_error = tags_mod.validate(tag_list)
+    if tag_error:
+        return fail(tag_error)
 
     images = data.pop("images")
     product = Product(seller_id=user.id, status=PRODUCT_ON_SALE, views=0, **data)
@@ -684,6 +715,7 @@ def create_product():
     db.session.add(product)
     db.session.flush()
     _replace_images(product, images)
+    tags_mod.apply(product, tag_list, replace=True)
     audit.record("product_create", "product", product.id,
                  f"发布商品「{product.name}」（{product.product_code}，¥{product.price}）")
     db.session.commit()
@@ -701,9 +733,20 @@ def update_product(pid: int):
     if user.role != ROLE_ADMIN and product.seller_id != user.id:
         return fail("只能编辑自己发布的商品", 403)
 
-    data, error = _parse_product_body(json_body())
+    body = json_body()
+    data, error = _parse_product_body(body)
     if error:
         return fail(error)
+
+    # 2026-10-18 第七批：只有前端明确传了 tags 才整体替换（不传就不动已有标签）
+    import tags as tags_mod
+
+    tag_list = None
+    if "tags" in body:
+        tag_list = tags_mod.normalize(body.get("tags"))
+        tag_error = tags_mod.validate(tag_list)
+        if tag_error:
+            return fail(tag_error)
 
     # 不可变约定：编辑接口忽略并丢弃前端可能传来的 product_code / seller_seq，
     # _parse_product_body 只挑已知字段，所以这里天然不会被覆盖。
@@ -713,6 +756,8 @@ def update_product(pid: int):
     for key, value in data.items():
         setattr(product, key, value)
     _replace_images(product, images)
+    if tag_list is not None:
+        tags_mod.apply(product, tag_list, replace=True)
     audit.record("product_update", "product", product.id,
                  f"编辑商品「{product.name}」（{product.product_code}，¥{product.price}）")
     db.session.commit()

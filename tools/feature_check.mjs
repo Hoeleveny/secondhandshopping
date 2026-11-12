@@ -7147,6 +7147,76 @@ async function feature68(cdp) {
   await api('DELETE', `/api/favorites/${target.id}`, { token: buyerToken }).catch(() => null);
 }
 
+/* ================================================================ 功能69 商品标签（发布 / 展示 / 筛选） */
+async function feature69(cdp) {
+  console.log('\n===== 功能69 商品标签：发布 / 展示 / 筛选 =====');
+
+  const sellerToken = await login('seller1', '123456', 'seller');
+  const tag = '期末清仓';
+  const created = (await api('POST', '/api/products', {
+    token: sellerToken,
+    body: {
+      name: `自动化测试-标签商品-${String(Date.now()).slice(-6)}`, price: 12,
+      category_id: 1, subcategory_id: 1, condition: '九成新', description: '标签用例',
+      default_place_id: 2, images: [], tags: [tag, '宿舍必备'],
+    },
+  })).data;
+  if (!created) {
+    check('需求⑥：先建一件带标签的商品', false, '创建失败');
+    return;
+  }
+
+  await cdp.loginAs('seller1', '123456', 'seller');
+  await cdp.go('/publish');
+  await waitFor(cdp, `!!document.querySelector('#f-tags')`);
+  await sleep(400);
+  const form = await cdp.eval(`
+    (() => ({
+      hasInput: !!document.querySelector('#f-tags'),
+      presets: document.querySelectorAll('#tag-presets [data-tag]').length,
+    }))()`);
+  check('需求⑥：发布页有标签输入框与预设词按钮',
+    form.hasInput && form.presets >= 4, JSON.stringify(form));
+
+  await cdp.go(`/product/${created.id}`);
+  await waitFor(cdp, `document.querySelectorAll('.tag-chip[data-tag]').length > 0`);
+  await sleep(300);
+  const detail = await cdp.eval(`
+    (() => ({ tags: [...document.querySelectorAll('.tag-chip[data-tag]')]
+      .map(b => b.innerText.trim()) }))()`);
+  check('需求⑥：商品详情页展示标签 chips',
+    detail.tags.includes(tag), JSON.stringify(detail.tags));
+
+  await cdp.eval(`
+    (() => {
+      const btn = [...document.querySelectorAll('.tag-chip[data-tag]')]
+        .find(b => b.innerText.includes(${JSON.stringify(tag)}));
+      if (btn) btn.click();
+    })()`);
+  await waitFor(cdp, `location.hash.includes('/search')`);
+  await sleep(900);
+  const hash = await cdp.eval('location.hash');
+  check('需求⑥：点标签跳到搜索页并带上 tag 条件', hash.includes('tag='), hash);
+
+  await waitFor(cdp, `document.querySelectorAll('#tag-filter [data-filter-tag]').length > 0`,
+    { timeout: 8000 });
+  await sleep(600);
+  const search = await cdp.eval(`
+    (() => ({
+      chips: document.querySelectorAll('#tag-filter [data-filter-tag]').length,
+      active: (document.querySelector('#tag-filter .tag-chip.active') || {}).innerText || '',
+      cards: [...document.querySelectorAll('#result-area .product-card')]
+        .map(c => Number(c.dataset.product)),
+    }))()`);
+  check('需求⑥：搜索页有标签筛选 chips 且当前标签高亮',
+    search.chips > 0 && search.active.includes(tag), JSON.stringify(search.active));
+  check('需求⑥：按标签筛选后结果包含这件商品',
+    search.cards.includes(created.id), JSON.stringify(search.cards.slice(0, 6)));
+
+  await cdp.shot(path.join(SHOT_DIR, 'f69-tags.png'));
+  await api('DELETE', `/api/products/${created.id}`, { token: sellerToken }).catch(() => null);
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -7215,6 +7285,7 @@ const GROUPS = {
   66: { title: '商品列表每页 24 件 + 一行 6 张（本批需求）', fn: feature66 },
   67: { title: '看过这个的人还看（共视相似）', fn: feature67 },
   68: { title: 'P0 埋点：曝光与结局动作落图', fn: feature68 },
+  69: { title: '商品标签：发布 / 展示 / 筛选', fn: feature69 },
 };
 
 async function main() {

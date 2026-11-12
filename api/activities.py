@@ -677,6 +677,32 @@ def activities_profile():
         "empty": not product_rows,
     }
 
+    # ⑯ 商品标签偏好（2026-10-18 第七批）：按标签归并商品偏好分，回答"他最在意哪类标签"
+    from models import ProductTag
+
+    _rows_by_pid = {x["product_id"]: x for x in product_rows}
+    tag_weight, tag_products = {}, {}
+    if _rows_by_pid:
+        for row in ProductTag.query.filter(
+                ProductTag.product_id.in_(_rows_by_pid)).all():
+            item = _rows_by_pid.get(row.product_id)
+            if item is None:
+                continue
+            tag_weight[row.tag] = tag_weight.get(row.tag, 0.0) + item["score"]
+            tag_products[row.tag] = tag_products.get(row.tag, 0) + 1
+    _total_tag_w = sum(tag_weight.values())
+    _tag_rows = sorted(
+        ({"tag": k, "weight": round(v, 2),
+          "share": round(v / _total_tag_w, 3) if _total_tag_w else 0.0,
+          "products": tag_products[k]} for k, v in tag_weight.items()),
+        key=lambda x: (-x["weight"], x["tag"]))
+    tag_pref = {
+        "top": _tag_rows[:5],
+        "count": len(_tag_rows),
+        "note": "标签偏好分＝该标签下商品的偏好分之和（一件商品有多个标签时会各计一次）",
+        "empty": not _tag_rows,
+    }
+
     # ⑪ 商家级偏好（2026-10-18 偏好分析②）：他在看谁家的东西、是不是回头客
     from models import Follow
 
@@ -1102,6 +1128,7 @@ def activities_profile():
         "conversion": conv,
         "images": img_dim,
         "product_pref": product_pref,
+        "tag_pref": tag_pref,
         "seller_pref": seller_pref,
         "post_pref": post_pref,
         "image_pref": image_pref,

@@ -210,6 +210,11 @@ class Product(db.Model):
     wants = db.relationship(
         "ProductWant", backref="product", lazy="select", cascade="all, delete-orphan",
     )
+    # 2026-10-18 第七批：商品标签（自由词，≤5 个）
+    tag_rows = db.relationship(
+        "ProductTag", backref="product", lazy="select",
+        cascade="all, delete-orphan", order_by="ProductTag.id",
+    )
 
     STATUS_TEXT = {
         "on_sale": "在售",
@@ -239,6 +244,7 @@ class Product(db.Model):
             "want_count": len(self.wants),
             "wanted": bool(viewer_id and any(w.user_id == viewer_id for w in self.wants)),
             "product_code": self.product_code,
+            "tags": [t.tag for t in self.tag_rows],
             "created_at": _dt(self.created_at),
         }
         if detail:
@@ -264,6 +270,29 @@ class ProductImage(db.Model):
 
     def to_dict(self) -> dict:
         return {"id": self.id, "url": self.url, "sort": self.sort}
+
+
+# ---------------------------------------------------------------- 5a. 商品标签（2026-10-18 第七批）
+class ProductTag(db.Model):
+    """商品标签：自由词，一个商品最多 5 个、每个 ≤8 字（接口层校验）。
+
+    为什么单独建表而不是 JSON 列：标签要能**反向筛**（`WHERE tag = ?`）与**统计**
+    （`GROUP BY tag` 出热门标签），有索引才走得动；唯一约束兜住同一商品重复打标。
+    """
+
+    __tablename__ = "product_tags"
+
+    MAX_PER_PRODUCT = 5
+    MAX_LEN = 8
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    product_id = db.Column(db.BigInteger,
+                           db.ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
+    tag = db.Column(db.String(16), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "product_id": self.product_id, "tag": self.tag}
 
 
 # ---------------------------------------------------------------- 5b. 我想要（功能③）

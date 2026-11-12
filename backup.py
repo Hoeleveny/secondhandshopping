@@ -17,7 +17,7 @@ from models import (
     OperationLog, Order, Post,
     PostComment, PostImage,
     PostLike, Product, ProductImage, ProductWant, Report, Review, ReviewComment, Subcategory,
-    ProductImageView, SwapOffer, User, UserActivity,
+    ProductImageView, ProductTag, SwapOffer, User, UserActivity,
     ImageEvent,
     ImageFeature,
 )
@@ -30,6 +30,7 @@ INSERT_ORDER = [
     ("campus_places", CampusPlace),
     ("products", Product),
     ("product_images", ProductImage),
+    ("product_tags", ProductTag),
     ("image_features", ImageFeature),
     ("image_events", ImageEvent),
     ("orders", Order),

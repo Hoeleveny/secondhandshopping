@@ -245,6 +245,19 @@ def cmd_demo_behavior() -> int:
         return 0
 
 
+def cmd_backfill_tags() -> int:
+    """按商品名关键词给演示商品自动打标签（幂等：只补不存在的）。"""
+    from app import create_app
+    import tags as tags_mod
+
+    app = create_app()
+    with app.app_context():
+        stats = tags_mod.backfill_demo()
+    print(f"[OK]  商品标签回填：{stats['products']} 件商品补了 {stats['tags']} 个标签，"
+          f"标签总行数 {stats['total_rows']}")
+    return 0
+
+
 def cmd_demo_products() -> int:
     """把种子清单里数据库还没有的演示商品补进去（幂等，不动已有数据）。"""
     from app import create_app
@@ -268,6 +281,7 @@ COMMANDS = {
     "demo-images": cmd_demo_images,
     "demo-post-images": cmd_demo_post_images,
     "demo-behavior": cmd_demo_behavior,
+    "backfill-tags": cmd_backfill_tags,
 
     "demo-products": cmd_demo_products,
     "run": cmd_run,

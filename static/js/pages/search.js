@@ -51,6 +51,7 @@ export default {
       min_price: String(initialMin),
       max_price: String(initialMax),
       condition: ctx.query.condition || '',
+      tag: ctx.query.tag || '',
       sort: ctx.query.sort || 'newest',
       page: Number(ctx.query.page) || 1,
       page_size: 24,
@@ -103,6 +104,11 @@ export default {
             </select>
           </div>
           <div class="form-row">
+            <label>商品标签</label>
+            <div id="tag-filter" class="row" style="flex-wrap:wrap;gap:6px"></div>
+            <div class="hint">点标签叠加筛选；再点一次取消（来自在售商品的热门标签）</div>
+          </div>
+          <div class="form-row">
             <label>排序</label>
             <select class="select" id="f-sort">
               ${SORTS.map(s => `<option value="${s.value}" ${state.sort === s.value ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}
@@ -128,6 +134,32 @@ export default {
     const minInput = $('#f-min-price');
     const maxInput = $('#f-max-price');
     const presetSelect = $('#f-price');
+
+    /* ---------- 2026-10-18 第七批：热门标签 chips ---------- */
+    const tagFilter = $('#tag-filter');
+    let hotTags = [];
+    function renderTagChips() {
+      tagFilter.innerHTML = hotTags.length
+        ? hotTags.map(t => `<button type="button"
+              class="tag-chip ${state.tag === t.tag ? 'active' : ''}"
+              data-filter-tag="${esc(t.tag)}">${esc(t.tag)} ${t.count}</button>`).join('')
+        : '<span class="muted small">还没有商品打标签</span>';
+    }
+    api.get('/api/products/tags').then((d) => {
+      hotTags = d.tags || [];
+      if (state.tag && !hotTags.some(t => t.tag === state.tag)) {
+        hotTags.unshift({ tag: state.tag, count: 0 });   // 从详情页点进来的冷门标签也要显示
+      }
+      renderTagChips();
+    }).catch(() => { renderTagChips(); });
+    tagFilter.addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-filter-tag]');
+      if (!btn) return;
+      const tag = btn.dataset.filterTag;
+      state.tag = state.tag === tag ? '' : tag;        // 再点一次取消
+      renderTagChips();
+      load(1);
+    });
 
     /* ---------- 输入框错误提示 ---------- */
     function clearError(input) {
@@ -213,6 +245,7 @@ export default {
         min_price: state.min_price,
         max_price: state.max_price,
         condition: state.condition,
+        tag: state.tag,
         sort: state.sort,
         page: state.page,
         page_size: state.page_size,
@@ -299,13 +332,14 @@ export default {
     });
     $('#btn-reset').addEventListener('click', () => {
       state.keyword = ''; state.category_id = ''; state.subcategory_id = '';
-      state.condition = ''; state.sort = 'newest';
+      state.condition = ''; state.tag = ''; state.sort = 'newest';
       state.min_price = ''; state.max_price = '';
       $('#f-keyword').value = ''; $('#f-category').value = '';
       $('#f-condition').value = ''; $('#f-sort').value = 'newest';
       minInput.value = ''; maxInput.value = '';
       clearError(minInput); clearError(maxInput);
       presetSelect.value = '';
+      renderTagChips();
       fillSubcategories();
       load(1);
     });

@@ -84,6 +84,15 @@ export default {
             </div>
 
             <div class="form-row">
+              <label>标签（最多 5 个，每个 ≤8 字，可选）</label>
+              <input class="input" id="f-tags" maxlength="60"
+                     value="${esc((product.tags || []).join('，'))}"
+                     placeholder="例如：毕业出，宿舍必备，可小刀（用逗号分隔）">
+              <div class="row mt-8" id="tag-presets" style="flex-wrap:wrap;gap:6px"></div>
+              <div class="muted small mt-8">标签会进画像（「你最在意哪类标签」）与搜索筛选，别写和分类重复的词。</div>
+            </div>
+
+            <div class="form-row">
               <label>商品描述</label>
               <textarea class="textarea" id="f-desc" placeholder="成色细节、使用时长、有无磕碰、附赠配件…">${esc(product.description || '')}</textarea>
             </div>
@@ -110,6 +119,19 @@ export default {
       </div>`;
 
     const $ = (sel) => root.querySelector(sel);
+    // 2026-10-18 第七批：标签预设词（点一下追加，仍可自由输入；最多 5 个）
+    const TAG_PRESETS = ['毕业出', '宿舍必备', '可小刀', '考研', '全新', '急出', '包自提', '期末清仓'];
+    const tagInput = $('#f-tags');
+    $('#tag-presets').innerHTML = TAG_PRESETS.map(t =>
+      `<button type="button" class="btn btn-sm" data-tag="${esc(t)}">+ ${esc(t)}</button>`).join('');
+    $('#tag-presets').addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-tag]');
+      if (!btn) return;
+      const current = tagInput.value.split(/[,，、\s]+/).map(x => x.trim()).filter(Boolean);
+      if (current.includes(btn.dataset.tag)) return;
+      current.push(btn.dataset.tag);
+      tagInput.value = current.slice(0, 5).join('，');
+    });
     const nameInput = $('#f-name');
     const priceInput = $('#f-price');
 
@@ -236,6 +258,7 @@ export default {
         description: $('#f-desc').value.trim(),
         default_place_id: $('#f-place').value ? Number($('#f-place').value) : null,
         images,
+        tags: $('#f-tags').value.split(/[,，、\s]+/).map(t => t.trim()).filter(Boolean),
       };
 
       try {

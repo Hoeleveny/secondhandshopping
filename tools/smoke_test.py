@@ -3507,6 +3507,78 @@ def main() -> int:
           str((r.get("data") or {}).get("counts")))
     check("第五批：图片事件明细不对普通用户开放",
           call("GET", "/api/admin/activities/image-events", token=token)[1].get("code") != 0, "")
+    # ---------------- 第七批：商品标签体系 ----------------
+    section("第七批 商品标签体系")
+
+    import tags as _tags
+
+    check("第七批：标签规范化（逗号/顿号分隔、去空白、保序去重）",
+          _tags.normalize("毕业出， 宿舍必备、毕业出") == ["毕业出", "宿舍必备"],
+          str(_tags.normalize("毕业出， 宿舍必备、毕业出")))
+    check("第七批：最多 5 个标签", _tags.validate(["a", "b", "c", "d", "e", "f"]) is not None, "")
+    check("第七批：单个标签最多 8 个字", _tags.validate(["一二三四五六七八九"]) is not None, "")
+    check("第七批：演示打标规则能从商品名认出标签",
+          _tags.demo_tags_for("机械键盘 87 键（青轴）") == ["键鼠"]
+          and _tags.demo_tags_for("考研英语一历年真题解析") == ["考研"],
+          f"{_tags.demo_tags_for('机械键盘 87 键（青轴）')} / {_tags.demo_tags_for('考研英语一历年真题解析')}")
+
+    _st, r = call("GET", "/api/products/tags")
+    _hot = (r.get("data") or {}).get("tags") or []
+    check("第七批：热门标签接口按在售商品数返回（tag + count）",
+          r.get("code") == 0 and bool(_hot) and all({"tag", "count"} <= set(x) for x in _hot),
+          str(_hot[:4])[:140])
+
+    _st, r = call("POST", "/api/products", token=seller_token,
+                  body={"name": "冒烟测试-带标签商品", "price": 9.9, "category_id": 1,
+                        "subcategory_id": 1, "condition": "九成新", "description": "标签测试",
+                        "default_place_id": 2, "images": [],
+                        "tags": ["毕业出", "可小刀", "毕业出"]})
+    _tag_pid = (r.get("data") or {}).get("id")
+    _tag_list = (r.get("data") or {}).get("tags") or []
+    check("第七批：发布商品能带标签（去重后回显）",
+          r.get("code") == 0 and sorted(_tag_list) == ["可小刀", "毕业出"],
+          str((r.get("data") or {}).get("tags")))
+
+    _st, r = call("GET", "/api/products?tag=" + quote("毕业出"))
+    _tag_hits = [x["id"] for x in ((r.get("data") or {}).get("list") or [])]
+    check("第七批：能按标签筛选商品（新发布的这件在结果里）",
+          _tag_pid in _tag_hits, f"命中 {len(_tag_hits)} 件")
+
+    _st, r = call("POST", "/api/products", token=seller_token,
+                  body={"name": "冒烟测试-标签超限", "price": 1, "category_id": 1,
+                        "subcategory_id": 1, "condition": "全新", "description": "",
+                        "default_place_id": 2, "images": [],
+                        "tags": ["a", "b", "c", "d", "e", "f"]})
+    check("第七批：超过 5 个标签被拒", r.get("code") != 0 and "标签" in (r.get("msg") or ""),
+          str(r)[:120])
+    _st, r = call("POST", "/api/products", token=seller_token,
+                  body={"name": "冒烟测试-标签过长", "price": 1, "category_id": 1,
+                        "subcategory_id": 1, "condition": "全新", "description": "",
+                        "default_place_id": 2, "images": [],
+                        "tags": ["一二三四五六七八九"]})
+    check("第七批：单个标签超过 8 字被拒", r.get("code") != 0, str(r)[:120])
+
+    _st, r = call("PUT", f"/api/products/{_tag_pid}", token=seller_token,
+                  body={"name": "冒烟测试-带标签商品", "price": 9.9, "category_id": 1,
+                        "subcategory_id": 1, "condition": "九成新", "description": "改标签",
+                        "default_place_id": 2, "images": [], "tags": ["急出"]})
+    check("第七批：编辑时传 tags 会整体替换", (r.get("data") or {}).get("tags") == ["急出"],
+          str((r.get("data") or {}).get("tags")))
+    _st, r = call("PUT", f"/api/products/{_tag_pid}", token=seller_token,
+                  body={"name": "冒烟测试-带标签商品", "price": 9.9, "category_id": 1,
+                        "subcategory_id": 1, "condition": "九成新", "description": "不改标签",
+                        "default_place_id": 2, "images": []})
+    check("第七批：编辑时不传 tags 不会清掉已有标签",
+          (r.get("data") or {}).get("tags") == ["急出"],
+          str((r.get("data") or {}).get("tags")))
+
+    _st, r = call("GET", f"/api/admin/activities/profile?user_id={_pp_uid}", token=_ut_at)
+    _tp_ = ((r.get("data") or {}).get("tag_pref")) or {}
+    _tp_rows = _tp_.get("top") or []
+    check("第七批：画像返回「标签偏好」（标签 + 权重 + 占比 + 商品数）",
+          isinstance(_tp_rows, list) and bool(_tp_.get("note"))
+          and all({"tag", "weight", "share", "products"} <= set(x) for x in _tp_rows)
+          if _tp_rows else bool(_tp_.get("note")), str(_tp_)[:130])
     # ---------------- 清理本脚本产生的测试数据 ----------------
     cleanup_test_data()
 

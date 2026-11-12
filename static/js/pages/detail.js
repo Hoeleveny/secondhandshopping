@@ -55,6 +55,8 @@ export default {
             <dl class="info-list mt-16">
               <dt>成色</dt><dd>${esc(product.condition)}</dd>
               <dt>分类</dt><dd>${esc(product.category_icon || '')} ${esc(product.category_name || '')}${product.subcategory_name ? ` / ${esc(product.subcategory_name)}` : ''}</dd>
+              ${(product.tags || []).length ? `<dt>标签</dt><dd>${product.tags
+                .map(t => `<button class="tag-chip" data-tag="${esc(t)}">${esc(t)}</button>`).join('')}</dd>` : ''}
               <dt>卖家</dt><dd><button class="link-btn" data-seller="${product.seller_id}">${esc(product.seller_nickname || '')}</button> ${ratingBadgeHtml(product.seller_rating)}</dd>
               <dt>默认自提点</dt><dd>${esc(product.default_place?.name || '未指定')}</dd>
               <dt>发布时间</dt><dd>${esc(fmtTime(product.created_at))}</dd>
@@ -84,6 +86,12 @@ export default {
       if (fromAdmin) { location.hash = '#/admin?tab=reports'; return; }
       history.back();
     });
+    // 2026-10-18 第七批：点标签 → 去搜索页按标签筛
+    root.querySelectorAll('[data-tag]').forEach(btn =>
+      btn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        location.hash = `#/search?tag=${encodeURIComponent(btn.dataset.tag)}`;
+      }));
 
     /* ---------------- 新批需求⑤：评价下的评论（写评论 / 回复(@某人) / 举报） ---------------- */
     const reviewCommentsHtml = (list) => (list.length

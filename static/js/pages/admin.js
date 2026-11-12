@@ -1408,6 +1408,10 @@ function openProfileCharts(d) {
   const prodTop = pp.top || [];
   const subRows = (pp.sub_breakdown || []).slice(0, 6);
   const maxProdScore = Math.max(1, ...prodTop.map(x => x.score || 0));
+  // 2026-10-18 第七批：商品标签偏好
+  const tp = d.tag_pref || {};
+  const tagPref = tp.top || [];
+  const maxTagW = Math.max(1, ...tagPref.map(x => x.weight || 0));
   // 2026-10-18 偏好分析②：商家级偏好
   const sp = d.seller_pref || {};
   const sellerTop = sp.top || [];
@@ -1533,6 +1537,20 @@ function openProfileCharts(d) {
           </div>`).join('')}</div>`
           : '<div class="muted small">还没有浏览商品</div>'}
         <div class="muted small" style="margin-top:6px">小类＝「大类 / 小类」；占比只统计他浏览过的商品，已删除的商品不计入。</div>
+      </div>
+
+      <div class="ch-card" id="ch-tagpref">
+        <div class="ch-title">标签偏好 Top5 <span class="muted small">（他最在意哪类标签）</span></div>
+        ${tagPref.length ? `<div class="ch-hbars">${tagPref.map((x) => `
+          <div class="ch-hrow" data-chart="tagpref"
+               data-tip="${esc(x.tag)} · 偏好分 ${x.weight} · 占 ${pct(x.share)}% · ${x.products} 件商品">
+            <span class="ch-hlabel" style="width:96px">${esc(x.tag)}</span>
+            <span class="ch-htrack"><span class="ch-hfill"
+              style="width:${Math.max(4, Math.round((x.weight / maxTagW) * 100))}%;background:var(--chart-6)"></span></span>
+            <span class="ch-hval">${x.products}</span>
+          </div>`).join('')}</div>`
+          : '<div class="muted small">还没有带标签的商品行为记录</div>'}
+        <div class="muted small" style="margin-top:6px">标签偏好分＝该标签下商品的偏好分之和（一件商品多个标签会各计一次）。</div>
       </div>
 
       <div class="ch-card" id="ch-seller">
