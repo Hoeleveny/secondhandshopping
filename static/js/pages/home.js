@@ -75,7 +75,7 @@ export default {
         <div class="card-head">
           <h2>猜你喜欢</h2>
           <span class="muted small">${esc(reco.personalized
-            ? '按你看过的商品品类与价位推荐，越逛越准'
+            ? '按你看过的商品品类、价位与相似商品推荐，越逛越准'
             : '你还没什么浏览记录，先按热门推荐')}</span>
         </div>
         <div class="grid-cards">${reco.list.map(productCardHtml).join('')}</div>

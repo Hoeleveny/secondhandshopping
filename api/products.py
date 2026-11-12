@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 
 from flask import Blueprint, current_app, request
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 
 import audit
 import product_code
@@ -192,89 +192,180 @@ def my_products():
 
 
 # ------------------------------------------------------------------ 商品详情
+# 召回来源加成：多路召回都用得上，给"更贴用户"的来源更高分
+RECALL_BONUS = {"similar": 1.2, "category": 0.6, "hot": 0.2, "new": 0.1}
+
+
+def _parse_as_of(raw):
+    """评估用：把 `as_of=YYYY-MM-DD HH:MM:SS` 解析成 datetime，非法返回 None。"""
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(str(raw).replace("T", " ")[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
 @bp.get("/products/recommend")
 def recommend_products():
-    """猜你喜欢（2026-10-18 需求③）：按用户画像给在售商品打分排序。
+    """猜你喜欢：**两阶段推荐**（2026-10-18 第五批，按 YouTube 召回→排序 的思路重构）。
 
-    打分依据（都用现成数据，不新增埋点）：
-    - 品类偏好：看过的大类占比 → 命中的大类加权
-    - 价格带：看过的商品落在哪个价位段 → 同段加权
-    - 热度：被收藏 / 被浏览（有则加一点，冷启动也有东西推）
-    - 排除：自己发布的、已售/已下架/已删除的
-    未登录或没有画像时，纯按「热度 + 最新」回落。
+    - **召回**（四路并集，去重后保留更可信的来源）：
+      `similar`＝共视相似（Amazon item-to-item，从最近看过的 5 件出发）、`category`＝偏好大类、
+      `hot`＝浏览量热门、`new`＝最新发布；
+    - **排序**：沿用原规则分（品类×3 + 价位×1.5 + 热度×0.2 − 已看过×0.8）
+      ＋ 召回来源加成 ＋ **小类行为加权**（图片停留加权的小类偏好占比，借 DIN 的"兴趣强度"思路）；
+    - `mode=baseline` 保留重构前的**单阶段**口径，只给离线评估做对照；
+    - `as_of` 只影响"用哪部分历史"，让评估能用「某个时间点之前的行为」预测之后的浏览，避免信息泄漏。
     """
-    from models import ProductImageView, UserActivity
     from api.activities import classify_page
+    from models import Favorite, ProductImageView, UserActivity
+
+    import similar as similar_mod
 
     me = current_user()
     limit = arg_int("limit", 8) or 8
     limit = max(1, min(limit, 20))
+    mode = (arg_str("mode") or "full").lower()
+    baseline = mode == "baseline"
+    as_of = _parse_as_of(arg_str("as_of"))
 
-    q = Product.query.filter(Product.status == PRODUCT_ON_SALE)
+    base_q = Product.query.filter(Product.status == PRODUCT_ON_SALE)
     if me is not None:
-        q = q.filter(Product.seller_id != me.id)
-    pool = q.order_by(Product.created_at.desc()).limit(300).all()
-    if not pool:
-        return ok({"list": [], "personalized": False, "reason": "没有在售商品"})
+        base_q = base_q.filter(Product.seller_id != me.id)
 
-    pref_cats, pref_prices, viewed = {}, [], set()
+    # ---------------- 用户历史（as_of 之前） ----------------
+    pref_cats, pref_prices, viewed, history_pids = {}, [], set(), []
+    sub_pref: dict = {}
     if me is not None:
-        rows = (UserActivity.query.filter(UserActivity.user_id == me.id,
-                                          UserActivity.kind == "page")
-                .order_by(UserActivity.created_at.desc()).limit(500).all())
-        pids = []
-        for r in rows:
-            kind, rid = classify_page(r.page)
+        aq = UserActivity.query.filter(UserActivity.user_id == me.id,
+                                       UserActivity.kind == "page")
+        if as_of is not None:
+            aq = aq.filter(UserActivity.created_at <= as_of)
+        for row in aq.order_by(UserActivity.created_at.desc()).limit(500).all():
+            kind, rid = classify_page(row.page)
             if kind == "product":
-                pids.append(rid)
-        if pids:
-            prods = {x.id: x for x in Product.query.filter(Product.id.in_(set(pids))).all()}
-            for pid in pids:
-                pr = prods.get(pid)
-                if pr is None:
+                history_pids.append(rid)
+        if history_pids:
+            prods = {x.id: x for x in Product.query.filter(
+                Product.id.in_(set(history_pids))).all()}
+            for pid in history_pids:
+                prod = prods.get(pid)
+                if prod is None:
                     continue
                 viewed.add(pid)
-                pref_cats[pr.category_id] = pref_cats.get(pr.category_id, 0) + 1
-                pref_prices.append(float(pr.price or 0))
+                pref_cats[prod.category_id] = pref_cats.get(prod.category_id, 0) + 1
+                pref_prices.append(float(prod.price or 0))
+            ivq = ProductImageView.query.filter(ProductImageView.user_id == me.id)
+            if as_of is not None:
+                ivq = ivq.filter(ProductImageView.created_at <= as_of)
+            for iv in ivq.order_by(ProductImageView.created_at.desc()).limit(500).all():
+                prod = prods.get(iv.product_id)
+                if prod is None or not prod.subcategory_id:
+                    continue
+                sub_pref[prod.subcategory_id] = (
+                    sub_pref.get(prod.subcategory_id, 0.0)
+                    + max((iv.dwell_ms or 0) / 1000.0, 1.0))
 
     total_cat = sum(pref_cats.values())
+    total_sub = sum(sub_pref.values())
     avg_price = (sum(pref_prices) / len(pref_prices)) if pref_prices else None
 
+    fav_counts = {pid: cnt for pid, cnt in
+                  db.session.query(Favorite.product_id, func.count())
+                  .group_by(Favorite.product_id).all()}
+
+    # ---------------- 第一阶段：召回 ----------------
+    recall: dict = {}
+    if baseline:
+        cand = base_q.order_by(Product.created_at.desc()).limit(300).all()
+    else:
+        chosen: dict = {}
+
+        def take(prod, source):
+            if prod.id not in chosen:
+                chosen[prod.id] = (source, prod)
+
+        if me is not None and history_pids:
+            aq = (UserActivity.query
+                  .filter(UserActivity.kind == "page",
+                          UserActivity.page.like("/product/%")))
+            if as_of is not None:
+                aq = aq.filter(UserActivity.created_at <= as_of)
+            parsed = [(uid, similar_mod.parse_page(page), at)
+                      for uid, page, at in aq.with_entities(
+                          UserActivity.user_id, UserActivity.page,
+                          UserActivity.created_at).all()]
+            co, pop = similar_mod.build_stats([x for x in parsed if x[1] is not None])
+            for seed in list(dict.fromkeys(history_pids))[:5]:
+                for other_id, _score, _cnt in similar_mod.similarity(seed, co, pop, limit=10):
+                    prod = Product.query.get(other_id)
+                    if prod is None or prod.status != PRODUCT_ON_SALE:
+                        continue
+                    if prod.seller_id == me.id:
+                        continue
+                    take(prod, "similar")
+        if pref_cats and total_cat:
+            top_cats = sorted(pref_cats, key=lambda c: (-pref_cats[c], c))[:3]
+            for prod in (base_q.filter(Product.category_id.in_(top_cats))
+                         .order_by(Product.created_at.desc()).limit(120).all()):
+                take(prod, "category")
+        for prod in base_q.order_by(Product.views.desc()).limit(60).all():
+            take(prod, "hot")
+        for prod in base_q.order_by(Product.created_at.desc()).limit(24).all():
+            take(prod, "new")
+        cand = [prod for _src, prod in chosen.values()]
+        recall = {pid: src for pid, (src, _prod) in chosen.items()}
+
+    if not cand:
+        return ok({"list": [], "personalized": False, "reason": "没有在售商品",
+                   "mode": "baseline" if baseline else "full"})
+
+    # ---------------- 第二阶段：排序 ----------------
     scored = []
-    for pr in pool:
+    for prod in cand:
         score = 0.0
-        # 品类偏好（占比越高越加分，最高 3 分）
-        if total_cat and pr.category_id in pref_cats:
-            score += 3.0 * (pref_cats[pr.category_id] / total_cat)
-        # 价格带接近（相差 50% 以内加分）
+        if total_cat and prod.category_id in pref_cats:
+            score += 3.0 * (pref_cats[prod.category_id] / total_cat)
         if avg_price:
-            price = float(pr.price or 0)
+            price = float(prod.price or 0)
             if price > 0:
                 ratio = abs(price - avg_price) / max(avg_price, 1)
                 if ratio <= 0.5:
                     score += 1.5 * (1 - ratio)
-        # 热度：收藏数（0~2 分）
-        from models import Favorite
-        fav = db.session.query(Favorite).filter(Favorite.product_id == pr.id).count()
-        score += min(fav, 10) * 0.2
-        # 看过的商品本身略降（避免全是已经看过的）
-        if pr.id in viewed:
+        score += min(fav_counts.get(prod.id, 0), 10) * 0.2
+        if prod.id in viewed:
             score -= 0.8
-        # 新鲜度微调
-        scored.append((score, pr))
+        if not baseline:
+            score += RECALL_BONUS.get(recall.get(prod.id), 0.0)
+            if total_sub and prod.subcategory_id in sub_pref:
+                score += 1.0 * (sub_pref[prod.subcategory_id] / total_sub)
+        scored.append((score, prod, recall.get(prod.id)))
 
     scored.sort(key=lambda x: (-x[0], -(x[1].id or 0)))
-    items = [pr.to_dict() for _s, pr in scored[:limit]]
+    top = scored[:limit]
     personalized = bool(total_cat)
+    has_similar = any(src == "similar" for _s, _p, src in top)
+    if baseline:
+        reason = "按你的浏览偏好推荐" if personalized else "热门在售商品"
+    elif personalized and has_similar:
+        reason = "按你的浏览偏好 + 相似商品召回"
+    else:
+        reason = "按你的浏览偏好推荐" if personalized else "热门在售商品"
     return ok({
-        "list": items,
+        "list": [prod.to_dict() for _s, prod, _src in top],
         "personalized": personalized,
-        "reason": "按你的浏览偏好推荐" if personalized else "热门在售商品",
+        "reason": reason,
         "profile": {
             "categories": len(pref_cats),
             "avg_price": round(avg_price, 2) if avg_price else None,
             "viewed": len(viewed),
+            "subcategories": len(sub_pref),
         },
+        "mode": "baseline" if baseline else "full",
+        "recall": {str(prod.id): src for _s, prod, src in top if src},
+        "as_of": as_of.strftime("%Y-%m-%d %H:%M:%S") if as_of else None,
+        "candidates": len(cand),
     })
 
 

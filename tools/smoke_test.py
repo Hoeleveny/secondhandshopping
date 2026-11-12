@@ -2123,6 +2123,47 @@ def main() -> int:
           str([p.get("name") for p in (_rc.get("list") or [])][:3]))
     check("需求③：推荐结果不重复", len(_rc_ids) == len(set(_rc_ids)), str(_rc_ids))
 
+    # ---------------- 第五批：两阶段推荐（召回 + 排序）与离线评估口径 ----------------
+    section("第五批 两阶段推荐")
+
+    _st, _rrec = call("GET", "/api/products/recommend?limit=5&mode=full", token=token)
+    _rf = _rrec.get("data") or {}
+    _rf_list = _rf.get("list") or []
+    _st, r = call("GET", "/api/auth/me", token=token)
+    _rec_me = ((r.get("data") or {}).get("user") or {}).get("id")
+    check("第五批：两阶段模式默认可用（mode=full 且带候选数）",
+          _rrec.get("code") == 0 and _rf.get("mode") == "full"
+          and isinstance(_rf.get("candidates"), int) and _rf.get("candidates") > 0,
+          f"mode={_rf.get('mode')} candidates={_rf.get('candidates')}")
+    check("第五批：每件推荐都标了召回来源（similar/category/hot/new）",
+          isinstance(_rf.get("recall"), dict) and bool(_rf.get("recall"))
+          and set(_rf["recall"].values()) <= {"similar", "category", "hot", "new"}
+          and set(_rf["recall"]) <= {str(x["id"]) for x in _rf_list},
+          str(_rf.get("recall"))[:140])
+
+    _st, r = call("GET", "/api/products/recommend?limit=5&mode=baseline", token=token)
+    _rb = r.get("data") or {}
+    check("第五批：baseline 模式保留旧口径（不带召回来源，只给离线评估对照）",
+          r.get("code") == 0 and _rb.get("mode") == "baseline"
+          and not (_rb.get("recall") or {}), f"mode={_rb.get('mode')}")
+    check("第五批：两种模式都排除自己发布的商品",
+          all(p.get("seller_id") != _rec_me
+              for p in (_rf_list + (_rb.get("list") or [])) if p.get("seller_id")), "")
+
+    _st, r = call("GET",
+                  "/api/products/recommend?limit=5&mode=full&as_of=2020-01-01%2000:00:00",
+                  token=token)
+    _rold = r.get("data") or {}
+    check("第五批：as_of 把历史截到很早以前后不再个性化（评估防泄漏用）",
+          r.get("code") == 0 and _rold.get("personalized") is False
+          and bool(_rold.get("list")), f"personalized={_rold.get('personalized')}")
+    check("第五批：非法 as_of 不会报错（当作没传）",
+          call("GET", "/api/products/recommend?limit=5&mode=full&as_of=nonsense",
+               token=token)[1].get("code") == 0, "")
+    check("第五批：未登录也能拿到推荐（按热度回落）",
+          call("GET", "/api/products/recommend?limit=3&mode=full")[1].get("code") == 0, "")
+
+
     # ---------------- 本批需求①：按对象停留（商品详情 / 商家主页） ----------------
     section("本批需求① 按对象停留")
 
