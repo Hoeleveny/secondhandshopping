@@ -6539,6 +6539,10 @@ async function feature62(cdp) {
   await cdp.eval(`document.querySelector('#lg-profile-charts').click()`);
   await waitFor(cdp, `!!document.querySelector('.modal-mask .ch-card')`);
   await sleep(600);
+  // 2026-10-18 第十批：原始图表收进「更多明细」折叠区，断言前先展开
+  await cdp.eval(`
+    (() => { const d = document.querySelector('#ch-more'); if (d && !d.open) d.querySelector('summary').click(); })()`);
+  await sleep(300);
 
   const charts = await cdp.eval(`
     (() => {
@@ -6562,7 +6566,7 @@ async function feature62(cdp) {
     && charts.titles.some(t => t.startsWith('商品品类占比'))
     && charts.titles.some(t => t.startsWith('价格带偏好'))
     && charts.titles.some(t => t.startsWith('活跃时段'))
-    && charts.titles.some(t => t.startsWith('帖子关注点')),
+    && charts.titles.some(t => t.startsWith('帖子分区偏好')),
     JSON.stringify(charts.titles));
   check('需求：图表是手绘的（环形图有分段、柱状图有柱、横条有行，且没用 canvas 库）',
     charts.rings > 0 && charts.bars > 0 && charts.hbars > 0 && charts.noCanvas === true,
@@ -6783,6 +6787,10 @@ async function feature63(cdp) {
     await cdp.eval(`document.querySelector('#lg-profile-charts').click()`);
     await waitFor(cdp, `!!document.querySelector('.modal-mask .ring-seg')`);
     await sleep(500);
+    // 明细默认折叠，展开后再读颜色（隐藏元素量不出有效样式）
+    await cdp.eval(`
+      (() => { const d = document.querySelector('#ch-more'); if (d && !d.open) d.querySelector('summary').click(); })()`);
+    await sleep(300);
     return read();
   })();
 
@@ -6867,6 +6875,10 @@ async function feature64(cdp) {
   await cdp.eval(`document.querySelector('#lg-profile-charts').click()`);
   await waitFor(cdp, `!!document.querySelector('#ch-dwell')`);
   await sleep(500);
+  // 2026-10-18 第十批：图表收进「更多明细」，展开后再读 innerText
+  await cdp.eval(`
+    (() => { const d = document.querySelector('#ch-more'); if (d && !d.open) d.querySelector('summary').click(); })()`);
+  await sleep(300);
   const card = await cdp.eval(`
     (() => {
       const c = document.querySelector('#ch-dwell');
@@ -6938,6 +6950,10 @@ async function feature65(cdp) {
   await cdp.eval(`document.querySelector('#lg-profile-charts').click()`);
   await waitFor(cdp, `!!document.querySelector('#ch-percep')`);
   await sleep(600);
+  // 2026-10-18 第十批：图表收进「更多明细」，展开后再读文字（折叠时 innerText 为空）
+  await cdp.eval(`
+    (() => { const d = document.querySelector('#ch-more'); if (d && !d.open) d.querySelector('summary').click(); })()`);
+  await sleep(300);
 
   const card = await cdp.eval(`
     (() => {
@@ -7476,6 +7492,100 @@ async function feature72(cdp) {
   await cdp.shot(path.join(SHOT_DIR, 'f72-gallery-nav.png'));
 }
 
+/* ================================================================ 功能73 用户小结分层（需求⑫） */
+async function feature73(cdp) {
+  console.log('\n===== 功能73 用户小结：结论卡 + 折叠明细 =====');
+
+  await cdp.loginAs('admin', '123456', 'admin');
+  await cdp.go('/admin?tab=trades');
+  await waitFor(cdp, `document.querySelectorAll('#lg-list .tl-item').length > 0`);
+  await sleep(1000);
+  await cdp.eval(`
+    (() => {
+      document.querySelector('#lg-profile-user').value = 'buyer1';
+      document.querySelector('#lg-profile-go').click();
+    })()`);
+  await waitFor(cdp, `!!document.querySelector('#lg-profile-charts')`);
+  await sleep(400);
+  await cdp.eval(`document.querySelector('#lg-profile-charts').click()`);
+  await waitFor(cdp, `!!document.querySelector('#ch-hero')`);
+  await sleep(500);
+
+  // ① 顶部 4 张结论卡，每张都有标题 + 一句话结论
+  const hero = await cdp.eval(`
+    (() => {
+      const cards = [...document.querySelectorAll('#ch-hero .ch-hero-card')];
+      return {
+        count: cards.length,
+        titles: cards.map(c => (c.querySelector('.ch-hero-title') || {}).innerText || ''),
+        texts: cards.map(c => ((c.querySelector('.ch-hero-text') || {}).innerText || '').trim()),
+        imageText: ((document.querySelector('[data-hero="image"] .ch-hero-text') || {}).innerText || '').trim(),
+        imageMeta: ((document.querySelector('[data-hero="image"] .ch-hero-meta') || {}).innerText || '').trim(),
+      };
+    })()`);
+  check('需求⑫：小结顶部是 4 张「一句话结论」卡',
+    hero.count === 4 && hero.texts.every(t => t.length > 4),
+    JSON.stringify({ count: hero.count, titles: hero.titles }));
+  check('需求⑫：结论卡覆盖「买什么 / 喜欢什么图 / 逛谁家 / 什么时候来」',
+    ['他在买什么', '他喜欢什么样的图', '他在逛谁家', '他什么时候来']
+      .every(t => hero.titles.includes(t)), JSON.stringify(hero.titles));
+
+  // ② 图片偏好要给"喜欢什么样的图"的结论，而不是只有数值
+  check('需求⑫：图片偏好结论说明喜欢的图片类型（冷暖/明度/饱和/繁简/人像之一）',
+    hero.imageMeta.length > 0
+    && (/偏爱/.test(hero.imageText) || /看图记录/.test(hero.imageText))
+    && /暖|冷|明亮|暗|饱和|清淡|繁复|简洁|人像/.test(hero.imageText),
+    JSON.stringify(hero.imageText));
+
+  // ③ 明细默认折叠，展开后图表才可见
+  // 注意：Chrome 对折叠的 <details> 用 content-visibility 隐藏内容，getBoundingClientRect()
+  // 仍会返回布局尺寸（本轮实测 2090px），所以用 checkVisibility() 判断"是否真的可见"
+  const before = await cdp.eval(`
+    (() => {
+      const more = document.querySelector('#ch-more');
+      const cards = [...document.querySelectorAll('#ch-more .ch-card')];
+      const grid = document.querySelector('#ch-more .ch-grid');
+      const visible = (el) => (typeof el.checkVisibility === 'function'
+        ? el.checkVisibility() : el.offsetParent !== null);
+      return {
+        open: more ? more.open : null,
+        summary: more ? more.querySelector('summary').innerText.trim() : '',
+        cards: cards.length,
+        gridVisible: grid ? visible(grid) : null,
+        cardVisible: cards.filter(c => visible(c)).length,
+      };
+    })()`);
+  check('需求⑫：原始图表默认收在「更多明细」里（折叠，图表不可见）',
+    before.open === false && before.cards >= 12 && before.gridVisible === false
+    && before.cardVisible === 0 && before.summary.includes('更多明细'),
+    JSON.stringify(before));
+
+  await cdp.eval(`document.querySelector('#ch-more summary').click()`);
+  await sleep(400);
+  const after = await cdp.eval(`
+    (() => {
+      const cards = [...document.querySelectorAll('#ch-more .ch-card')];
+      return {
+        open: document.querySelector('#ch-more').open,
+        cards: cards.length,
+        visible: cards.filter(c => c.offsetParent !== null).length,
+        titles: cards.map(c => ((c.querySelector('.ch-title') || {}).innerText || '').trim()),
+        conclusion: ((document.querySelector('#ch-imgpref .ch-conclusion') || {}).innerText || '').trim(),
+      };
+    })()`);
+  check('需求⑫：展开后图表全部可见',
+    after.open === true && after.visible === after.cards && after.cards >= 12,
+    JSON.stringify({ cards: after.cards, visible: after.visible }));
+  check('需求⑫：明细里的图片偏好卡也有一句结论',
+    after.conclusion.length > 0, after.conclusion.slice(0, 60));
+  check('需求⑫：去掉了与「帖子分区偏好」重复的「帖子关注点」卡',
+    !after.titles.some(t => t.startsWith('帖子关注点')), JSON.stringify(after.titles.slice(0, 6)));
+
+  await cdp.shot(path.join(SHOT_DIR, 'f73-profile-hero.png'));
+  await cdp.eval(`document.querySelector('.modal-mask [data-close]')?.click()`);
+  await cdp.go('/admin?tab=products');
+}
+
 /* ================================================================ 主流程 */
 const GROUPS = {
   1: { title: '私信消息', fn: feature1 },
@@ -7548,6 +7658,7 @@ const GROUPS = {
   70: { title: '管理员编辑商品内容', fn: feature70 },
   71: { title: '搜索页标签排版', fn: feature71 },
   72: { title: '详情页图片翻页按钮', fn: feature72 },
+  73: { title: '用户小结分层（结论卡 + 折叠明细）', fn: feature73 },
 };
 
 async function main() {

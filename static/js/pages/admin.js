@@ -1439,6 +1439,7 @@ function openProfileCharts(d) {
   const imgOut = d.image_outcome || {};
   const imgOutRows = (imgOut.rows || []).slice(0, 8);
   const maxOutRate = Math.max(0.01, ...imgOutRows.map(x => x.rate || 0));
+  const ip = d.image_perception || {};          // 未加权的原始平均（明细卡用）
 
   const pct = (v) => Math.round((v || 0) * 100);
   // 2026-10-18：图表配色。原来前两个都是 --primary（扇区同色）、后两个是灰阶，
@@ -1450,6 +1451,67 @@ function openProfileCharts(d) {
     const m = String(name || '').match(/(\d+)/);
     return m ? Number(m[1]) : 0;
   };
+
+  // ---------- 2026-10-18 第十批：顶部「一句话结论」，原始图表收进下面的折叠区 ----------
+  const LABELS = { warm: '冷暖', light: '明度', sat: '饱和', skin: '人像', edges: '繁简' };
+  const topCat = cats[0];
+  const topSub = subRows[0];
+  const priceTop = prices.slice().sort((a, b) => (b.count || 0) - (a.count || 0))[0];
+  const topTag = tagPref[0];
+  const buyText = topCat
+    ? `主要在逛「${topCat.name}」${topSub ? `（${topSub.name}）` : ''}，价位多在 ${priceTop ? priceTop.name : '—'}`
+    : '还没有商品浏览记录';
+  const buyMeta = [
+    topTag ? `最在意标签「${topTag.tag}」` : '',
+    topCat ? `该品类占 ${pct(topCat.share)}%` : '',
+  ].filter(Boolean).join(' · ') || '浏览商品后这里会给出结论';
+
+  // 图片偏好：先说"他喜欢什么样的图"，数值留到明细卡
+  const imgBits = [];
+  if (ip.count) {
+    if (typeof ip.warm === 'number') imgBits.push(ip.warm >= 0.55 ? '偏暖' : ip.warm >= 0.45 ? '冷暖均衡' : '偏冷');
+    if (typeof ip.light === 'number') imgBits.push(ip.light >= 0.6 ? '明亮' : ip.light >= 0.45 ? '亮度适中' : '偏暗');
+    if (typeof ip.sat === 'number') imgBits.push(ip.sat >= 0.45 ? '色彩饱和' : ip.sat >= 0.3 ? '色彩适中' : '色彩清淡');
+    if (typeof ip.edges === 'number') imgBits.push(ip.edges >= 0.25 ? '画面繁复' : ip.edges >= 0.15 ? '构图适中' : '画面简洁');
+    if (typeof ip.skin === 'number' && ip.skin >= 0.2) imgBits.push('常带人像');
+  }
+  const relRows = ipCmp.filter(r => r.rel !== null && r.rel !== undefined)
+    .sort((a, b) => Math.abs(b.rel) - Math.abs(a.rel)).slice(0, 2);
+  const relText = relRows
+    .map(r => `更偏${LABELS[r.key] || r.key}（${r.rel >= 0 ? '+' : ''}${pct(r.rel)}%）`).join('、');
+  const posText = (ipHead.weight || 0) >= (ipDetail.weight || 0) ? '头图看得更久' : '细节图看得更久';
+  const imgSample = ipr.count || ip.count || 0;
+  const imgText = imgSample
+    ? `他偏爱「${imgBits.join('、') || '特点不明显'}」的图${relText ? `，比大众${relText}` : ''}`
+    : '还没有足够的看图记录';
+  const imgMeta = [
+    imgSample ? posText : '',
+    imgOut.best ? `最容易被打动：${imgOut.best.label}` : '',
+    imgSample ? `${imgSample} 张图 · 加权 ${ipr.weight || 0}` : '',
+  ].filter(Boolean).join(' · ') || '看几张商品图后这里会给出结论';
+
+  const sellerText = sellerTop.length
+    ? `常看 ${sellerTop.length} 位卖家，最常驻足「${sellerTop[0].nickname}」`
+    : '还没有商家维度数据';
+  const sellerMeta = sellerTop.length
+    ? `CR3 ${pct(sp.concentration)}% · 回头率 ${pct(spRepeat.rate)}%`
+    : '浏览商品或商家主页后才有';
+
+  const hourPeakRow = hours.length
+    ? hours.reduce((a, b) => ((b.count || 0) > (a.count || 0) ? b : a), hours[0])
+    : null;
+  const activeText = hourPeakRow
+    ? `最活跃在 ${hourPeakRow.hour}:00 前后（${hourPeakRow.count} 次）`
+    : '还没有活跃时段数据';
+  const activeMeta = `商品浏览 ${ut.product_total || 0} 次 · 帖子浏览 ${(d.post_pref || {}).total_views || 0} 次`;
+
+  const heroCard = (icon, title, text, meta, key) => `
+      <div class="ch-hero-card" data-hero="${key}">
+        <div class="ch-hero-head"><span class="ch-hero-icon">${icon}</span>
+          <span class="ch-hero-title">${esc(title)}</span></div>
+        <div class="ch-hero-text">${esc(text)}</div>
+        <div class="ch-hero-meta">${esc(meta)}</div>
+      </div>`;
 
   // 环形图（SVG：用 stroke-dasharray 画每段）
   const ringSegments = () => {
@@ -1504,7 +1566,15 @@ function openProfileCharts(d) {
   const hourPeak = hours.length ? Math.max(...hours.map(h => h.count || 0)) : 0;
 
   const body = `
-    <div class="ch-grid">
+    <div class="ch-hero" id="ch-hero">
+      ${heroCard('🛍️', '他在买什么', buyText, buyMeta, 'buy')}
+      ${heroCard('🖼️', '他喜欢什么样的图', imgText, imgMeta, 'image')}
+      ${heroCard('🏪', '他在逛谁家', sellerText, sellerMeta, 'seller')}
+      ${heroCard('🕗', '他什么时候来', activeText, activeMeta, 'active')}
+    </div>
+    <details class="ch-more" id="ch-more">
+      <summary>更多明细 · 原始图表与数值</summary>
+      <div class="ch-grid">
       <div class="ch-card">
         <div class="ch-title">商品品类占比 <span class="muted small">（共 ${ut.product_total || 0} 次浏览）</span></div>
         ${cats.length ? `<div class="ch-ring-box">
@@ -1591,12 +1661,6 @@ function openProfileCharts(d) {
           : '<div class="muted small">暂无数据</div>'}
       </div>
 
-      <div class="ch-card">
-        <div class="ch-title">帖子关注点</div>
-        ${tags.length ? `<div class="ch-hbars">${hbars(tags, 'tag')}</div>`
-          : '<div class="muted small">还没有浏览帖子</div>'}
-      </div>
-
       <div class="ch-card" id="ch-postpref">
         <div class="ch-title">帖子分区偏好 <span class="muted small">（安利 / 避雷 / 闲聊 / 求助）</span></div>
         ${ppTags.length ? `<div class="ch-hbars">${ppTags.map((x) => `
@@ -1617,6 +1681,7 @@ function openProfileCharts(d) {
 
       <div class="ch-card" id="ch-imgpref">
         <div class="ch-title">图片偏好 <span class="muted small">（他 vs 大众 · 按注意力加权）</span></div>
+        <div class="ch-conclusion">${esc(imgText)}${imgMeta ? `　·　${esc(imgMeta)}` : ''}</div>
         ${ipCmp.length ? (() => {
           const LABEL = { warm: '冷暖', light: '明度', sat: '饱和', skin: '疑似人像', edges: '画面繁简' };
           return `<div class="ch-hbars">${ipCmp.map((r) => `
@@ -1749,7 +1814,8 @@ function openProfileCharts(d) {
         </div>
         <div class="muted small">色彩（冷暖/明度/饱和/鲜艳度）按像素真实统计；人像与繁简没有模型，只是启发式近似。</div>
       </div>
-    </div>
+      </div>
+    </details>
     <div class="ch-foot muted small">
       图片偏好：${esc(im.style || '暂无数据')}　·　共 ${im.views || 0} 次看图、头图占 ${pct(im.head_share)}%
       　·　平均停留 ${esc((d.depth || {}).avg_dwell_text || '—')}
@@ -1757,7 +1823,7 @@ function openProfileCharts(d) {
     <div class="ch-tip" id="ch-tip" hidden></div>`;
 
   openModal({
-    title: `画像图表 · ${d.nickname || d.username || ''}`,
+    title: `画像图表 · ${(d.user && d.user.nickname) || d.nickname || d.username || '该用户'}`,
     size: 'detail',
     body,
     footer: '<button class="btn" data-close>关闭</button>',

@@ -930,3 +930,22 @@
 .gal-next { right: 12px; }
 .gal-count { position: absolute; right: 12px; bottom: 12px; padding: 2px 9px; border-radius: 999px;
   background: rgba(0,0,0,.55); color: #fff; font-size: 12px; letter-spacing: .04em; }
+/* 2026-10-18 第十批：用户小结分层——顶部 4 张「一句话结论」，原始图表收进折叠区 */
+.ch-hero { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.ch-hero-card { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
+  background: var(--bg-secondary); }
+.ch-hero-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.ch-hero-icon { font-size: 15px; line-height: 1; }
+.ch-hero-title { font-size: 12px; letter-spacing: .06em; color: var(--text-muted); }
+.ch-hero-text { font-size: 15px; line-height: 1.6; color: var(--text); }
+.ch-hero-meta { margin-top: 6px; font-size: 12px; line-height: 1.5; color: var(--text-sub); }
+.ch-more { margin-top: 2px; border-top: 1px dashed var(--border); padding-top: 12px; }
+.ch-more > summary { cursor: pointer; font-size: 13px; color: var(--text-muted); letter-spacing: .03em;
+  list-style: none; outline: none; }
+.ch-more > summary::-webkit-details-marker { display: none; }
+.ch-more > summary::before { content: '▸ '; }
+.ch-more[open] > summary::before { content: '▾ '; }
+.ch-more[open] > summary { margin-bottom: 12px; }
+.ch-conclusion { margin: 4px 0 10px; padding: 8px 10px; border-left: 2px solid var(--primary);
+  background: var(--surface); font-size: 13px; line-height: 1.6; color: var(--text); }
+@media (max-width: 720px) { .ch-hero { grid-template-columns: 1fr; } }
